@@ -8,7 +8,9 @@ impl<C> BtControl<C> for Repeat {
     type State = usize;
 
     fn begin(&self, _: &mut usize, _: &mut C, child_count: usize) -> ControlOp {
-        assert_eq!(child_count, 1, "Repeat expects exactly one child");
+        if child_count != 1 {
+            return ControlOp::error("Repeat expects exactly one child");
+        }
         if self.0 == 0 {
             ControlOp::Success
         } else {

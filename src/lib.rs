@@ -1,49 +1,85 @@
-//! A synchronous behavior tree runtime with static composition.
-//!
-//! This is the M0 reference implementation. Every call starts a fresh invocation;
-//! suspension, persistent state, and post-commit effects are not implemented yet.
+//! A resumable behavior tree runtime with static composition.
 //!
 //! ```
-//! use flatbt::{BtNode, NodeResult, check, leaf, select, seq};
+//! use flatbt::{BtState, NodeResult, check, leaf, seq, wait_frames};
 //!
-//! struct Context { ready: bool, shots: usize }
-//! let tree = select((
-//!     seq((
-//!         check(|ctx: &Context| ctx.ready),
-//!         leaf(|ctx: &mut Context| {
-//!             ctx.shots += 1;
-//!             NodeResult::Success
-//!         }),
-//!     )),
-//!     leaf(|_: &mut Context| NodeResult::Success),
+//! let tree = seq((
+//!     check(|ammo: &usize| *ammo > 0),
+//!     wait_frames(1),
+//!     leaf(|ammo: &mut usize| {
+//!         *ammo -= 1;
+//!         NodeResult::Success
+//!     }),
 //! ));
-//! let mut ctx = Context { ready: true, shots: 0 };
-//! assert_eq!(tree.update(&mut ctx), NodeResult::Success);
-//! assert_eq!(ctx.shots, 1);
+//! let mut state = BtState::new(&tree);
+//! let mut ammo = 1;
+//! assert_eq!(state.update(&mut ammo), NodeResult::Running);
+//! assert_eq!(state.update(&mut ammo), NodeResult::Success);
+//! assert_eq!(ammo, 0);
 //! ```
 
 #![forbid(unsafe_code)]
 
 mod children;
 mod control;
+mod execution;
 mod leaf;
+mod storage;
 
 pub use children::BtChildren;
-pub use control::{BtControl, ControlNode, ControlOp, Selector, Sequence, control, select, seq};
-pub use leaf::{Check, Leaf, check, leaf};
+pub use control::{
+    BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
+};
+pub use execution::{BtState, ExecutionCursor};
+pub use leaf::{Check, Leaf, WaitFrames, check, leaf, wait_frames};
 
-/// The terminal outcome of a synchronous invocation.
+/// The result of an invocation: terminal completion or suspension.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use]
 pub enum NodeResult {
     Success,
     Failure,
+    Running,
 }
 
-/// An immutable behavior definition operating on caller-owned context.
+impl NodeResult {
+    /// Reports an execution error to stderr and returns Failure.
+    /// Ordinary behavior failures should return `Failure` directly without a log.
+    pub fn error(message: impl std::fmt::Display) -> Self {
+        log_error(message);
+        Self::Failure
+    }
+}
+
+pub(crate) fn log_error(message: impl std::fmt::Display) {
+    use std::io::Write;
+    // A failed diagnostic write must not turn an execution error into a panic.
+    let _ = writeln!(std::io::stderr().lock(), "[flatbt] {message}");
+}
+
+/// How execution enters the current invocation. Evaluate does not imply reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryMode {
+    Evaluate,
+    Resume,
+}
+
+/// An immutable definition with separate, invocation-local state.
 ///
-/// The M0 protocol is deliberately synchronous. Its signature will evolve when
-/// persistent invocation state and execution traversal are introduced.
+/// Fresh invocations enter as Evaluate; saved invocations enter as Resume in M1.
+/// State survives only while Running. Use optional state fields to initialize
+/// context-dependent data; Evaluate alone must not reset existing state.
+/// Use `BtState` to drive execution; calling `update` directly bypasses it.
+/// User code should report recoverable errors with `NodeResult::error`.
+/// Panics in user code are not caught by the runtime.
 pub trait BtNode<C> {
-    fn update(&self, ctx: &mut C) -> NodeResult;
+    type State: Default + Send + 'static;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        exec: &mut ExecutionCursor<'_>,
+        mode: EntryMode,
+    ) -> NodeResult;
 }

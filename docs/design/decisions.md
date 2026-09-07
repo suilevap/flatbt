@@ -53,3 +53,61 @@ Validate these questions in code before settling the API:
 Memoryful sequences during root revalidation, reactive selectors, and preserving
 an old branch while evaluating alternatives belong to M2. Synchronous M0 does not
 validate those behaviors yet.
+
+## 2026-09-07 — M1: boxed invocation state and normal resume
+
+This iteration supersedes the synchronous-only API and panic behavior described in M0.
+
+### Execution and storage
+
+- `BtNode` now has `State: Default + Send + 'static` and a single `update` method
+  receiving typed state, context, `ExecutionCursor`, and `EntryMode`. Default state
+  keeps this prototype simple; context-dependent resources can be initialized in
+  an optional state field during execution.
+- `BtState::new(&tree)` binds an instance to one borrowed definition and context
+  type. The definition cannot be replaced through the instance API. Separate
+  instances share definitions and own independent continuation state.
+- `FrameStorage` only owns a boxed typed value and supplies checked `Any` downcasts.
+  Execution owns the invocation layout, child index, and mode selection. One Box
+  contains each invocation's state and child slot. Only the active path survives
+  between updates; synchronous invocations also allocate temporarily in this
+  reference backend. No unsafe code or node trait-object dispatch is needed.
+- Fresh frames enter as Evaluate; existing frames enter as Resume. Controls skip
+  `policy.begin()` on Resume and follow their framework-owned active child.
+- Terminal results drop the invocation and its descendants. Selecting the same
+  index again creates fresh state and enters as Evaluate, even within one update.
+  A completed child can be followed by another child immediately.
+- Dropping or resetting a `BtState` drops its saved path. Invocation fields are
+  ordered so descendants drop before parent state. There are no cancellation hooks.
+- `wait_frames(n)` suspends for exactly `n` updates, then succeeds on the next.
+  Custom nodes can also suspend without any tick capability.
+
+### Recoverable errors and focused tests
+
+- Ordinary BT Failure remains silent. `NodeResult::error` and `ControlOp::error`
+  explicitly log a diagnostic and return Failure. Invalid child indices follow
+  the same rule in debug and release. A selector can then attempt its fallback.
+- Diagnostics use stderr for now; a failed write is ignored. Integration with an
+  application's logging system is a later API decision. We do not catch arbitrary
+  user panics or implement an execution budget in this iteration.
+- Panic tests and the large tuple-position test were removed. Tests focus on
+  observable behavior: ordered execution, fallback, suspension, saved selection,
+  fresh invocation state, and ownership on completion/reset/drop. One error-path
+  scenario exercises recovery through a selector rather than testing panic details.
+- `examples/resume.rs` runs `check → wait_frames(3) → fire`: three Running results,
+  then Success, with one check and one shot.
+- Validation: 11 behavioral tests and one doctest pass in debug and release;
+  both examples run successfully, and Clippy and formatting checks pass.
+
+### Boundaries for M2
+
+Root revalidation is not exposed yet. The current Evaluate entries are fresh;
+existing invocation + Evaluate, memoryful sequence revalidation, speculative
+alternatives, and preemption will be implemented together in M2. The current child
+slot holds one path and will need to preserve an old path while evaluating a
+candidate. Storage must remain separate from those execution decisions.
+
+Custom composition currently uses `BtControl` and stable tuple children. The cursor's
+direct child-entry helper remains internal. Custom implementations must not swap
+child definitions behind a persisted slot; dynamic composition is outside M1's
+identity contract and needs explicit identity rules before it is supported.

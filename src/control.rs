@@ -1,4 +1,4 @@
-use crate::{BtChildren, BtNode, NodeResult};
+use crate::{BtChildren, BtNode, EntryMode, ExecutionCursor, NodeResult};
 
 /// The next step requested by a control policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8,13 +8,28 @@ pub enum ControlOp {
     Failure,
 }
 
+impl ControlOp {
+    /// Reports a policy error to stderr and terminates this control with Failure.
+    pub fn error(message: impl std::fmt::Display) -> Self {
+        crate::log_error(message);
+        Self::Failure
+    }
+}
+
+/// Framework-owned continuation plus policy-owned state.
+#[derive(Default)]
+pub struct ControlState<S> {
+    inner: S,
+    active_child: Option<usize>,
+}
+
 /// A statically dispatched control-flow policy, separate from node execution.
 ///
-/// State is local to one synchronous invocation in M0. Child indices must be
+/// State belongs to one invocation and survives suspension. Child indices must be
 /// below `child_count`. Policies must eventually terminate: there is currently
 /// no execution budget to stop a policy that repeatedly requests a child.
 pub trait BtControl<C> {
-    type State: Default;
+    type State: Default + Send + 'static;
 
     fn begin(&self, state: &mut Self::State, ctx: &mut C, child_count: usize) -> ControlOp;
 
@@ -47,27 +62,44 @@ pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Chi
 }
 
 impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, Children> {
-    fn update(&self, ctx: &mut C) -> NodeResult {
-        let mut state = P::State::default();
-        let mut op = self.policy.begin(&mut state, ctx, Children::LEN);
+    type State = ControlState<P::State>;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        exec: &mut ExecutionCursor<'_>,
+        mode: EntryMode,
+    ) -> NodeResult {
+        let mut op = match (mode, state.active_child) {
+            (EntryMode::Resume, Some(index)) => ControlOp::RunChild(index),
+            _ => self.policy.begin(&mut state.inner, ctx, Children::LEN),
+        };
         loop {
             op = match op {
                 ControlOp::Success => return NodeResult::Success,
                 ControlOp::Failure => return NodeResult::Failure,
                 ControlOp::RunChild(index) => {
-                    assert!(
-                        index < Children::LEN,
-                        "control policy returned invalid child index {index} for {} children",
-                        Children::LEN
-                    );
-                    match self.children.run_child(index, ctx) {
+                    if index >= Children::LEN {
+                        return NodeResult::error(format_args!(
+                            "control policy returned invalid child index {index} for {} children",
+                            Children::LEN,
+                        ));
+                    }
+                    match self.children.run_child(index, ctx, exec) {
+                        NodeResult::Running => {
+                            state.active_child = Some(index);
+                            return NodeResult::Running;
+                        }
                         NodeResult::Success => {
+                            state.active_child = None;
                             self.policy
-                                .child_succeeded(&mut state, ctx, index, Children::LEN)
+                                .child_succeeded(&mut state.inner, ctx, index, Children::LEN)
                         }
                         NodeResult::Failure => {
+                            state.active_child = None;
                             self.policy
-                                .child_failed(&mut state, ctx, index, Children::LEN)
+                                .child_failed(&mut state.inner, ctx, index, Children::LEN)
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-use flatbt::{BtNode, NodeResult, check, control, leaf, select, seq};
+use flatbt::{BtState, NodeResult, check, control, leaf, select, seq};
 
 mod support;
 use support::Repeat;
@@ -62,7 +62,7 @@ fn main() {
         ),
         ("idle", Agent::default(), vec!["idle"]),
     ] {
-        let result = tree.update(&mut agent);
+        let result = BtState::new(&tree).update(&mut agent);
         assert_eq!(result, NodeResult::Success);
         assert_eq!(agent.trace, expected);
         println!("{name}: {result:?} | {}", agent.trace.join(" -> "));
