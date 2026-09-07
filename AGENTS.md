@@ -11,3 +11,5 @@ the node or control rather than panic, including in release builds.
 
 Keep example and test utility nodes outside the core library. A reusable catalog
 of ready-made nodes and policies belongs in a separate crate when needed.
+
+Leave changes uncommitted as reviewable drafts unless explicitly asked to commit.

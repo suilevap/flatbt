@@ -1,4 +1,4 @@
-use flatbt::{BtNode, EntryMode, ExecutionCursor, NodeResult};
+use flatbt::{BtNode, EntryMode, NodeResult};
 
 /// Suspends for a fixed number of updates, then succeeds on the following update.
 /// This counts updates, not elapsed wall-clock time, and requires no tick.
@@ -13,13 +13,7 @@ pub fn wait_frames(frames: usize) -> WaitFrames {
 impl<C> BtNode<C> for WaitFrames {
     type State = usize;
 
-    fn update(
-        &self,
-        elapsed: &mut usize,
-        _: &mut C,
-        _: &mut ExecutionCursor<'_>,
-        _: EntryMode,
-    ) -> NodeResult {
+    fn update(&self, elapsed: &mut usize, _: &mut C, _: EntryMode) -> NodeResult {
         if *elapsed < self.0 {
             *elapsed += 1;
             NodeResult::Running

@@ -1,19 +1,15 @@
 # FlatBT
 
 An experimental Behavior Tree runtime in Rust. Development proceeds in small,
-working iterations: validate semantics in the generic runtime first, then add
-production storage and a compiled frontend.
+working iterations: validate semantics with statically composed nodes and state,
+then add dynamic boundaries and a compiled frontend.
 
-Currently implemented: **M1 — suspension and normal resume**.
-
-- `BtNode` with `Success`, `Failure`, and `Running` results;
-- `seq`, `select`, `check`, and `leaf`;
-- custom `BtControl` policies and statically dispatched tuple children (arity 0–32);
-- tree-bound `BtState` instances with boxed storage for the active invocation path;
-- fresh entry as `Evaluate`, followed by `Resume` while suspended.
+The current implementation supports synchronous composition, suspension, normal resume,
+root re-evaluation, and preemption. It is based on the simple M1 implementation;
+see the [draft design notes](docs/design/static-state-draft.md) for state composition.
 
 ```rust
-use flatbt::{BtState, NodeResult, check, leaf, seq};
+use flatbt::{BtState, EntryMode, NodeResult, check, leaf, seq, update};
 
 let tree = seq((
     check(|ammo: &usize| *ammo > 0),
@@ -25,30 +21,52 @@ let tree = seq((
 
 let mut state = BtState::new(&tree);
 let mut ammo = 1;
-assert_eq!(state.update(&mut ammo), NodeResult::Success);
+assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
 assert_eq!(ammo, 0);
 ```
 
-A terminal result releases the active path; the next update starts a fresh
-invocation. `state.reset()` discards a suspended invocation through normal Rust
-Drop. Multiple instances can share a tree.
+`BtState::new(&root)` creates state bound by reference to the root definition.
+The free `update` function takes the root, state, context, and entry mode. It checks
+the root binding before executing. Completion and `reset()` discard saved state
+while preserving the binding. One root can serve multiple independent instances
+and must outlive them. The node trait has no state-construction method.
+
+`EntryMode::Resume` follows the saved path. `EntryMode::Evaluate` revalidates from
+the root: Sequence preserves its active child, while Selector scans from child
+zero. Fresh invocations always receive Evaluate, regardless of the requested mode.
+A failed candidate leaves the old branch state intact; a new Running candidate
+preempts it. A terminal result releases the invocation, so the next update starts fresh.
+
+Each node's `State` includes the state of its statically known descendants.
+`ControlNode::State` combines policy state, the active child index, and a tuple of
+typed optional child states. Tuple dispatch borrows the selected child's field
+directly. Unvisited children remain uninitialized. Failed candidates clear their
+own fields; a new Running candidate clears the previous selection's field.
+
+The runtime has no frame stack, scratch, type erasure, or storage backend. Static
+state layout is known to Rust, and the runtime adds no heap allocations. A custom
+node can still own allocating resources in its state. The current product layout
+reserves space for every child; a compact sum layout is a later optimization.
+Frame storage and layout descriptors are deferred to dynamic node boundaries.
 
 Examples:
 
 ```sh
 cargo run --offline --example synchronous
 cargo run --offline --example resume
+cargo run --offline --example revalidation
 ```
 
-The resume example uses an application-defined `WaitFrames` node from
-`examples/support/wait_frames.rs`, shared with the tests. Its condition executes
-once; the sequence resumes wait across updates and executes fire in the same
-update in which wait completes.
+The resume example uses an application-defined `WaitFrames` from
+`examples/support/wait_frames.rs`, shared with tests. It suspends for three updates
+and executes the next child on completion. The revalidation example preserves a
+patrol while a higher-priority candidate fails, then preempts it when that candidate
+becomes eligible.
 
-The core provides execution protocols and composition primitives. A reusable
-catalog of ready-made nodes and policies (Wait, PrioritySelect, RandomSelect,
-Throttling, WhileDecorator, and similar utilities) belongs in a separate crate
-if we introduce one later. Example and test helpers are not core exports.
+Core provides `BtNode`, `BtControl`, and composition primitives: `seq`, `select`,
+`check`, and `leaf`. Tuple children of arity 0–32 use static dispatch. A reusable
+catalog of utility nodes and policies belongs in a separate crate if introduced
+later. Example helpers are not core exports.
 
 Validation:
 
@@ -58,32 +76,22 @@ cargo clippy --offline --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Normal Resume follows the selected child without calling the control policy's
-`begin`. On Evaluate, `begin` receives the active child: Sequence preserves its
-progress, while Selector restarts at child zero. Full root revalidation through
-`BtState` is planned for M2. An empty sequence succeeds; an empty selector fails.
-The example helper `wait_frames(n)` returns Running for `n` updates and succeeds
-on the next; it measures updates, not wall-clock time. Running does not require
-a tick capability.
+Custom nodes use `State: Default + Send + 'static`, separate from their definition.
+A composing node includes nested state fields and calls a child with the chosen
+field: `child.update(&mut state.child, ctx, mode)`. It owns initialization and
+cleanup when nested invocations start, finish, or are replaced.
+A node can suspend without a tick capability. Empty sequences succeed; empty
+selectors fail. Ordinary Failure is silent; `NodeResult::error` and
+`ControlOp::error` report execution errors to stderr and return Failure.
 
-For custom nodes, implement `BtNode` with `State: Default + Send + 'static`. State is
-separate from the immutable definition and persists while Running. Custom composition
-currently goes through `BtControl`; dynamic child entry is not exposed yet.
+Context changes take effect immediately and survive failed branches. Post-commit
+Tick is not implemented yet. User-code panics are not caught; after an unwind,
+reset the state before using it again. Custom policies must ensure termination;
+there is no execution budget.
 
-Ordinary `Failure` is a normal behavior outcome and does not produce a log. Use
-`NodeResult::error(message)` or `ControlOp::error(message)` for recoverable execution
-errors: both write a diagnostic to stderr and return Failure. Invalid child indices
-also fail with a diagnostic in both debug and release builds. User-code panics are
-not caught. Custom policies must ensure their loops terminate; there is no execution
-budget yet.
+The API is experimental. Dynamic composition and its storage, `BtTick`,
+`BtAction`, and the `bt!` compiler remain future work.
 
-Context changes take effect immediately and survive failed branches. The examples
-show decision-phase effects only; post-commit guarantees will arrive with `BtTick`.
-
-The API is experimental and will change. Root revalidation/speculation, `BtTick`,
-`BtAction`, dynamic behaviors, production storage, and `bt!` are not implemented yet.
-The next iteration is M2: priority changes, state reuse, and preemption.
-
-The [decision log](docs/design/decisions.md) records the implementation's evolution.
+The [decision log](docs/design/decisions.md) records earlier iterations.
 The [original architecture document](docs/design/original-architecture.md) is an
-unmodified Russian source snapshot retained for discussion, not a binding contract.
+unmodified Russian source snapshot for discussion, not a binding contract.

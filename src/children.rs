@@ -1,40 +1,71 @@
-use crate::{BtNode, ExecutionCursor, NodeResult};
+use crate::{BtNode, EntryMode, NodeResult, execution::run_node};
 
-/// Static dispatch over child definitions. Implemented for tuples of arity 0–32.
+/// A tuple of statically known child state slots.
+/// The wrapper supplies Default for all supported arities, including above 12.
+pub struct TupleState<T>(T);
+
+/// Static dispatch over child definitions and their corresponding state fields.
+/// Implemented for tuples of arity 0–32.
 pub trait BtChildren<C> {
+    type State: Default + Send + 'static;
     const LEN: usize;
 
-    /// Runs the selected child.
+    /// Runs the selected child using its own typed state slot. Terminal results
+    /// drop that slot; other child states are left untouched.
     /// Invalid indices report an error and return Failure.
     fn run_child(
         &self,
+        state: &mut Self::State,
         child_index: usize,
         ctx: &mut C,
-        exec: &mut ExecutionCursor<'_>,
+        mode: EntryMode,
     ) -> NodeResult;
+
+    /// Drops the selected child's state when a new selection preempts it.
+    fn reset_child(&self, state: &mut Self::State, child_index: usize);
 }
 
 impl<C> BtChildren<C> for () {
+    type State = ();
     const LEN: usize = 0;
 
-    fn run_child(&self, child_index: usize, _: &mut C, _: &mut ExecutionCursor<'_>) -> NodeResult {
+    fn run_child(&self, _: &mut (), child_index: usize, _: &mut C, _: EntryMode) -> NodeResult {
         NodeResult::error(format_args!(
             "child index {child_index} out of bounds for empty children"
         ))
     }
+
+    fn reset_child(&self, _: &mut (), child_index: usize) {
+        crate::log_error(format_args!(
+            "child index {child_index} out of bounds for empty children"
+        ));
+    }
 }
 
-// Generate every prefix once. Each arm calls its concrete child's BtNode impl;
-// neither node definitions nor policies are converted to trait objects.
+// Generate each tuple's state product and concrete child dispatch together.
 macro_rules! tuple_children {
     (@generate_impl $($index:tt $node:ident),+) => {
+        impl<$($node),+> Default for TupleState<($(Option<$node>,)+)> {
+            fn default() -> Self {
+                Self(($(Option::<$node>::None,)+))
+            }
+        }
+
         impl<C, $($node: BtNode<C>),+> BtChildren<C> for ($($node,)+) {
+            type State = TupleState<($(Option<$node::State>,)+)>;
             const LEN: usize = [$(stringify!($node)),+].len();
 
-            fn run_child(&self, child_index: usize, ctx: &mut C, exec: &mut ExecutionCursor<'_>) -> NodeResult {
+            fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, mode: EntryMode) -> NodeResult {
                 match child_index {
-                    $($index => exec.run_child($index, &self.$index, ctx),)+
+                    $($index => run_node(&self.$index, &mut state.0.$index, ctx, mode),)+
                     _ => NodeResult::error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
+                }
+            }
+
+            fn reset_child(&self, state: &mut Self::State, child_index: usize) {
+                match child_index {
+                    $($index => state.0.$index = None,)+
+                    _ => crate::log_error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
                 }
             }
         }

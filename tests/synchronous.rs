@@ -1,6 +1,7 @@
 use flatbt::{
-    BtControl, BtNode, BtState, ControlOp, NodeResult, check, control, leaf, select, seq,
+    BtControl, BtNode, ControlOp, EntryMode, NodeResult, check, control, leaf, select, seq,
 };
+use flatbt::{BtState, update};
 
 #[path = "../examples/support/mod.rs"]
 mod support;
@@ -22,7 +23,15 @@ fn sequence_runs_in_order_and_stops_on_failure() {
         record("b", Failure),
         record("c", Success),
     ));
-    assert_eq!(BtState::new(&tree).update(&mut trace), Failure);
+    assert_eq!(
+        update(
+            &tree,
+            &mut BtState::new(&tree),
+            &mut trace,
+            EntryMode::Resume
+        ),
+        Failure
+    );
     assert_eq!(trace, ["a", "b"]);
 }
 
@@ -34,7 +43,15 @@ fn selector_uses_nested_fallback_and_stops_on_success() {
         seq((record("a", Success), record("b", Success))),
         record("unused", Success),
     ));
-    assert_eq!(BtState::new(&tree).update(&mut trace), Success);
+    assert_eq!(
+        update(
+            &tree,
+            &mut BtState::new(&tree),
+            &mut trace,
+            EntryMode::Resume
+        ),
+        Success
+    );
     assert_eq!(trace, ["a", "b"]);
 }
 
@@ -42,14 +59,40 @@ fn selector_uses_nested_fallback_and_stops_on_success() {
 fn selector_fails_when_all_children_fail() {
     let mut trace = vec![];
     let tree = select((record("a", Failure), record("b", Failure)));
-    assert_eq!(BtState::new(&tree).update(&mut trace), Failure);
+    assert_eq!(
+        update(
+            &tree,
+            &mut BtState::new(&tree),
+            &mut trace,
+            EntryMode::Resume
+        ),
+        Failure
+    );
     assert_eq!(trace, ["a", "b"]);
 }
 
 #[test]
 fn empty_controls_have_identity_results() {
-    assert_eq!(BtState::new(&seq(())).update(&mut ()), Success);
-    assert_eq!(BtState::new(&select(())).update(&mut ()), Failure);
+    let sequence = seq(());
+    let selector = select(());
+    assert_eq!(
+        update(
+            &sequence,
+            &mut BtState::new(&sequence),
+            &mut (),
+            EntryMode::Resume
+        ),
+        Success
+    );
+    assert_eq!(
+        update(
+            &selector,
+            &mut BtState::new(&selector),
+            &mut (),
+            EntryMode::Resume
+        ),
+        Failure
+    );
 }
 
 #[test]
@@ -57,8 +100,14 @@ fn custom_policy_has_fresh_state_after_completion() {
     let tree = control(Repeat(3), (record("repeat", Success),));
     let mut state = BtState::new(&tree);
     let mut trace = vec![];
-    assert_eq!(state.update(&mut trace), Success);
-    assert_eq!(state.update(&mut trace), Success);
+    assert_eq!(
+        update(&tree, &mut state, &mut trace, EntryMode::Resume),
+        Success
+    );
+    assert_eq!(
+        update(&tree, &mut state, &mut trace, EntryMode::Resume),
+        Success
+    );
     assert_eq!(trace, ["repeat"; 6]);
 }
 
@@ -104,7 +153,10 @@ fn execution_errors_fail_the_branch_and_allow_fallback() {
     ));
     let mut state = BtState::new(&tree);
     let mut trace = vec![];
-    assert_eq!(state.update(&mut trace), Success);
+    assert_eq!(
+        update(&tree, &mut state, &mut trace, EntryMode::Resume),
+        Success
+    );
     assert_eq!(trace, ["fallback"]);
     assert!(!state.is_running());
 }

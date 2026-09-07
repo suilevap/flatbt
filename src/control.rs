@@ -1,4 +1,4 @@
-use crate::{BtChildren, BtNode, EntryMode, ExecutionCursor, NodeResult};
+use crate::{BtChildren, BtNode, EntryMode, NodeResult};
 
 /// The next step requested by a control policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,9 +16,11 @@ impl ControlOp {
     }
 }
 
-/// Framework-owned continuation plus policy-owned state.
+/// Statically composed child states, policy-local state, and selection metadata.
 #[derive(Default)]
-pub struct ControlState<S> {
+pub struct ControlState<S, ChildrenState> {
+    // Field order releases descendants before the policy state.
+    children: ChildrenState,
     inner: S,
     active_child_index: Option<usize>,
 }
@@ -31,7 +33,7 @@ pub struct ControlState<S> {
 pub trait BtControl<C> {
     type State: Default + Send + 'static;
 
-    /// Revalidates this control's decision. `active_child_index` is framework-owned
+    /// Revalidates this control's decision. `active_child_index` is ControlNode-owned
     /// continuation metadata, passed by value so the policy cannot overwrite it.
     /// Sequence preserves it; Selector deliberately starts a new priority scan.
     /// Normal Resume follows the active child without calling this method.
@@ -74,23 +76,15 @@ pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Chi
 }
 
 impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, Children> {
-    type State = ControlState<P::State>;
+    type State = ControlState<P::State, Children::State>;
 
-    fn update(
-        &self,
-        state: &mut Self::State,
-        ctx: &mut C,
-        exec: &mut ExecutionCursor<'_>,
-        mode: EntryMode,
-    ) -> NodeResult {
-        let mut op = match (mode, state.active_child_index) {
+    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult {
+        let active_child_index = state.active_child_index;
+        let mut op = match (mode, active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
-            _ => self.policy.begin(
-                &mut state.inner,
-                ctx,
-                state.active_child_index,
-                Children::LEN,
-            ),
+            _ => self
+                .policy
+                .begin(&mut state.inner, ctx, active_child_index, Children::LEN),
         };
         loop {
             op = match op {
@@ -103,13 +97,26 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
                             Children::LEN,
                         ));
                     }
-                    match self.children.run_child(child_index, ctx, exec) {
+                    // A terminal fresh candidate must preserve the saved selection:
+                    // the policy may still return to it later in this update.
+                    let existing = state.active_child_index == Some(child_index);
+                    match self
+                        .children
+                        .run_child(&mut state.children, child_index, ctx, mode)
+                    {
                         NodeResult::Running => {
+                            if let Some(previous) = state.active_child_index
+                                && previous != child_index
+                            {
+                                self.children.reset_child(&mut state.children, previous);
+                            }
                             state.active_child_index = Some(child_index);
                             return NodeResult::Running;
                         }
                         NodeResult::Success => {
-                            state.active_child_index = None;
+                            if existing {
+                                state.active_child_index = None;
+                            }
                             self.policy.child_succeeded(
                                 &mut state.inner,
                                 ctx,
@@ -118,7 +125,9 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
                             )
                         }
                         NodeResult::Failure => {
-                            state.active_child_index = None;
+                            if existing {
+                                state.active_child_index = None;
+                            }
                             self.policy.child_failed(
                                 &mut state.inner,
                                 ctx,

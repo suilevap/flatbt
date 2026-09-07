@@ -1,7 +1,7 @@
 //! A resumable behavior tree runtime with static composition.
 //!
 //! ```
-//! use flatbt::{BtState, NodeResult, check, leaf, seq};
+//! use flatbt::{BtState, EntryMode, NodeResult, check, leaf, seq, update};
 //!
 //! let tree = seq((
 //!     check(|ammo: &usize| *ammo > 0),
@@ -12,7 +12,7 @@
 //! ));
 //! let mut state = BtState::new(&tree);
 //! let mut ammo = 1;
-//! assert_eq!(state.update(&mut ammo), NodeResult::Success);
+//! assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
 //! assert_eq!(ammo, 0);
 //! ```
 //!
@@ -24,13 +24,12 @@ mod children;
 mod control;
 mod execution;
 mod leaf;
-mod storage;
 
-pub use children::BtChildren;
+pub use children::{BtChildren, TupleState};
 pub use control::{
     BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
 };
-pub use execution::{BtState, ExecutionCursor};
+pub use execution::{BtState, update};
 pub use leaf::{Check, Leaf, check, leaf};
 
 /// The result of an invocation: terminal completion or suspension.
@@ -64,22 +63,20 @@ pub enum EntryMode {
     Resume,
 }
 
-/// An immutable definition with separate, invocation-local state.
+/// An immutable definition with separate, statically composed state.
+/// A composing node includes its descendants in State and chooses which fields
+/// to pass to them. It owns initialization and cleanup of nested invocations.
 ///
-/// Fresh invocations enter as Evaluate; saved invocations enter as Resume in M1.
+/// Fresh invocations enter as Evaluate. Existing invocations can receive Resume
+/// or Evaluate; Evaluate alone must not reset existing state.
 /// State survives only while Running. Use optional state fields to initialize
-/// context-dependent data; Evaluate alone must not reset existing state.
-/// Use `BtState` to drive execution; calling `update` directly bypasses it.
+/// context-dependent data.
+/// Use the free `update` function to drive execution with a root and `BtState`.
+/// Composing nodes call this method on children with their chosen state fields.
 /// User code should report recoverable errors with `NodeResult::error`.
 /// Panics in user code are not caught by the runtime.
 pub trait BtNode<C> {
     type State: Default + Send + 'static;
 
-    fn update(
-        &self,
-        state: &mut Self::State,
-        ctx: &mut C,
-        exec: &mut ExecutionCursor<'_>,
-        mode: EntryMode,
-    ) -> NodeResult;
+    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult;
 }

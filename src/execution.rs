@@ -1,100 +1,66 @@
 use std::marker::PhantomData;
 
-use crate::{BtNode, EntryMode, NodeResult, storage::FrameStorage};
+use crate::{BtNode, EntryMode, NodeResult};
 
-/// A tree-bound execution instance. Terminal results release its active path;
-/// the next update starts a fresh invocation. Dropping or resetting it drops state.
-///
-/// The definition is borrowed for the instance's lifetime and cannot be replaced
-/// while a continuation is saved. Different instances may share one definition.
-/// Normal updates follow the saved path (`ResumeCurrentPath` semantics).
-pub struct BtState<'tree, N, C> {
-    definition: &'tree N,
-    frames: FrameStorage,
+/// Per-agent data bound to its root definition. The root's concrete state includes
+/// its statically composed descendants. Execution is driven by `update`.
+pub struct BtState<'root, N: BtNode<C>, C> {
+    root_node: &'root N,
+    root_state: Option<N::State>,
     context: PhantomData<fn(&mut C)>,
 }
 
-impl<'tree, N: BtNode<C>, C> BtState<'tree, N, C> {
-    pub fn new(definition: &'tree N) -> Self {
+impl<'root, N: BtNode<C>, C> BtState<'root, N, C> {
+    pub fn new(root_node: &'root N) -> Self {
         Self {
-            definition,
-            frames: FrameStorage::default(),
+            root_node,
+            root_state: None,
             context: PhantomData,
         }
     }
 
-    pub fn update(&mut self, ctx: &mut C) -> NodeResult {
-        run_node(self.definition, &mut self.frames, ctx)
-    }
-
     pub fn is_running(&self) -> bool {
-        !self.frames.is_empty()
+        self.root_state.is_some()
     }
 
-    /// Discards the continuation through normal Rust Drop. No abort hooks run.
+    /// Drops the root state, including all descendants; keeps the root binding.
     pub fn reset(&mut self) {
-        self.frames.clear();
+        self.root_state = None;
     }
 }
 
-#[derive(Default)]
-struct ChildSlot {
-    child_index: Option<usize>,
-    frames: FrameStorage,
-}
-
-#[derive(Default)]
-struct Invocation<S> {
-    // Rust drops fields in declaration order: descendants before parent state.
-    child: ChildSlot,
-    state: S,
-}
-
-/// Execution access for the current node invocation.
-///
-/// M1 uses this internally for static tuple child dispatch. Custom `BtNode`s can
-/// suspend using their own state; custom composition goes through `BtControl`.
-/// Dynamic child entry and root revalidation are not exposed yet.
-pub struct ExecutionCursor<'a> {
-    child: &'a mut ChildSlot,
-}
-
-impl ExecutionCursor<'_> {
-    pub(crate) fn run_child<C, N: BtNode<C>>(
-        &mut self,
-        child_index: usize,
-        node: &N,
-        ctx: &mut C,
-    ) -> NodeResult {
-        if self.child.child_index != Some(child_index) {
-            self.child.frames.clear();
-            self.child.child_index = Some(child_index);
-        }
-        let result = run_node(node, &mut self.child.frames, ctx);
-        if result != NodeResult::Running {
-            self.child.child_index = None;
-        }
-        result
+/// Runs the root with its state and application context.
+/// Resume follows the saved selection; Evaluate revalidates from the root.
+/// Newly created state always enters as Evaluate. A different root is rejected
+/// without modifying state or application context.
+pub fn update<C, N: BtNode<C>>(
+    root_node: &N,
+    state: &mut BtState<'_, N, C>,
+    ctx: &mut C,
+    mode: EntryMode,
+) -> NodeResult {
+    if !std::ptr::eq(root_node, state.root_node) {
+        return NodeResult::error("state belongs to a different root definition");
     }
+    run_node(root_node, &mut state.root_state, ctx, mode)
 }
 
-fn run_node<C, N: BtNode<C>>(node: &N, storage: &mut FrameStorage, ctx: &mut C) -> NodeResult {
-    let mode = if storage.is_empty() {
+/// Manages the lifetime of a concrete state slot selected by its owner.
+/// This helper neither locates state nor chooses a continuation.
+pub(crate) fn run_node<C, N: BtNode<C>>(
+    node: &N,
+    slot: &mut Option<N::State>,
+    ctx: &mut C,
+    mode: EntryMode,
+) -> NodeResult {
+    let mode = if slot.is_none() {
         EntryMode::Evaluate
     } else {
-        EntryMode::Resume
+        mode
     };
-    let result = match storage.get_or_insert::<Invocation<N::State>>() {
-        Some(frame) => {
-            let mut exec = ExecutionCursor {
-                child: &mut frame.child,
-            };
-            node.update(&mut frame.state, ctx, &mut exec, mode)
-        }
-        None => NodeResult::error("incompatible invocation state"),
-    };
+    let result = node.update(slot.get_or_insert_with(Default::default), ctx, mode);
     if result != NodeResult::Running {
-        storage.clear();
+        *slot = None;
     }
     result
 }

@@ -1,4 +1,5 @@
-use flatbt::{BtState, NodeResult, leaf, seq};
+use flatbt::{BtState, update};
+use flatbt::{EntryMode, NodeResult, leaf, seq};
 
 #[path = "support/wait_frames.rs"]
 mod wait;
@@ -24,10 +25,10 @@ fn main() {
     ));
     let mut state = BtState::new(&tree);
     let mut agent = Agent::default();
-    for update in 1..=4 {
-        let result = state.update(&mut agent);
+    for update_index in 1..=4 {
+        let result = update(&tree, &mut state, &mut agent, EntryMode::Resume);
         println!(
-            "update {update}: {result:?} | checks={} shots={}",
+            "update {update_index}: {result:?} | checks={} shots={}",
             agent.checks, agent.shots
         );
     }
