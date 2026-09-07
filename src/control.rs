@@ -20,7 +20,7 @@ impl ControlOp {
 #[derive(Default)]
 pub struct ControlState<S> {
     inner: S,
-    active_child: Option<usize>,
+    active_child_index: Option<usize>,
 }
 
 /// A statically dispatched control-flow policy, separate from node execution.
@@ -31,7 +31,7 @@ pub struct ControlState<S> {
 pub trait BtControl<C> {
     type State: Default + Send + 'static;
 
-    /// Revalidates this control's decision. `active_child` is framework-owned
+    /// Revalidates this control's decision. `active_child_index` is framework-owned
     /// continuation metadata, passed by value so the policy cannot overwrite it.
     /// Sequence preserves it; Selector deliberately starts a new priority scan.
     /// Normal Resume follows the active child without calling this method.
@@ -39,23 +39,25 @@ pub trait BtControl<C> {
         &self,
         state: &mut Self::State,
         ctx: &mut C,
-        active_child: Option<usize>,
+        active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp;
 
+    /// Handles the child that just succeeded, after its invocation has ended.
     fn child_succeeded(
         &self,
         state: &mut Self::State,
         ctx: &mut C,
-        child_index: usize,
+        completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp;
 
+    /// Handles the child that just failed, after its invocation has ended.
     fn child_failed(
         &self,
         state: &mut Self::State,
         ctx: &mut C,
-        child_index: usize,
+        completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp;
 }
@@ -81,37 +83,48 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
         exec: &mut ExecutionCursor<'_>,
         mode: EntryMode,
     ) -> NodeResult {
-        let mut op = match (mode, state.active_child) {
-            (EntryMode::Resume, Some(index)) => ControlOp::RunChild(index),
-            _ => self
-                .policy
-                .begin(&mut state.inner, ctx, state.active_child, Children::LEN),
+        let mut op = match (mode, state.active_child_index) {
+            (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
+            _ => self.policy.begin(
+                &mut state.inner,
+                ctx,
+                state.active_child_index,
+                Children::LEN,
+            ),
         };
         loop {
             op = match op {
                 ControlOp::Success => return NodeResult::Success,
                 ControlOp::Failure => return NodeResult::Failure,
-                ControlOp::RunChild(index) => {
-                    if index >= Children::LEN {
+                ControlOp::RunChild(child_index) => {
+                    if child_index >= Children::LEN {
                         return NodeResult::error(format_args!(
-                            "control policy returned invalid child index {index} for {} children",
+                            "control policy returned invalid child index {child_index} for {} children",
                             Children::LEN,
                         ));
                     }
-                    match self.children.run_child(index, ctx, exec) {
+                    match self.children.run_child(child_index, ctx, exec) {
                         NodeResult::Running => {
-                            state.active_child = Some(index);
+                            state.active_child_index = Some(child_index);
                             return NodeResult::Running;
                         }
                         NodeResult::Success => {
-                            state.active_child = None;
-                            self.policy
-                                .child_succeeded(&mut state.inner, ctx, index, Children::LEN)
+                            state.active_child_index = None;
+                            self.policy.child_succeeded(
+                                &mut state.inner,
+                                ctx,
+                                child_index,
+                                Children::LEN,
+                            )
                         }
                         NodeResult::Failure => {
-                            state.active_child = None;
-                            self.policy
-                                .child_failed(&mut state.inner, ctx, index, Children::LEN)
+                            state.active_child_index = None;
+                            self.policy.child_failed(
+                                &mut state.inner,
+                                ctx,
+                                child_index,
+                                Children::LEN,
+                            )
                         }
                     }
                 }
@@ -137,13 +150,13 @@ impl<C> BtControl<C> for Sequence {
         &self,
         _: &mut (),
         _: &mut C,
-        active_child: Option<usize>,
+        active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
         if child_count == 0 {
             ControlOp::Success
         } else {
-            ControlOp::RunChild(active_child.unwrap_or(0))
+            ControlOp::RunChild(active_child_index.unwrap_or(0))
         }
     }
 
@@ -151,17 +164,23 @@ impl<C> BtControl<C> for Sequence {
         &self,
         _: &mut (),
         _: &mut C,
-        index: usize,
+        completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp {
-        if index + 1 < child_count {
-            ControlOp::RunChild(index + 1)
+        if completed_child_index + 1 < child_count {
+            ControlOp::RunChild(completed_child_index + 1)
         } else {
             ControlOp::Success
         }
     }
 
-    fn child_failed(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_failed(
+        &self,
+        _: &mut (),
+        _: &mut C,
+        _completed_child_index: usize,
+        _child_count: usize,
+    ) -> ControlOp {
         ControlOp::Failure
     }
 }
@@ -179,7 +198,13 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
 impl<C> BtControl<C> for Selector {
     type State = ();
 
-    fn begin(&self, _: &mut (), _: &mut C, _: Option<usize>, child_count: usize) -> ControlOp {
+    fn begin(
+        &self,
+        _: &mut (),
+        _: &mut C,
+        _active_child_index: Option<usize>,
+        child_count: usize,
+    ) -> ControlOp {
         if child_count == 0 {
             ControlOp::Failure
         } else {
@@ -187,13 +212,25 @@ impl<C> BtControl<C> for Selector {
         }
     }
 
-    fn child_succeeded(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_succeeded(
+        &self,
+        _: &mut (),
+        _: &mut C,
+        _completed_child_index: usize,
+        _child_count: usize,
+    ) -> ControlOp {
         ControlOp::Success
     }
 
-    fn child_failed(&self, _: &mut (), _: &mut C, index: usize, child_count: usize) -> ControlOp {
-        if index + 1 < child_count {
-            ControlOp::RunChild(index + 1)
+    fn child_failed(
+        &self,
+        _: &mut (),
+        _: &mut C,
+        completed_child_index: usize,
+        child_count: usize,
+    ) -> ControlOp {
+        if completed_child_index + 1 < child_count {
+            ControlOp::RunChild(completed_child_index + 1)
         } else {
             ControlOp::Failure
         }

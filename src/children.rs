@@ -6,15 +6,20 @@ pub trait BtChildren<C> {
 
     /// Runs the selected child.
     /// Invalid indices report an error and return Failure.
-    fn run_child(&self, index: usize, ctx: &mut C, exec: &mut ExecutionCursor<'_>) -> NodeResult;
+    fn run_child(
+        &self,
+        child_index: usize,
+        ctx: &mut C,
+        exec: &mut ExecutionCursor<'_>,
+    ) -> NodeResult;
 }
 
 impl<C> BtChildren<C> for () {
     const LEN: usize = 0;
 
-    fn run_child(&self, index: usize, _: &mut C, _: &mut ExecutionCursor<'_>) -> NodeResult {
+    fn run_child(&self, child_index: usize, _: &mut C, _: &mut ExecutionCursor<'_>) -> NodeResult {
         NodeResult::error(format_args!(
-            "child index {index} out of bounds for empty children"
+            "child index {child_index} out of bounds for empty children"
         ))
     }
 }
@@ -26,10 +31,10 @@ macro_rules! tuple_children {
         impl<C, $($node: BtNode<C>),+> BtChildren<C> for ($($node,)+) {
             const LEN: usize = [$(stringify!($node)),+].len();
 
-            fn run_child(&self, index: usize, ctx: &mut C, exec: &mut ExecutionCursor<'_>) -> NodeResult {
-                match index {
+            fn run_child(&self, child_index: usize, ctx: &mut C, exec: &mut ExecutionCursor<'_>) -> NodeResult {
+                match child_index {
                     $($index => exec.run_child($index, &self.$index, ctx),)+
-                    _ => NodeResult::error(format_args!("child index {index} out of bounds for {} children", Self::LEN)),
+                    _ => NodeResult::error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
                 }
             }
         }

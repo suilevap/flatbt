@@ -121,7 +121,7 @@ normal Resume bypassed `begin`, and the existing tests only exercised Evaluate o
 fresh invocations. That left the low-level existing-invocation Evaluate contract
 incorrect even though full root revalidation was deferred.
 
-`BtControl::begin` now receives `active_child: Option<usize>` by value. The
+`BtControl::begin` now receives `active_child_index: Option<usize>` by value. The
 framework retains ownership of that metadata. Sequence selects the saved child
 when present; Selector deliberately restarts its priority scan at zero. The
 policy's own State can remain `()` because continuation is framework-owned.
@@ -132,3 +132,8 @@ replay it in Sequence, while Selector must inspect it again. The test failed on
 the previous implementation and passes with the corrected contract. All 12
 behavioral tests and the doctest pass. This test covers the control's entry
 semantics; it does not implement or validate full M2 candidate preservation.
+
+The control API names indices by their role: `active_child_index` identifies the
+saved invocation at decision entry; `completed_child_index` identifies the child
+whose terminal result triggered a callback. Dispatch uses `child_index` before
+the result is known. Policies can read continuation metadata but do not own it.

@@ -67,13 +67,31 @@ fn execution_errors_fail_the_branch_and_allow_fallback() {
     struct InvalidIndex;
     impl<C> BtControl<C> for InvalidIndex {
         type State = ();
-        fn begin(&self, _: &mut (), _: &mut C, _: Option<usize>, count: usize) -> ControlOp {
+        fn begin(
+            &self,
+            _: &mut (),
+            _: &mut C,
+            _active_child_index: Option<usize>,
+            count: usize,
+        ) -> ControlOp {
             ControlOp::RunChild(count)
         }
-        fn child_succeeded(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+        fn child_succeeded(
+            &self,
+            _: &mut (),
+            _: &mut C,
+            _completed_child_index: usize,
+            _child_count: usize,
+        ) -> ControlOp {
             ControlOp::Success
         }
-        fn child_failed(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+        fn child_failed(
+            &self,
+            _: &mut (),
+            _: &mut C,
+            _completed_child_index: usize,
+            _child_count: usize,
+        ) -> ControlOp {
             ControlOp::Failure
         }
     }

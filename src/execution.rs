@@ -39,7 +39,7 @@ impl<'tree, N: BtNode<C>, C> BtState<'tree, N, C> {
 
 #[derive(Default)]
 struct ChildSlot {
-    index: Option<usize>,
+    child_index: Option<usize>,
     frames: FrameStorage,
 }
 
@@ -62,17 +62,17 @@ pub struct ExecutionCursor<'a> {
 impl ExecutionCursor<'_> {
     pub(crate) fn run_child<C, N: BtNode<C>>(
         &mut self,
-        index: usize,
+        child_index: usize,
         node: &N,
         ctx: &mut C,
     ) -> NodeResult {
-        if self.child.index != Some(index) {
+        if self.child.child_index != Some(child_index) {
             self.child.frames.clear();
-            self.child.index = Some(index);
+            self.child.child_index = Some(child_index);
         }
         let result = run_node(node, &mut self.child.frames, ctx);
         if result != NodeResult::Running {
-            self.child.index = None;
+            self.child.child_index = None;
         }
         result
     }
