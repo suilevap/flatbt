@@ -111,3 +111,24 @@ Custom composition currently uses `BtControl` and stable tuple children. The cur
 direct child-entry helper remains internal. Custom implementations must not swap
 child definitions behind a persisted slot; dynamic composition is outside M1's
 identity contract and needs explicit identity rules before it is supported.
+
+
+## 2026-09-07 — Review correction: Sequence Evaluate semantics
+
+Review exposed a missing part of the policy contract: `begin` had no access to
+continuation metadata, so Sequence always selected child zero on Evaluate. M1's
+normal Resume bypassed `begin`, and the existing tests only exercised Evaluate on
+fresh invocations. That left the low-level existing-invocation Evaluate contract
+incorrect even though full root revalidation was deferred.
+
+`BtControl::begin` now receives `active_child: Option<usize>` by value. The
+framework retains ownership of that metadata. Sequence selects the saved child
+when present; Selector deliberately restarts its priority scan at zero. The
+policy's own State can remain `()` because continuation is framework-owned.
+
+One regression scenario enters existing controls with Evaluate through a small
+low-level node adapter. Changing the earlier condition after suspension must not
+replay it in Sequence, while Selector must inspect it again. The test failed on
+the previous implementation and passes with the corrected contract. All 12
+behavioral tests and the doctest pass. This test covers the control's entry
+semantics; it does not implement or validate full M2 candidate preservation.

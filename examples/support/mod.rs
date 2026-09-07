@@ -7,7 +7,7 @@ pub struct Repeat(pub usize);
 impl<C> BtControl<C> for Repeat {
     type State = usize;
 
-    fn begin(&self, _: &mut usize, _: &mut C, child_count: usize) -> ControlOp {
+    fn begin(&self, _: &mut usize, _: &mut C, _: Option<usize>, child_count: usize) -> ControlOp {
         if child_count != 1 {
             return ControlOp::error("Repeat expects exactly one child");
         }

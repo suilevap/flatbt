@@ -163,3 +163,55 @@ fn failure_after_suspension_releases_path_and_runs_fallback() {
     assert!(!state.is_running());
     assert_eq!(drops.load(Ordering::Relaxed), 1);
 }
+
+// Exercise an existing node's Evaluate entry through the low-level protocol.
+// This does not expose or emulate full root revalidation in the execution layer.
+struct EvaluateOnEntry<N>(N);
+
+impl<C, N: BtNode<C>> BtNode<C> for EvaluateOnEntry<N> {
+    type State = N::State;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        exec: &mut ExecutionCursor<'_>,
+        _: EntryMode,
+    ) -> NodeResult {
+        self.0.update(state, ctx, exec, EntryMode::Evaluate)
+    }
+}
+
+#[test]
+fn evaluate_preserves_sequence_progress_but_rescans_selector() {
+    struct Context {
+        gate_open: bool,
+        checks: usize,
+    }
+    fn gate(ctx: &mut Context) -> NodeResult {
+        ctx.checks += 1;
+        if ctx.gate_open { Success } else { Failure }
+    }
+
+    let sequence = EvaluateOnEntry(seq((leaf(gate), wait_frames(1))));
+    let mut state = BtState::new(&sequence);
+    let mut ctx = Context {
+        gate_open: true,
+        checks: 0,
+    };
+    assert_eq!(state.update(&mut ctx), Running);
+    ctx.gate_open = false;
+    assert_eq!(state.update(&mut ctx), Success);
+    assert_eq!(ctx.checks, 1);
+
+    let selector = EvaluateOnEntry(select((leaf(gate), wait_frames(1))));
+    let mut state = BtState::new(&selector);
+    let mut ctx = Context {
+        gate_open: false,
+        checks: 0,
+    };
+    assert_eq!(state.update(&mut ctx), Running);
+    ctx.gate_open = true;
+    assert_eq!(state.update(&mut ctx), Success);
+    assert_eq!(ctx.checks, 2);
+}

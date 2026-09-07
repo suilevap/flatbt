@@ -31,7 +31,17 @@ pub struct ControlState<S> {
 pub trait BtControl<C> {
     type State: Default + Send + 'static;
 
-    fn begin(&self, state: &mut Self::State, ctx: &mut C, child_count: usize) -> ControlOp;
+    /// Revalidates this control's decision. `active_child` is framework-owned
+    /// continuation metadata, passed by value so the policy cannot overwrite it.
+    /// Sequence preserves it; Selector deliberately starts a new priority scan.
+    /// Normal Resume follows the active child without calling this method.
+    fn begin(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        active_child: Option<usize>,
+        child_count: usize,
+    ) -> ControlOp;
 
     fn child_succeeded(
         &self,
@@ -73,7 +83,9 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
     ) -> NodeResult {
         let mut op = match (mode, state.active_child) {
             (EntryMode::Resume, Some(index)) => ControlOp::RunChild(index),
-            _ => self.policy.begin(&mut state.inner, ctx, Children::LEN),
+            _ => self
+                .policy
+                .begin(&mut state.inner, ctx, state.active_child, Children::LEN),
         };
         loop {
             op = match op {
@@ -108,7 +120,8 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
     }
 }
 
-/// Runs children in order, stopping on the first failure.
+/// Runs children in order, stopping on the first failure. Re-evaluation preserves
+/// the active child instead of replaying completed children.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sequence;
 
@@ -120,11 +133,17 @@ pub fn seq<Children>(children: Children) -> ControlNode<Sequence, Children> {
 impl<C> BtControl<C> for Sequence {
     type State = ();
 
-    fn begin(&self, _: &mut (), _: &mut C, child_count: usize) -> ControlOp {
+    fn begin(
+        &self,
+        _: &mut (),
+        _: &mut C,
+        active_child: Option<usize>,
+        child_count: usize,
+    ) -> ControlOp {
         if child_count == 0 {
             ControlOp::Success
         } else {
-            ControlOp::RunChild(0)
+            ControlOp::RunChild(active_child.unwrap_or(0))
         }
     }
 
@@ -147,7 +166,8 @@ impl<C> BtControl<C> for Sequence {
     }
 }
 
-/// Tries children in priority order, stopping on the first success.
+/// Tries children in priority order, stopping on the first success. Re-evaluation
+/// starts at child zero; Resume follows the saved child without rescanning.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selector;
 
@@ -159,7 +179,7 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
 impl<C> BtControl<C> for Selector {
     type State = ();
 
-    fn begin(&self, _: &mut (), _: &mut C, child_count: usize) -> ControlOp {
+    fn begin(&self, _: &mut (), _: &mut C, _: Option<usize>, child_count: usize) -> ControlOp {
         if child_count == 0 {
             ControlOp::Failure
         } else {

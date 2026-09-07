@@ -53,8 +53,10 @@ cargo clippy --offline --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-A selector resumes its selected child without rescanning higher priorities. Root
-revalidation is planned for M2. An empty sequence succeeds; an empty selector fails.
+Normal Resume follows the selected child without calling the control policy's
+`begin`. On Evaluate, `begin` receives the active child: Sequence preserves its
+progress, while Selector restarts at child zero. Full root revalidation through
+`BtState` is planned for M2. An empty sequence succeeds; an empty selector fails.
 `wait_frames(n)` returns Running for `n` updates and succeeds on the next; it measures
 updates, not wall-clock time. Running does not require a tick capability.
 
