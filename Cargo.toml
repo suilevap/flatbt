@@ -1,0 +1,8 @@
+[package]
+name = "flatbt"
+version = "0.1.0"
+edition = "2024"
+description = "An experimental behavior tree runtime with static composition"
+publish = false
+
+[dependencies]
