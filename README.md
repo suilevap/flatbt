@@ -7,17 +7,16 @@ production storage and a compiled frontend.
 Currently implemented: **M1 — suspension and normal resume**.
 
 - `BtNode` with `Success`, `Failure`, and `Running` results;
-- `seq`, `select`, `check`, `leaf`, and `wait_frames`;
+- `seq`, `select`, `check`, and `leaf`;
 - custom `BtControl` policies and statically dispatched tuple children (arity 0–32);
 - tree-bound `BtState` instances with boxed storage for the active invocation path;
 - fresh entry as `Evaluate`, followed by `Resume` while suspended.
 
 ```rust
-use flatbt::{BtState, NodeResult, check, leaf, seq, wait_frames};
+use flatbt::{BtState, NodeResult, check, leaf, seq};
 
 let tree = seq((
     check(|ammo: &usize| *ammo > 0),
-    wait_frames(3),
     leaf(|ammo: &mut usize| {
         *ammo -= 1;
         NodeResult::Success
@@ -26,17 +25,13 @@ let tree = seq((
 
 let mut state = BtState::new(&tree);
 let mut ammo = 1;
-for _ in 0..3 {
-    assert_eq!(state.update(&mut ammo), NodeResult::Running);
-}
 assert_eq!(state.update(&mut ammo), NodeResult::Success);
 assert_eq!(ammo, 0);
 ```
 
-The condition executes once. The sequence resumes its waiting child and executes
-fire in the same update in which wait completes. A terminal result releases the
-active path; the next update starts a fresh invocation. `state.reset()` discards a
-suspended invocation through normal Rust Drop. Multiple instances can share a tree.
+A terminal result releases the active path; the next update starts a fresh
+invocation. `state.reset()` discards a suspended invocation through normal Rust
+Drop. Multiple instances can share a tree.
 
 Examples:
 
@@ -44,6 +39,16 @@ Examples:
 cargo run --offline --example synchronous
 cargo run --offline --example resume
 ```
+
+The resume example uses an application-defined `WaitFrames` node from
+`examples/support/wait_frames.rs`, shared with the tests. Its condition executes
+once; the sequence resumes wait across updates and executes fire in the same
+update in which wait completes.
+
+The core provides execution protocols and composition primitives. A reusable
+catalog of ready-made nodes and policies (Wait, PrioritySelect, RandomSelect,
+Throttling, WhileDecorator, and similar utilities) belongs in a separate crate
+if we introduce one later. Example and test helpers are not core exports.
 
 Validation:
 
@@ -57,8 +62,9 @@ Normal Resume follows the selected child without calling the control policy's
 `begin`. On Evaluate, `begin` receives the active child: Sequence preserves its
 progress, while Selector restarts at child zero. Full root revalidation through
 `BtState` is planned for M2. An empty sequence succeeds; an empty selector fails.
-`wait_frames(n)` returns Running for `n` updates and succeeds on the next; it measures
-updates, not wall-clock time. Running does not require a tick capability.
+The example helper `wait_frames(n)` returns Running for `n` updates and succeeds
+on the next; it measures updates, not wall-clock time. Running does not require
+a tick capability.
 
 For custom nodes, implement `BtNode` with `State: Default + Send + 'static`. State is
 separate from the immutable definition and persists while Running. Custom composition

@@ -1,4 +1,8 @@
-use flatbt::{BtState, NodeResult, leaf, seq, wait_frames};
+use flatbt::{BtState, NodeResult, leaf, seq};
+
+#[path = "support/wait_frames.rs"]
+mod wait;
+use wait::wait_frames;
 
 #[derive(Default)]
 struct Agent {

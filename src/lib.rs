@@ -1,11 +1,10 @@
 //! A resumable behavior tree runtime with static composition.
 //!
 //! ```
-//! use flatbt::{BtState, NodeResult, check, leaf, seq, wait_frames};
+//! use flatbt::{BtState, NodeResult, check, leaf, seq};
 //!
 //! let tree = seq((
 //!     check(|ammo: &usize| *ammo > 0),
-//!     wait_frames(1),
 //!     leaf(|ammo: &mut usize| {
 //!         *ammo -= 1;
 //!         NodeResult::Success
@@ -13,10 +12,11 @@
 //! ));
 //! let mut state = BtState::new(&tree);
 //! let mut ammo = 1;
-//! assert_eq!(state.update(&mut ammo), NodeResult::Running);
 //! assert_eq!(state.update(&mut ammo), NodeResult::Success);
 //! assert_eq!(ammo, 0);
 //! ```
+//!
+//! See `examples/resume.rs` for suspension with an application-defined node.
 
 #![forbid(unsafe_code)]
 
@@ -31,7 +31,7 @@ pub use control::{
     BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
 };
 pub use execution::{BtState, ExecutionCursor};
-pub use leaf::{Check, Leaf, WaitFrames, check, leaf, wait_frames};
+pub use leaf::{Check, Leaf, check, leaf};
 
 /// The result of an invocation: terminal completion or suspension.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

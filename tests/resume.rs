@@ -3,15 +3,16 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use flatbt::{
-    BtNode, BtState, EntryMode, ExecutionCursor, NodeResult, control, leaf, select, seq,
-    wait_frames,
-};
+use flatbt::{BtNode, BtState, EntryMode, ExecutionCursor, NodeResult, control, leaf, select, seq};
 
 #[path = "../examples/support/mod.rs"]
 mod support;
 use NodeResult::{Failure, Running, Success};
 use support::Repeat;
+
+#[path = "../examples/support/wait_frames.rs"]
+mod wait;
+use wait::wait_frames;
 
 #[test]
 fn sequence_resumes_wait_and_fires_in_the_completion_update() {

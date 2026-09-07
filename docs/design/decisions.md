@@ -137,3 +137,16 @@ The control API names indices by their role: `active_child_index` identifies the
 saved invocation at decision entry; `completed_child_index` identifies the child
 whose terminal result triggered a callback. Dispatch uses `child_index` before
 the result is known. Policies can read continuation metadata but do not own it.
+
+
+## 2026-09-07 — Keep ready-made utility nodes outside core
+
+`WaitFrames` and `wait_frames` were moved out of the library into
+`examples/support/wait_frames.rs`. The resume example and tests share that
+implementation, which uses only the public `BtNode` protocol. Core documentation
+now demonstrates core APIs without importing the example helper.
+
+Core owns execution protocols and composition primitives. A future catalog of
+ready-made nodes and policies such as Wait, PrioritySelect, RandomSelect,
+Throttling, and WhileDecorator should live in a separate crate. No catalog crate
+is introduced yet. This changes API placement, not wait or resume semantics.
