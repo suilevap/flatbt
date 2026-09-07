@@ -1,15 +1,15 @@
 # FlatBT
 
-Экспериментальный Behavior Tree runtime на Rust. Развиваем небольшими рабочими
-итерациями: сначала проверяем семантику в generic runtime, затем добавляем storage
-и compiled frontend.
+An experimental Behavior Tree runtime in Rust. Development proceeds in small,
+working iterations: validate semantics in the generic runtime first, then add
+storage and a compiled frontend.
 
-Сейчас реализован **M0 — синхронная композиция**:
+Currently implemented: **M0 — synchronous composition**.
 
-- `BtNode` и результаты `Success` / `Failure`;
-- `seq`, `select`, `check` и `leaf`;
-- `ControlNode<P, Children>` и открытый `BtControl` для custom policies;
-- разнородные tuple-children размером 0–32 со статическим dispatch.
+- `BtNode` with `Success` / `Failure` results;
+- `seq`, `select`, `check`, and `leaf`;
+- `ControlNode<P, Children>` and a public `BtControl` trait for custom policies;
+- heterogeneous tuple children of arity 0–32 with static dispatch.
 
 ```rust
 use flatbt::{BtNode, NodeResult, check, leaf, select, seq};
@@ -30,13 +30,13 @@ assert_eq!(tree.update(&mut ammo), NodeResult::Success);
 assert_eq!(tree.update(&mut ammo), NodeResult::Failure);
 ```
 
-Запуск примера с combat/patrol/idle и собственной policy `Repeat`:
+Run the combat/patrol/idle example, which includes a custom `Repeat` policy:
 
 ```sh
 cargo run --offline --example synchronous
 ```
 
-Проверки:
+Validation:
 
 ```sh
 cargo test --offline
@@ -44,16 +44,17 @@ cargo clippy --offline --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Каждый `update` пока выполняется до terminal result и начинает новую invocation.
-Пустая sequence возвращает `Success`, пустой selector — `Failure`. Изменения context
-применяются сразу и сохраняются даже после неуспешной ветки. Пример `fire` демонстрирует
-только синхронное выполнение; post-commit гарантия для эффектов появится с `BtTick`.
-Custom policy отвечает за завершение своего цикла: execution budget пока отсутствует.
+Every `update` currently starts a fresh invocation and runs to a terminal result.
+An empty sequence returns `Success`; an empty selector returns `Failure`. Context
+changes take effect immediately and survive a failed branch. The `fire` example
+demonstrates synchronous execution only; post-commit guarantees for effects will
+arrive with `BtTick`. Custom policies must ensure their execution loops terminate;
+there is no execution budget yet.
 
-API экспериментальный и будет меняться. `Running`, resume/revalidation, frame storage,
-`BtTick`, dynamic behaviors и `bt!` ещё не реализованы. Следующий срез — M1:
-`check → wait_frames(3) → fire` через несколько updates.
+The API is experimental and will change. `Running`, resume/revalidation, frame
+storage, `BtTick`, dynamic behaviors, and `bt!` are not implemented yet. The next
+iteration is M1: `check → wait_frames(3) → fire` across multiple updates.
 
-[Журнал решений](docs/design/decisions.md) описывает текущее состояние реализации.
-[Исходный архитектурный документ](docs/design/original-architecture.md) сохранён как
-материал для обсуждения; его положения не являются обязательным контрактом.
+The [decision log](docs/design/decisions.md) describes the current implementation.
+The [original architecture document](docs/design/original-architecture.md) is an
+unmodified Russian source snapshot retained for discussion, not a binding contract.

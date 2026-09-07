@@ -1,52 +1,55 @@
-# Решения по мере реализации
+# Implementation decisions
 
-## 2026-09-07 — M0: исполняемый синхронный backend
+## 2026-09-07 — M0: executable synchronous backend
 
-Исходный документ — источник идей, а не неизменяемая спецификация. Здесь фиксируем
-реализованные решения, отличия и вопросы для следующих итераций. При расхождении
-с документом текущую реализованную семантику описывают код, тесты и этот журнал.
+The original document is a source of ideas, not an immutable specification. This
+log records implemented decisions, deviations, and questions for later iterations.
+Where the source document differs, the code, tests, and this log describe the
+semantics currently implemented.
 
-### Что принято для первой итерации
+### Decisions for the first iteration
 
-- Один library crate `flatbt`, Rust edition 2024, без внешних зависимостей.
-  Проверено на Rust 1.98.1; минимальная поддерживаемая версия пока не определена.
-- Определение дерева неизменно (`&self`); mutable application data передаётся через
-  `&mut C`. Одно определение можно последовательно выполнять с разными context.
-- `BtNode::update(&self, &mut C) -> NodeResult` пока синхронный. Не вводим фиктивные
-  `ExecutionCursor`, `EntryMode` или persistent state до исполняемого сценария M1.
-  Это временная сигнатура, а не решение отказаться от resumable protocol.
-- `BtControl<C>` — отдельная policy, не node. `ControlNode` владеет циклом исполнения;
-  policy выбирает следующий индекс. Callback вызывается после terminal result child.
-  `State: Default` создаётся на каждую invocation; `Send` пока не требуется, поскольку
-  state не переживает update. Ограничения persistent state обсудим в M1.
-- Children — обычные tuples 0–32. Macro генерирует прямой вызов concrete child в
-  каждом `match` arm. Trait objects, unsafe и frame storage в этом срезе отсутствуют.
-- Sequence идёт до первой failure, selector — до первого success. Пустые controls
-  имеют identity results: sequence success, selector failure.
-- Custom policy может снова выбрать terminal child в том же update. Ответственность
-  за конечность цикла лежит на policy; неверный индекс приводит к понятному panic.
-- Context не откатывается после failure. Будущая speculative execution также требует
-  отдельного обсуждения side effects; здесь пока нет commit или tick guarantee.
+- One library crate, `flatbt`, using Rust edition 2024 with no external dependencies.
+  Validated on Rust 1.98.1; the minimum supported Rust version is not yet defined.
+- Tree definitions are immutable (`&self`); mutable application data is passed through
+  `&mut C`. One definition can execute sequentially with different contexts.
+- `BtNode::update(&self, &mut C) -> NodeResult` is currently synchronous. Defer
+  `ExecutionCursor`, `EntryMode`, and persistent state until an executable M1 scenario
+  can validate them. This signature is temporary; the resumable protocol remains planned.
+- `BtControl<C>` is a separate policy, not a node. `ControlNode` owns the execution
+  loop; the policy selects the next index. A callback runs after a child's terminal
+  result. `State: Default` is created for each invocation. `Send` is not required yet
+  because state does not survive an update. Revisit persistent state bounds in M1.
+- Children are ordinary tuples of arity 0–32. A macro generates a direct call to the
+  concrete child in each `match` arm. This iteration uses no trait objects, unsafe
+  code, or frame storage.
+- A sequence stops at the first failure; a selector stops at the first success.
+  Empty controls have identity results: sequence success, selector failure.
+- A custom policy can select a child again after its terminal result in the same
+  update. The policy must ensure termination; an invalid index causes a clear panic.
+- Context changes are not rolled back after failure. Side effects during future
+  speculative execution need further discussion; no commit or tick guarantee exists yet.
 
-### Подтверждение кодом
+### Evidence in code
 
-`tests/synchronous.rs` проверяет порядок и short-circuit, вложенную разнородную
-композицию, повторный update, разные context, custom policy со свежим state,
-нулевое число повторов, неверные индексы и dispatch всех 32 позиций.
-`examples/synchronous.rs` исполняет combat/patrol/idle и включает собственную `Repeat`.
+`tests/synchronous.rs` covers execution order and short-circuiting, nested
+heterogeneous composition, repeated updates, different contexts, custom policies
+with fresh state, zero repetitions, invalid indices, and dispatch at all 32 positions.
+`examples/synchronous.rs` executes combat/patrol/idle and includes a custom `Repeat`.
 
-### Следующая итерация — M1
+### Next iteration — M1
 
-Реализовать `Running` без обязательного tick, boxed active-path storage и normal
-resume. Исполняемый сценарий: condition вызывается один раз, wait приостанавливается,
-а fire выполняется в том же update, в котором wait завершился.
+Implement `Running` without a mandatory tick, boxed storage for the active path,
+and normal resume. The executable scenario should evaluate a condition once,
+suspend in wait, and execute fire in the same update in which wait completes.
 
-До закрепления API проверить кодом:
+Validate these questions in code before settling the API:
 
-1. Как safe child-entry API разделяет execution traversal и typed frame storage.
-2. Как связываются definition и runtime state, чтобы state не достался другой node.
-3. Как заканчивается invocation и освобождается state, включая terminal result и Drop.
-4. Как fresh entry получает Evaluate, а сохранённая continuation — Resume.
+1. How does a safe child-entry API separate execution traversal from typed frame storage?
+2. How are definitions bound to runtime state so that state cannot reach the wrong node?
+3. How does an invocation end and release its state, including terminal results and Drop?
+4. How does a fresh entry receive Evaluate while a saved continuation receives Resume?
 
-Memoryful sequence при root revalidation, reactive selector и сохранение старой
-ветки во время проверки альтернатив относятся к M2. Синхронный M0 их ещё не проверяет.
+Memoryful sequences during root revalidation, reactive selectors, and preserving
+an old branch while evaluating alternatives belong to M2. Synchronous M0 does not
+validate those behaviors yet.
