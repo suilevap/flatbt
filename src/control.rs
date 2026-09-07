@@ -16,13 +16,12 @@ impl ControlOp {
     }
 }
 
-/// Statically composed child states, policy-local state, and selection metadata.
+/// Active child state and policy-local state. The child state encodes selection.
 #[derive(Default)]
 pub struct ControlState<S, ChildrenState> {
     // Field order releases descendants before the policy state.
     children: ChildrenState,
     inner: S,
-    active_child_index: Option<usize>,
 }
 
 /// A statically dispatched control-flow policy, separate from node execution.
@@ -33,8 +32,8 @@ pub struct ControlState<S, ChildrenState> {
 pub trait BtControl<C> {
     type State: Default + Send + 'static;
 
-    /// Revalidates this control's decision. `active_child_index` is ControlNode-owned
-    /// continuation metadata, passed by value so the policy cannot overwrite it.
+    /// Revalidates this control's decision. `active_child_index` is derived from
+    /// child state, passed by value so the policy cannot overwrite the selection.
     /// Sequence preserves it; Selector deliberately starts a new priority scan.
     /// Normal Resume follows the active child without calling this method.
     fn begin(
@@ -79,7 +78,7 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
     type State = ControlState<P::State, Children::State>;
 
     fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult {
-        let active_child_index = state.active_child_index;
+        let active_child_index = self.children.active_child_index(&state.children);
         let mut op = match (mode, active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
             _ => self
@@ -97,44 +96,23 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
                             Children::LEN,
                         ));
                     }
-                    // A terminal fresh candidate must preserve the saved selection:
-                    // the policy may still return to it later in this update.
-                    let existing = state.active_child_index == Some(child_index);
                     match self
                         .children
                         .run_child(&mut state.children, child_index, ctx, mode)
                     {
-                        NodeResult::Running => {
-                            if let Some(previous) = state.active_child_index
-                                && previous != child_index
-                            {
-                                self.children.reset_child(&mut state.children, previous);
-                            }
-                            state.active_child_index = Some(child_index);
-                            return NodeResult::Running;
-                        }
-                        NodeResult::Success => {
-                            if existing {
-                                state.active_child_index = None;
-                            }
-                            self.policy.child_succeeded(
-                                &mut state.inner,
-                                ctx,
-                                child_index,
-                                Children::LEN,
-                            )
-                        }
-                        NodeResult::Failure => {
-                            if existing {
-                                state.active_child_index = None;
-                            }
-                            self.policy.child_failed(
-                                &mut state.inner,
-                                ctx,
-                                child_index,
-                                Children::LEN,
-                            )
-                        }
+                        NodeResult::Running => return NodeResult::Running,
+                        NodeResult::Success => self.policy.child_succeeded(
+                            &mut state.inner,
+                            ctx,
+                            child_index,
+                            Children::LEN,
+                        ),
+                        NodeResult::Failure => self.policy.child_failed(
+                            &mut state.inner,
+                            ctx,
+                            child_index,
+                            Children::LEN,
+                        ),
                     }
                 }
             };

@@ -25,7 +25,7 @@ mod control;
 mod execution;
 mod leaf;
 
-pub use children::{BtChildren, TupleState};
+pub use children::{BtChildren, child_state};
 pub use control::{
     BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
 };

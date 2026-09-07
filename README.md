@@ -38,16 +38,22 @@ A failed candidate leaves the old branch state intact; a new Running candidate
 preempts it. A terminal result releases the invocation, so the next update starts fresh.
 
 Each node's `State` includes the state of its statically known descendants.
-`ControlNode::State` combines policy state, the active child index, and a tuple of
-typed optional child states. Tuple dispatch borrows the selected child's field
-directly. Unvisited children remain uninitialized. Failed candidates clear their
-own fields; a new Running candidate clears the previous selection's field.
+`ControlNode::State` combines policy state with a generated enum containing Empty
+or one active child's state. The variant also encodes the active child index.
+Tuple dispatch borrows an existing payload directly. During revalidation, a new
+candidate runs in a local variable while the old payload remains intact. Terminal
+candidates are dropped; a Running candidate replaces and drops the old payload.
 
-The runtime has no frame stack, scratch, type erasure, or storage backend. Static
+Persistent child state therefore reserves space for the largest alternative plus
+the enum tag and alignment, rather than space for all alternatives together.
+Candidate evaluation needs temporary call-stack space and moves selected state
+into the enum. Ordinary resume updates the saved payload in place. Controls with
+multiple simultaneously active children would need a different state layout.
+
+The runtime has no frame stack, scratch storage backend, or type erasure. Static
 state layout is known to Rust, and the runtime adds no heap allocations. A custom
-node can still own allocating resources in its state. The current product layout
-reserves space for every child; a compact sum layout is a later optimization.
-Frame storage and layout descriptors are deferred to dynamic node boundaries.
+node can still own allocating resources in its state. Frame storage and layout
+descriptors remain deferred to dynamic node boundaries.
 
 Examples:
 
@@ -64,9 +70,29 @@ patrol while a higher-priority candidate fails, then preempts it when that candi
 becomes eligible.
 
 Core provides `BtNode`, `BtControl`, and composition primitives: `seq`, `select`,
-`check`, and `leaf`. Tuple children of arity 0–32 use static dispatch. A reusable
+`check`, and `leaf`. Tuple children of arity 0–32 use static dispatch by default. A reusable
 catalog of utility nodes and policies belongs in a separate crate if introduced
 later. Example helpers are not core exports.
+
+To change the maximum tuple arity, put this in the consuming project's
+`.cargo/config.toml` (at the workspace root when using a Cargo workspace):
+
+```toml
+[env]
+FLATBT_MAX_CHILDREN = "64"
+```
+
+Cargo passes this setting to FlatBT's build script, including when FlatBT is a
+dependency. The default is 32; zero generates only the empty-tuple implementation.
+The value must be a non-negative integer. Changing it triggers regeneration on
+the next build without editing FlatBT or running `cargo clean`. An existing
+environment variable takes precedence over this config entry; use Cargo's
+`{ value = "64", force = true }` form if the config must override it.
+
+This is a build setting shared by consumers of that FlatBT build, not a runtime
+or per-tree setting. Larger values generate more Rust code and increase build
+cost; very large values can exceed the compiler's macro recursion limit. A tuple
+above the configured limit is rejected at compile time.
 
 Validation:
 

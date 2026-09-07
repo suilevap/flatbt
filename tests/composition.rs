@@ -71,3 +71,28 @@ fn rejected_static_candidate_drops_its_state_without_resetting_saved_branch() {
     assert_eq!(calls, 1);
     assert!(!state.is_running());
 }
+
+#[test]
+fn adding_alternatives_does_not_multiply_persistent_state_size() {
+    struct Wide;
+    impl BtNode<()> for Wide {
+        type State = [u64; 32];
+
+        fn update(&self, _: &mut Self::State, _: &mut (), _: EntryMode) -> NodeResult {
+            NodeResult::Running
+        }
+    }
+    fn state_size<N: BtNode<()>>(_: &N) -> usize {
+        std::mem::size_of::<N::State>()
+    }
+
+    let one = seq((Wide,));
+    let eight = seq((Wide, Wide, Wide, Wide, Wide, Wide, Wide, Wide));
+    // Leave room for discriminant/alignment differences without fixing Rust's ABI.
+    assert!(state_size(&eight) < 2 * state_size(&one));
+    println!(
+        "eight children: control_state={} bt_state={}",
+        state_size(&eight),
+        std::mem::size_of_val(&BtState::new(&eight)),
+    );
+}

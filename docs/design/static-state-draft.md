@@ -22,49 +22,84 @@ No cursor, storage type parameter, or Reuse/Fresh selector participates. A custo
 node owns the lifecycle of its nested state: it initializes fresh invocations,
 passes Evaluate on fresh entry, and drops completed or preempted invocations.
 
-## Product layout for control nodes
+## Enum layout for control nodes
 
-The tuple implementation generates child dispatch and child state together:
+The tuple implementation generates child dispatch and a state enum together:
 
 ```text
 ControlNode<Policy, (A, B, C)>::State
-  = ControlState<Policy::State,
-      TupleState<(Option<A::State>, Option<B::State>, Option<C::State>)>>
+  = ControlState<Policy::State, child_state::State3<A::State, B::State, C::State>>
+
+State3<SA, SB, SC> = Empty | Child0(SA) | Child1(SB) | Child2(SC)
 ```
 
-ControlState contains the child states, policy state, and active child index.
-Tuple dispatch selects both the definition and its state field in the same match
-arm. The private run_node helper receives that exact typed Option by reference;
-it initializes it on first entry and clears it on a terminal result. It performs
-no lookup, allocation, type erasure, or continuation selection.
+ControlState contains the child state enum and policy state. There is no separate
+active child index: BtChildren reads it from the variant. The generated State1
+through State32 types describe state alternatives, not node definitions; they do
+not implement a general-purpose Either node combinator.
 
-TupleState is a wrapper that supplies Default for tuples through arity 32;
-initialization sets all slots to None without constructing their node states.
-The complete layout is known to Rust. State size is the product layout's total,
-including Option tags and padding; unused slots still reserve space. The runtime
+`build.rs` derives the enum, type parameter, and variant names from the child
+index, using FLATBT_MAX_CHILDREN from the build environment (default 32). Consumers
+can set it in their workspace's .cargo/config.toml under [env], without editing
+FlatBT. Cargo tracks changes through rerun-if-env-changed. It writes only the macro invocation to
+Cargo's OUT_DIR; the enum and dispatch implementation remain in src/children.rs.
+This avoids a handwritten name table without identifier-concatenation dependencies
+or unstable macro features.
+
+Tuple dispatch matches the requested child index and corresponding enum variant.
+An existing payload is passed directly by mutable reference to that child. When
+another child is requested, dispatch initializes its concrete state in a local
+variable and enters it as Evaluate. The old payload stays alive during this call.
+
+Terminal candidates are dropped without modifying the saved variant. A Running
+candidate replaces the variant, dropping the old branch. A terminal result from
+the existing child clears the enum to Empty. Selection and lifetime therefore
+stay within static child composition; execution has no reuse/fresh selector.
+
+The complete layout is known to Rust. Persistent child storage is approximately
+the largest alternative plus a discriminant and alignment, not the total size of
+all children. The default Empty variant initializes no child state. The runtime
 adds no heap allocation. User-defined state can allocate its own resources.
 
-This is a deliberate first representation. A generated sum/enum layout can reduce
-reserved space later, but revalidation must allow an old branch and a candidate
-to coexist until the selection is resolved. A single active enum variant alone
-would not preserve that behavior without additional temporary storage.
+## Selection, lifetime, and temporary space
 
-## Selection and lifetime
+Resume follows the control's active variant. Evaluate asks the policy to choose
+again: Sequence preserves the active child; Selector begins at zero. An existing
+payload receives the requested mode; a new candidate gets Evaluate. Presence of
+state does not force Resume.
 
-Resume follows the control's active child. Evaluate asks the policy to choose
-again: Sequence preserves its active index; Selector begins at zero. An existing
-state field receives the requested mode; a newly initialized field gets Evaluate.
-Presence of state does not force Resume.
+Revalidation can require both the old state and a candidate simultaneously. The
+candidate occupies ordinary call-stack space for the duration of its evaluation;
+there is no second persistent slot or heterogeneous frame stack. Nested candidate
+evaluation can accumulate temporary state along the call chain. Large states or
+deep trees may therefore still need substantial call-stack space.
 
-During revalidation, the old branch remains in its own field while another field
-holds the candidate. A terminal candidate is dropped without disturbing the old
-field or index. A Running candidate causes ControlNode to reset the old field and
-record the new active index. No saved/scratch stack pair is needed.
+Selecting a candidate moves its state into the enum. Ordinary resume borrows the
+saved payload in place. This representation optimizes persistent memory; it does
+not promise faster updates, immovable state, or reduced peak call-stack usage.
 
-When the parent invocation terminates, its state is dropped, including any
-remaining nested state. ControlState declares children before policy state so
-normal destruction releases descendants first. Custom composing states own their
-field ordering and cleanup. Context mutations are never rolled back.
+When the parent terminates, its state is dropped, including the remaining active
+child. ControlState declares children before policy state so normal destruction
+releases descendants first. Custom composing states own their field ordering and
+cleanup. Context mutations are never rolled back.
+
+This layout fits the current control protocol, which returns immediately when a
+child is Running and retains at most one active child between calls. A future
+Parallel node retaining several children must use a different composed state.
+
+## Size check
+
+On the current development target, a sequence of eight children whose State is
+`[u64; 32]` has these sizes:
+
+| Representation | Control State | Whole BtState |
+| --- | ---: | ---: |
+| Previous tuple of optional states | 2128 bytes | 2136 bytes |
+| Enum of active child states | 264 bytes | 272 bytes |
+
+These are observed Rust layouts, not ABI guarantees or execution-time benchmarks.
+The regression test compares one versus eight alternatives with room for tag and
+alignment differences, rather than hard-coding byte counts.
 
 ## Root API
 
@@ -89,13 +124,13 @@ and its implementation have been removed from this draft rather than retained as
 an unused public contract.
 
 The bt! compiler remains future work. The generic tuple implementation already
-generates the corresponding state product; future code generation must likewise
+generates the corresponding state enum; future code generation must likewise
 emit both definition composition and state composition.
 
 ## Validation scope
 
 Focused tests cover resume, sequence/selector revalidation, failed-candidate
-preservation, preemption, root binding, and state cleanup. Custom composing nodes
+preservation, preemption, root binding, state cleanup, and persistent state size. Custom composing nodes
 exercise direct nested-state access and destruction. The former backend test is
 replaced by a static composition scenario that rejects a Running candidate and
 then resumes the old branch without losing its progress.

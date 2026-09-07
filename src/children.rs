@@ -1,18 +1,19 @@
-use crate::{BtNode, EntryMode, NodeResult, execution::run_node};
+use crate::{BtNode, EntryMode, NodeResult};
 
-/// A tuple of statically known child state slots.
-/// The wrapper supplies Default for all supported arities, including above 12.
-pub struct TupleState<T>(T);
-
-/// Static dispatch over child definitions and their corresponding state fields.
-/// Implemented for tuples of arity 0–32.
+/// Static dispatch over child definitions and their corresponding state variants.
+/// Implemented through the build-time FLATBT_MAX_CHILDREN limit (default 32).
+/// At most one child stays active between calls.
 pub trait BtChildren<C> {
     type State: Default + Send + 'static;
     const LEN: usize;
 
-    /// Runs the selected child using its own typed state slot. Terminal results
-    /// drop that slot; other child states are left untouched.
-    /// Invalid indices report an error and return Failure.
+    /// Reads the active selection from the child state itself.
+    fn active_child_index(&self, state: &Self::State) -> Option<usize>;
+
+    /// Updates the active child in place or evaluates another child in local state.
+    /// A terminal candidate preserves the old selection; a Running candidate
+    /// replaces it. Completion of the active child clears the selection.
+    /// Invalid indices report an error and return Failure without modifying state.
     fn run_child(
         &self,
         state: &mut Self::State,
@@ -20,66 +21,81 @@ pub trait BtChildren<C> {
         ctx: &mut C,
         mode: EntryMode,
     ) -> NodeResult;
-
-    /// Drops the selected child's state when a new selection preempts it.
-    fn reset_child(&self, state: &mut Self::State, child_index: usize);
 }
 
 impl<C> BtChildren<C> for () {
     type State = ();
     const LEN: usize = 0;
 
+    fn active_child_index(&self, _: &()) -> Option<usize> {
+        None
+    }
+
     fn run_child(&self, _: &mut (), child_index: usize, _: &mut C, _: EntryMode) -> NodeResult {
         NodeResult::error(format_args!(
             "child index {child_index} out of bounds for empty children"
         ))
     }
-
-    fn reset_child(&self, _: &mut (), child_index: usize) {
-        crate::log_error(format_args!(
-            "child index {child_index} out of bounds for empty children"
-        ));
-    }
 }
 
-// Generate each tuple's state product and concrete child dispatch together.
+// Generate each tuple's state enum and concrete child dispatch together.
 macro_rules! tuple_children {
-    (@generate_impl $($index:tt $node:ident),+) => {
-        impl<$($node),+> Default for TupleState<($(Option<$node>,)+)> {
-            fn default() -> Self {
-                Self(($(Option::<$node>::None,)+))
-            }
+    (@generate_impl $state:ident; $($index:tt $node:ident $variant:ident),+) => {
+        /// State of at most one child in a statically composed tuple.
+        /// The variant identifies the child; no separate saved index is needed.
+        #[derive(Default)]
+        pub enum $state<$($node),+> {
+            #[default]
+            Empty,
+            $($variant($node),)+
         }
 
         impl<C, $($node: BtNode<C>),+> BtChildren<C> for ($($node,)+) {
-            type State = TupleState<($(Option<$node::State>,)+)>;
+            type State = $state<$($node::State),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
 
-            fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, mode: EntryMode) -> NodeResult {
-                match child_index {
-                    $($index => run_node(&self.$index, &mut state.0.$index, ctx, mode),)+
-                    _ => NodeResult::error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
+            fn active_child_index(&self, state: &Self::State) -> Option<usize> {
+                match state {
+                    $state::Empty => None,
+                    $($state::$variant(_) => Some($index),)+
                 }
             }
 
-            fn reset_child(&self, state: &mut Self::State, child_index: usize) {
+            fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, mode: EntryMode) -> NodeResult {
                 match child_index {
-                    $($index => state.0.$index = None,)+
-                    _ => crate::log_error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
+                    $($index => {
+                        if let $state::$variant(active) = state {
+                            let result = self.$index.update(active, ctx, mode);
+                            if result != NodeResult::Running {
+                                *state = $state::Empty;
+                            }
+                            result
+                        } else {
+                            // Preserve the old variant until this candidate is selected.
+                            let mut candidate = $node::State::default();
+                            let result = self.$index.update(&mut candidate, ctx, EntryMode::Evaluate);
+                            if result == NodeResult::Running {
+                                *state = $state::$variant(candidate);
+                            }
+                            result
+                        }
+                    },)+
+                    _ => NodeResult::error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
                 }
             }
         }
     };
-    (@generate_prefix [$($done_index:tt $done_node:ident,)*] $index:tt $node:ident $(, $tail_index:tt $tail_node:ident)*) => {
-        tuple_children!(@generate_impl $($done_index $done_node,)* $index $node);
-        tuple_children!(@generate_prefix [$($done_index $done_node,)* $index $node,] $($tail_index $tail_node),*);
+    (@generate_prefix [$($done_index:tt $done_node:ident $done_variant:ident,)*] $state:ident $index:tt $node:ident $variant:ident $(, $tail_state:ident $tail_index:tt $tail_node:ident $tail_variant:ident)*) => {
+        tuple_children!(@generate_impl $state; $($done_index $done_node $done_variant,)* $index $node $variant);
+        tuple_children!(@generate_prefix [$($done_index $done_node $done_variant,)* $index $node $variant,] $($tail_state $tail_index $tail_node $tail_variant),*);
     };
     (@generate_prefix [$($done:tt)*]) => {};
 }
 
-tuple_children!(@generate_prefix []
-    0 N0, 1 N1, 2 N2, 3 N3, 4 N4, 5 N5, 6 N6, 7 N7,
-    8 N8, 9 N9, 10 N10, 11 N11, 12 N12, 13 N13, 14 N14, 15 N15,
-    16 N16, 17 N17, 18 N18, 19 N19, 20 N20, 21 N21, 22 N22, 23 N23,
-    24 N24, 25 N25, 26 N26, 27 N27, 28 N28, 29 N29, 30 N30, 31 N31
-);
+/// Generated state enums for tuple children. Payload types are child states,
+/// not node definitions. These enums are not general-purpose node combinators.
+pub mod child_state {
+    use super::{BtChildren, BtNode, EntryMode, NodeResult};
+
+    include!(concat!(env!("OUT_DIR"), "/tuple_children.rs"));
+}
