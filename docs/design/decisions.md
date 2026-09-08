@@ -150,3 +150,20 @@ Core owns execution protocols and composition primitives. A future catalog of
 ready-made nodes and policies such as Wait, PrioritySelect, RandomSelect,
 Throttling, and WhileDecorator should live in a separate crate. No catalog crate
 is introduced yet. This changes API placement, not wait or resume semantics.
+
+
+## 2026-09-08 — Try an inline action lifecycle
+
+Review found the post-commit experiment too complex for the main API: ActiveRef,
+Decision, Evaluation, target dispatch traits, and a second associated type on
+every node complicated static composition and future dynamic boundaries.
+The full experiment is committed on experiment/post-commit-actions at 95f9e33,
+based on 2f1525c. experiments/README.md records how to inspect that version.
+
+The main draft restores the original BtNode::update -> NodeResult protocol.
+BtAction retains start / is_in_progress / tick / complete, adapted by ActionNode
+with Option<A::State>. Tick runs immediately inside action update. This knowingly
+permits effects from branches later rejected by their parent and changes the
+ordering of candidate effects relative to preempted state destruction. Immediate
+completion and same-update sequence continuation remain intact. The experimental version and the main implementation were committed separately
+after explicit review approval.

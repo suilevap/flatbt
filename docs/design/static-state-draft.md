@@ -135,5 +135,7 @@ exercise direct nested-state access and destruction. The former backend test is
 replaced by a static composition scenario that rejects a Running candidate and
 then resumes the old branch without losing its progress.
 
-Post-commit tick handling and dynamic composition remain unimplemented. User
-panics are not caught; reset before reusing state after an unwind.
+The [action draft](action-draft.md) adds lifecycle callbacks inside ordinary
+update without changing static composition. The post-commit target experiment
+is archived separately; dynamic composition remains future work. User panics
+are not caught; reset before reusing state after an unwind.

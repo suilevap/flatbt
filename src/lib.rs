@@ -20,11 +20,13 @@
 
 #![forbid(unsafe_code)]
 
+mod action;
 mod children;
 mod control;
 mod execution;
 mod leaf;
 
+pub use action::{ActionNode, BtAction, action};
 pub use children::{BtChildren, child_state};
 pub use control::{
     BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,

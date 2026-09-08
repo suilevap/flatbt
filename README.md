@@ -5,7 +5,7 @@ working iterations: validate semantics with statically composed nodes and state,
 then add dynamic boundaries and a compiled frontend.
 
 The current implementation supports synchronous composition, suspension, normal resume,
-root re-evaluation, and preemption. It is based on the simple M1 implementation;
+root re-evaluation, preemption, and a draft action lifecycle. It is based on the simple M1 implementation;
 see the [draft design notes](docs/design/static-state-draft.md) for state composition.
 
 ```rust
@@ -61,6 +61,7 @@ Examples:
 cargo run --offline --example synchronous
 cargo run --offline --example resume
 cargo run --offline --example revalidation
+cargo run --offline --example action
 ```
 
 The resume example uses an application-defined `WaitFrames` from
@@ -68,6 +69,17 @@ The resume example uses an application-defined `WaitFrames` from
 and executes the next child on completion. The revalidation example preserves a
 patrol while a higher-priority candidate fails, then preempts it when that candidate
 becomes eligible.
+
+`action(value)` adapts `BtAction` to ordinary `BtNode::update`. The lifecycle is
+`start → is_in_progress → tick` while Running, followed by `complete` as soon as
+a later progress query returns false. Start returning None fails immediately.
+Action state does not need Default; the adapter stores Option<A::State>.
+
+Tick runs inline in this draft, including during speculative traversal. Its
+effects survive rejection by a parent. Completing one action still lets Sequence
+advance and tick the next action in the same update. The action example shows
+this behavior. See the [action draft](docs/design/action-draft.md) and the
+[archived post-commit experiment](experiments/README.md) for the tradeoff.
 
 Core provides `BtNode`, `BtControl`, and composition primitives: `seq`, `select`,
 `check`, and `leaf`. Tuple children of arity 0–32 use static dispatch by default. A reusable
@@ -106,17 +118,18 @@ Custom nodes use `State: Default + Send + 'static`, separate from their definiti
 A composing node includes nested state fields and calls a child with the chosen
 field: `child.update(&mut state.child, ctx, mode)`. It owns initialization and
 cleanup when nested invocations start, finish, or are replaced.
-A node can suspend without a tick capability. Empty sequences succeed; empty
+A node can suspend without implementing BtAction. Empty sequences succeed; empty
 selectors fail. Ordinary Failure is silent; `NodeResult::error` and
 `ControlOp::error` report execution errors to stderr and return Failure.
 
-Context changes take effect immediately and survive failed branches. Post-commit
-Tick is not implemented yet. User-code panics are not caught; after an unwind,
+Context changes, including action ticks, take effect immediately and survive
+failed branches. There is no post-commit phase in this draft. User-code panics
+are not caught; after an unwind,
 reset the state before using it again. Custom policies must ensure termination;
 there is no execution budget.
 
-The API is experimental. Dynamic composition and its storage, `BtTick`,
-`BtAction`, and the `bt!` compiler remain future work.
+The API is experimental. Dynamic composition and its storage, and the `bt!`
+compiler remain future work.
 
 The [decision log](docs/design/decisions.md) records earlier iterations.
 The [original architecture document](docs/design/original-architecture.md) is an
