@@ -62,6 +62,7 @@ cargo run --offline --example synchronous
 cargo run --offline --example resume
 cargo run --offline --example revalidation
 cargo run --offline --example action
+cargo run --offline --example external_action
 ```
 
 The resume example uses an application-defined `WaitFrames` from
@@ -80,6 +81,35 @@ effects survive rejection by a parent. Completing one action still lets Sequence
 advance and tick the next action in the same update. The action example shows
 this behavior. See the [action draft](docs/design/action-draft.md) and the
 [archived post-commit experiment](experiments/README.md) for the tradeoff.
+
+For externally scheduled work, start submits an operation and returns its request
+handle, is_in_progress observes it, and dropping the cancellation guard requests
+cancellation. Tick has an empty default and need not be implemented. The scheduler
+advances work without running the BT; the application updates the BT on completion
+events or at a lower frequency with Evaluate for reactivity. The external_action example performs ten
+external frames with only three BT updates. It uses an application-owned movement
+component and no async runtime or engine dependency.
+
+Cancellation is owned by action state: a cancel-on-drop handle can stop external
+work when the state is preempted, rejected, reset, or dropped. `complete` receives
+`&mut State` so it can disarm the handle after normal completion. The tree has no
+cancel traversal. Actions that need no cancellation carry no cancellation
+metadata. The external example uses a request-specific
+atomic token, with one allocation on external submission and none on Resume.
+State must own its cancellation access; Drop has no BB argument.
+
+To keep acquisition and cancellation together, start can return
+`CancelOnDrop::new(request, |request| { /* request cancellation */ })`. This
+accepts a function or a non-capturing closure; cancellation data belongs in the
+request. The external example uses this form and needs no separate trait impl.
+Call `state.disarm()` in complete after handling success or failure.
+
+For handles with reusable cancellation logic, implement
+`BtCancel::cancel(&mut self)` and wrap them with `CancelOnDrop::from(handle)`.
+Both forms provide typed access through Deref/DerefMut and store the value plus
+an optional function pointer inline. There is no allocation or separate armed
+flag; cancellation may use an indirect function call. Existing custom Drop
+implementations can still be used directly as action state, without this wrapper.
 
 Core provides `BtNode`, `BtControl`, and composition primitives: `seq`, `select`,
 `check`, and `leaf`. Tuple children of arity 0–32 use static dispatch by default. A reusable

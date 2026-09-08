@@ -3,13 +3,25 @@ use crate::{BtNode, EntryMode, NodeResult};
 /// A convenience lifecycle executed directly inside BtNode::update.
 /// All callbacks, including tick, may run while a branch is still speculative.
 /// Context effects are not rolled back if a parent rejects that branch.
+/// State may own cancel-on-drop resources. The runtime adds no cancellation
+/// callbacks, traversal, or flags to actions that do not need them.
+/// Use `crate::CancelOnDrop` with a callback or `crate::BtCancel` to implement
+/// this without writing a destructor. Disarm the wrapper in complete when
+/// cancellation is no longer needed.
 pub trait BtAction<C> {
     type State: Send + 'static;
 
     fn start(&self, ctx: &mut C) -> Option<Self::State>;
     fn is_in_progress(&self, state: &Self::State, ctx: &C) -> bool;
-    fn tick(&self, state: &mut Self::State, ctx: &mut C);
-    fn complete(&self, _state: &Self::State, _ctx: &mut C) -> bool {
+
+    /// Optional work driven by BT updates. Leave empty when start launches an
+    /// externally scheduled operation and state only holds its request handle.
+    /// The caller decides when to update the BT; no per-frame polling is required.
+    fn tick(&self, _state: &mut Self::State, _ctx: &mut C) {}
+
+    /// Observes completion before state is dropped. A cancel-on-drop handle can
+    /// be disarmed here. Cancellation itself belongs to state/resource Drop.
+    fn complete(&self, _state: &mut Self::State, _ctx: &mut C) -> bool {
         true
     }
 }

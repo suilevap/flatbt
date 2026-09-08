@@ -81,7 +81,8 @@ not promise faster updates, immovable state, or reduced peak call-stack usage.
 When the parent terminates, its state is dropped, including the remaining active
 child. ControlState declares children before policy state so normal destruction
 releases descendants first. Custom composing states own their field ordering and
-cleanup. Context mutations are never rolled back.
+cleanup. Cancel-on-drop resources in state follow these same lifetimes; no
+separate cancellation traversal is needed. Context mutations are never rolled back.
 
 This layout fits the current control protocol, which returns immediately when a
 child is Running and retains at most one active child between calls. A future

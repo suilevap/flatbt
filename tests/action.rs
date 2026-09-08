@@ -22,15 +22,17 @@ struct Task {
 struct TaskState {
     name: &'static str,
     remaining: usize,
+    completed: bool,
     trace: Trace,
 }
 
 impl Drop for TaskState {
     fn drop(&mut self) {
-        self.trace
-            .lock()
-            .unwrap()
-            .push(format!("drop {}", self.name));
+        let mut trace = self.trace.lock().unwrap();
+        if !self.completed {
+            trace.push(format!("cancel {}", self.name));
+        }
+        trace.push(format!("drop {}", self.name));
     }
 }
 
@@ -45,6 +47,7 @@ impl BtAction<Context> for Task {
         Some(TaskState {
             name: self.name,
             remaining: self.steps?,
+            completed: false,
             trace: ctx.trace.clone(),
         })
     }
@@ -57,7 +60,8 @@ impl BtAction<Context> for Task {
         state.remaining > 0
     }
 
-    fn complete(&self, _: &TaskState, ctx: &mut Context) -> bool {
+    fn complete(&self, state: &mut TaskState, ctx: &mut Context) -> bool {
+        state.completed = true;
         ctx.trace
             .lock()
             .unwrap()
@@ -209,6 +213,7 @@ fn speculative_completion_loses_or_new_action_preempts_without_ticking_old_actio
                     "start attack",
                     "progress attack",
                     "tick attack",
+                    "cancel move",
                     "drop move",
                 ]
             );
@@ -251,8 +256,65 @@ fn rejecting_a_running_candidate_does_not_undo_its_inline_tick() {
             "start candidate",
             "progress candidate",
             "tick candidate",
+            "cancel candidate",
             "drop candidate",
         ]
     );
     assert!(state.is_running());
+}
+
+#[test]
+fn reset_and_drop_cancel_uncompleted_state_once_without_extra_updates() {
+    let root = seq((task("work", Some(1), true),));
+    let mut state = BtState::new(&root);
+    let mut ctx = Context::default();
+    state.reset();
+    assert_eq!(
+        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        Running
+    );
+    state.reset();
+    state.reset();
+    assert!(!state.is_running());
+    // Last tick finished the work, but complete has not observed it yet.
+    assert_eq!(
+        *ctx.trace.lock().unwrap(),
+        [
+            "start work",
+            "progress work",
+            "tick work",
+            "cancel work",
+            "drop work",
+        ]
+    );
+    assert_eq!(
+        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        Running
+    );
+    drop(state);
+    let trace = ctx.trace.lock().unwrap();
+    assert_eq!(trace.iter().filter(|e| *e == "cancel work").count(), 2);
+    assert_eq!(trace.iter().filter(|e| *e == "drop work").count(), 2);
+}
+
+#[test]
+fn terminal_revalidation_cancels_the_old_running_branch() {
+    let root = select((
+        check(|ctx: &Context| ctx.urgent),
+        task("move", Some(3), true),
+    ));
+    let mut state = BtState::new(&root);
+    let mut ctx = Context::default();
+    assert_eq!(
+        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        Running
+    );
+    ctx.trace.lock().unwrap().clear();
+    ctx.urgent = true;
+    assert_eq!(
+        update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
+        Success
+    );
+    assert_eq!(*ctx.trace.lock().unwrap(), ["cancel move", "drop move"]);
+    assert!(!state.is_running());
 }
