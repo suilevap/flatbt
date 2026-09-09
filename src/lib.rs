@@ -23,6 +23,7 @@
 mod action;
 mod cancel;
 mod children;
+mod choose;
 mod control;
 mod execution;
 mod leaf;
@@ -30,6 +31,7 @@ mod leaf;
 pub use action::{ActionNode, BtAction, action};
 pub use cancel::{BtCancel, CancelOnDrop};
 pub use children::{BtChildren, child_state};
+pub use choose::{Choose, ChooseNode};
 pub use control::{
     BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
 };

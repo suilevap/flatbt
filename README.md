@@ -1,11 +1,12 @@
 # FlatBT
 
 An experimental Behavior Tree runtime in Rust. Development proceeds in small,
-working iterations: validate semantics with statically composed nodes and state,
-then add dynamic boundaries and a compiled frontend.
+working iterations, using code-authored definitions and compiler-known state
+layouts as the foundation.
 
 The current implementation supports synchronous composition, suspension, normal resume,
-root re-evaluation, preemption, and a draft action lifecycle. It is based on the simple M1 implementation;
+root re-evaluation, preemption, context-driven choice among statically known nodes,
+and a draft action lifecycle. It is based on the simple M1 implementation;
 see the [draft design notes](docs/design/static-state-draft.md) for state composition.
 
 ```rust
@@ -53,7 +54,24 @@ multiple simultaneously active children would need a different state layout.
 The runtime has no frame stack, scratch storage backend, or type erasure. Static
 state layout is known to Rust, and the runtime adds no heap allocations. A custom
 node can still own allocating resources in its state. Frame storage and layout
-descriptors remain deferred to dynamic node boundaries.
+descriptors remain deferred to open sets of runtime-defined node types.
+
+`choose!` selects among compiler-known node types using a match on shared context:
+
+```rust
+let tree = choose!(|bb: &Blackboard| match bb.order {
+    Order::Move => MoveNode,
+    Order::Attack => AttackNode,
+    Order::Idle => IdleNode,
+});
+```
+
+All arm definitions are constructed once when the tree is built. Evaluate repeats
+the match; Resume follows the saved arm. The selected child's result is returned
+directly, without fallback to another arm. State uses the existing inline child
+enum, including for nested `choose!` calls. No manual enum, indices, type erasure,
+or runtime heap allocation is needed. See the [choice draft](docs/design/choose-draft.md)
+for construction semantics and the initial syntax limits.
 
 Examples:
 
@@ -63,6 +81,7 @@ cargo run --offline --example resume
 cargo run --offline --example revalidation
 cargo run --offline --example action
 cargo run --offline --example external_action
+cargo run --offline --example choose
 ```
 
 The resume example uses an application-defined `WaitFrames` from
@@ -112,7 +131,7 @@ flag; cancellation may use an indirect function call. Existing custom Drop
 implementations can still be used directly as action state, without this wrapper.
 
 Core provides `BtNode`, `BtControl`, and composition primitives: `seq`, `select`,
-`check`, and `leaf`. Tuple children of arity 0–32 use static dispatch by default. A reusable
+`check`, `leaf`, and `choose!`. Tuple children of arity 0–32 use static dispatch by default. A reusable
 catalog of utility nodes and policies belongs in a separate crate if introduced
 later. Example helpers are not core exports.
 
@@ -158,8 +177,9 @@ are not caught; after an unwind,
 reset the state before using it again. Custom policies must ensure termination;
 there is no execution budget.
 
-The API is experimental. Dynamic composition and its storage, and the `bt!`
-compiler remain future work.
+The API is experimental. Open sets of runtime-defined node types, their storage,
+and the `bt!` compiler remain future work. Memory requirements for open candidate
+sets will be considered separately from the current static composition model.
 
 The [decision log](docs/design/decisions.md) records earlier iterations.
 The [original architecture document](docs/design/original-architecture.md) is an
