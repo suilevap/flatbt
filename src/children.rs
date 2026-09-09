@@ -3,7 +3,7 @@ use crate::{BtNode, EntryMode, NodeResult};
 /// Static dispatch over child definitions and their corresponding state variants.
 /// Implemented through the build-time FLATBT_MAX_CHILDREN limit (default 32).
 /// At most one child stays active between calls.
-pub trait BtChildren<C> {
+pub trait BtChildren<C, P = ()> {
     type State: Default + Send + 'static;
     const LEN: usize;
 
@@ -19,11 +19,12 @@ pub trait BtChildren<C> {
         state: &mut Self::State,
         child_index: usize,
         ctx: &mut C,
+        params: P,
         mode: EntryMode,
     ) -> NodeResult;
 }
 
-impl<C> BtChildren<C> for () {
+impl<C, P> BtChildren<C, P> for () {
     type State = ();
     const LEN: usize = 0;
 
@@ -31,7 +32,14 @@ impl<C> BtChildren<C> for () {
         None
     }
 
-    fn run_child(&self, _: &mut (), child_index: usize, _: &mut C, _: EntryMode) -> NodeResult {
+    fn run_child(
+        &self,
+        _: &mut (),
+        child_index: usize,
+        _: &mut C,
+        _: P,
+        _: EntryMode,
+    ) -> NodeResult {
         NodeResult::error(format_args!(
             "child index {child_index} out of bounds for empty children"
         ))
@@ -50,7 +58,7 @@ macro_rules! tuple_children {
             $($variant($node),)+
         }
 
-        impl<C, $($node: BtNode<C>),+> BtChildren<C> for ($($node,)+) {
+        impl<C, P, $($node: BtNode<C, P>),+> BtChildren<C, P> for ($($node,)+) {
             type State = $state<$($node::State),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
 
@@ -61,11 +69,11 @@ macro_rules! tuple_children {
                 }
             }
 
-            fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, mode: EntryMode) -> NodeResult {
+            fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult {
                 match child_index {
                     $($index => {
                         if let $state::$variant(active) = state {
-                            let result = self.$index.update(active, ctx, mode);
+                            let result = self.$index.update(active, ctx, params, mode);
                             if result != NodeResult::Running {
                                 *state = $state::Empty;
                             }
@@ -73,7 +81,7 @@ macro_rules! tuple_children {
                         } else {
                             // Preserve the old variant until this candidate is selected.
                             let mut candidate = $node::State::default();
-                            let result = self.$index.update(&mut candidate, ctx, EntryMode::Evaluate);
+                            let result = self.$index.update(&mut candidate, ctx, params, EntryMode::Evaluate);
                             if result == NodeResult::Running {
                                 *state = $state::$variant(candidate);
                             }

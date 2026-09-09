@@ -31,18 +31,18 @@ struct ExternalAction {
 impl BtAction<bool> for ExternalAction {
     type State = CancelOnDrop<Request>;
 
-    fn start(&self, _: &mut bool) -> Option<Self::State> {
+    fn start(&self, _: &mut bool, _: ()) -> Option<Self::State> {
         Some(CancelOnDrop::from(Request {
             cancellations: self.cancellations.clone(),
             drops: self.drops.clone(),
         }))
     }
 
-    fn is_in_progress(&self, _: &Self::State, running: &bool) -> bool {
+    fn is_in_progress(&self, _: &Self::State, running: &bool, _: ()) -> bool {
         *running
     }
 
-    fn complete(&self, state: &mut Self::State, _: &mut bool) -> bool {
+    fn complete(&self, state: &mut Self::State, _: &mut bool, _: ()) -> bool {
         state.disarm();
         self.success
     }

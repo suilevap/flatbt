@@ -1,3 +1,4 @@
+use crate::params::{ParamShape, ParamValue};
 use crate::{BtChildren, BtNode, EntryMode, NodeResult};
 
 /// The next step requested by a control policy.
@@ -74,10 +75,21 @@ pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Chi
     ControlNode { policy, children }
 }
 
-impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, Children> {
-    type State = ControlState<P::State, Children::State>;
+impl<C, A: ParamValue, P: BtControl<C>, Children, S> BtNode<C, A> for ControlNode<P, Children>
+where
+    Children: for<'a> BtChildren<C, <A::Shape as ParamShape>::Value<'a>, State = S>,
+    S: Default + Send + 'static,
+{
+    type State = ControlState<P::State, S>;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult {
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        params: A,
+        mode: EntryMode,
+    ) -> NodeResult {
+        let mut params = params.into_value();
         let active_child_index = self.children.active_child_index(&state.children);
         let mut op = match (mode, active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
@@ -96,10 +108,13 @@ impl<C, P: BtControl<C>, Children: BtChildren<C>> BtNode<C> for ControlNode<P, C
                             Children::LEN,
                         ));
                     }
-                    match self
-                        .children
-                        .run_child(&mut state.children, child_index, ctx, mode)
-                    {
+                    match self.children.run_child(
+                        &mut state.children,
+                        child_index,
+                        ctx,
+                        A::Shape::reborrow(&mut params),
+                        mode,
+                    ) {
                         NodeResult::Running => return NodeResult::Running,
                         NodeResult::Success => self.policy.child_succeeded(
                             &mut state.inner,

@@ -27,6 +27,8 @@ mod choose;
 mod control;
 mod execution;
 mod leaf;
+pub mod params;
+pub mod scope;
 
 pub use action::{ActionNode, BtAction, action};
 pub use cancel::{BtCancel, CancelOnDrop};
@@ -72,6 +74,9 @@ pub enum EntryMode {
 /// An immutable definition with separate, statically composed state.
 /// A composing node includes its descendants in State and chooses which fields
 /// to pass to them. It owns initialization and cleanup of nested invocations.
+/// C is application context; P is a separate parameter contract (unit by default).
+/// Bindings borrow the declared inputs/outputs from an owning scope's state.
+/// Parameters may contain update-local references; State must own its data.
 ///
 /// Fresh invocations enter as Evaluate. Existing invocations can receive Resume
 /// or Evaluate; Evaluate alone must not reset existing state.
@@ -81,8 +86,14 @@ pub enum EntryMode {
 /// Composing nodes call this method on children with their chosen state fields.
 /// User code should report recoverable errors with `NodeResult::error`.
 /// Panics in user code are not caught by the runtime.
-pub trait BtNode<C> {
+pub trait BtNode<C, P = ()> {
     type State: Default + Send + 'static;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult;
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        params: P,
+        mode: EntryMode,
+    ) -> NodeResult;
 }

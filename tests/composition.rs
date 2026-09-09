@@ -25,7 +25,7 @@ impl Drop for PendingState {
 impl BtNode<usize> for Pending {
     type State = PendingState;
 
-    fn update(&self, state: &mut PendingState, _: &mut usize, _: EntryMode) -> NodeResult {
+    fn update(&self, state: &mut PendingState, _: &mut usize, _: (), _: EntryMode) -> NodeResult {
         state.0.get_or_insert_with(|| self.0.clone());
         NodeResult::Running
     }
@@ -37,8 +37,8 @@ impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
     // This adapter forwards its entire state to the nested node.
     type State = N::State;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult {
-        let _ = self.0.update(state, ctx, mode);
+    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), mode: EntryMode) -> NodeResult {
+        let _ = self.0.update(state, ctx, (), mode);
         NodeResult::Failure
     }
 }
@@ -78,7 +78,7 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
     impl BtNode<()> for Wide {
         type State = [u64; 32];
 
-        fn update(&self, _: &mut Self::State, _: &mut (), _: EntryMode) -> NodeResult {
+        fn update(&self, _: &mut Self::State, _: &mut (), _: (), _: EntryMode) -> NodeResult {
             NodeResult::Running
         }
     }

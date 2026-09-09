@@ -11,11 +11,11 @@ associated State types. Its own State must include those states. Routing every
 static node through a heterogeneous frame stack lost that property and forced
 execution to choose state that already had a known place in the parent.
 
-`BtNode::update` now receives only its concrete state, context, and EntryMode.
+`BtNode::update` now receives only its concrete state, context, parameters, and EntryMode.
 A composing node borrows a field and calls the child directly:
 
 ```rust
-self.child.update(&mut state.child, ctx, mode)
+self.child.update(&mut state.child, ctx, params, mode)
 ```
 
 No cursor, storage type parameter, or Reuse/Fresh selector participates. A custom
@@ -140,3 +140,6 @@ The [action draft](action-draft.md) adds lifecycle callbacks inside ordinary
 update without changing static composition. The post-commit target experiment
 is archived separately; dynamic composition remains future work. User panics
 are not caught; reset before reusing state after an unwind.
+
+The [local state draft](local-state-draft.md) adds a separate parameter generic
+and explicit bindings without changing the static ownership model.

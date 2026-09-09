@@ -39,7 +39,7 @@ impl Drop for TaskState {
 impl BtAction<Context> for Task {
     type State = TaskState;
 
-    fn start(&self, ctx: &mut Context) -> Option<TaskState> {
+    fn start(&self, ctx: &mut Context, _: ()) -> Option<TaskState> {
         ctx.trace
             .lock()
             .unwrap()
@@ -52,7 +52,7 @@ impl BtAction<Context> for Task {
         })
     }
 
-    fn is_in_progress(&self, state: &TaskState, ctx: &Context) -> bool {
+    fn is_in_progress(&self, state: &TaskState, ctx: &Context, _: ()) -> bool {
         ctx.trace
             .lock()
             .unwrap()
@@ -60,7 +60,7 @@ impl BtAction<Context> for Task {
         state.remaining > 0
     }
 
-    fn complete(&self, state: &mut TaskState, ctx: &mut Context) -> bool {
+    fn complete(&self, state: &mut TaskState, ctx: &mut Context, _: ()) -> bool {
         state.completed = true;
         ctx.trace
             .lock()
@@ -69,7 +69,7 @@ impl BtAction<Context> for Task {
         self.succeeds
     }
 
-    fn tick(&self, state: &mut TaskState, ctx: &mut Context) {
+    fn tick(&self, state: &mut TaskState, ctx: &mut Context, _: ()) {
         state.remaining -= 1;
         ctx.effects.push(self.name);
         ctx.trace
@@ -231,8 +231,8 @@ struct Reject<N>(N);
 impl<C, N: flatbt::BtNode<C>> flatbt::BtNode<C> for Reject<N> {
     type State = N::State;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult {
-        let _ = self.0.update(state, ctx, mode);
+    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), mode: EntryMode) -> NodeResult {
+        let _ = self.0.update(state, ctx, (), mode);
         Failure
     }
 }

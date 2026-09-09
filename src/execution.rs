@@ -58,7 +58,7 @@ pub(crate) fn run_node<C, N: BtNode<C>>(
     } else {
         mode
     };
-    let result = node.update(slot.get_or_insert_with(Default::default), ctx, mode);
+    let result = node.update(slot.get_or_insert_with(Default::default), ctx, (), mode);
     if result != NodeResult::Running {
         *slot = None;
     }

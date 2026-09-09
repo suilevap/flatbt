@@ -16,15 +16,15 @@ struct Progress(usize);
 impl BtAction<Agent> for Task {
     type State = Progress;
 
-    fn start(&self, _: &mut Agent) -> Option<Progress> {
+    fn start(&self, _: &mut Agent, _: ()) -> Option<Progress> {
         Some(Progress(0))
     }
 
-    fn is_in_progress(&self, state: &Progress, _: &Agent) -> bool {
+    fn is_in_progress(&self, state: &Progress, _: &Agent, _: ()) -> bool {
         state.0 < self.steps
     }
 
-    fn tick(&self, state: &mut Progress, ctx: &mut Agent) {
+    fn tick(&self, state: &mut Progress, ctx: &mut Agent, _: ()) {
         state.0 += 1;
         ctx.effects.push(self.name);
     }

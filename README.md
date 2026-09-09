@@ -6,7 +6,7 @@ layouts as the foundation.
 
 The current implementation supports synchronous composition, suspension, normal resume,
 root re-evaluation, preemption, context-driven choice among statically known nodes,
-and a draft action lifecycle. It is based on the simple M1 implementation;
+invocation-local values shared by a subtree, and a draft action lifecycle. It is based on the simple M1 implementation;
 see the [draft design notes](docs/design/static-state-draft.md) for state composition.
 
 ```rust
@@ -73,6 +73,58 @@ enum, including for nested `choose!` calls. No manual enum, indices, type erasur
 or runtime heap allocation is needed. See the [choice draft](docs/design/choose-draft.md)
 for construction semantics and the initial syntax limits.
 
+The separate `flatbt::scope` module provides local storage and bindings. Ordinary
+trees need no imports from it. `scope!` owns named local values in the tree state,
+computes them once on entry, and explicitly selects control flow. The application
+context stays unchanged:
+
+```rust,ignore
+use flatbt::scope::scope;
+
+let tree = scope! {
+    context: World;
+    let walk_pos: Vector2 = |bb| bb.next_patrol_pos;
+    let door_pos: Vector2 = get_visible_door_pos;
+    sequence {
+        LookAt.with(door_pos);
+        wait_frames(1);
+        action(Walk).with(walk_pos);
+    }
+};
+```
+
+Initializers are ordinary `Fn(&mut World) -> Vector2` functions/closures, not
+nodes. `context: World;` lets closures omit parameter types; otherwise annotate
+them individually. Use `select { ... }` for fallback/priority selection. Controls
+can nest and share the same locals. Initializers run before the selected control,
+in declaration order, and are not replayed on Resume or Evaluate while Running.
+
+`LookAt` implements `BtNode<World, &Vector2>` and receives `position: &Vector2`.
+`Walk` implements `BtAction<World, &Vector2>`; every callback receives a single
+reference. Neither node knows field names or the scope layout. Named arguments
+select their fields explicitly, even when several fields share one type.
+
+A suspending producer can still fill a declared slot: `let cover_pos: Vector2;`
+followed inside the body by `ChooseCover.with(enemy, out cover_pos);`. It requests
+`(&Enemy, &mut Option<Vector2>)`, passed directly as a tuple of references.
+Synchronous initializers need no user-authored output parameter. Plain expressions
+such as `Wait;`, `wait_frames(1);`, and `leaf(|bb: &mut World| { ... });` use unit
+parameters. Constructors keep ordinary Rust arguments; `.with(...)` explicitly
+binds runtime locals. There is no `run` keyword or square-bracket wrapper.
+
+The macro emits a local struct, `scope::<Locals, _>`, an initialization prefix,
+the selected controls, and `bind` adapters. The function API also supports custom
+controls and projections: `bind(LookAt, read(|s: &Locals| s.door_pos.as_ref()))`.
+The function API lives in `flatbt::scope` as well; import helpers such as
+`use flatbt::scope::{bind, read, scope, WithParams};`.
+Import `WithParams` to use the equivalent fluent spelling outside the macro:
+`LookAt.with(read(|s: &Locals| s.door_pos.as_ref()))`.
+
+Locals drop when the scope ends. Missing inputs report a diagnostic and fail the
+bound node; writes to shared enclosing locals survive failed candidates. See the
+[local state draft](docs/design/local-state-draft.md) for contracts and limitations
+and the runnable [parameter binding example](examples/scoped_params.rs).
+
 Examples:
 
 ```sh
@@ -82,6 +134,8 @@ cargo run --offline --example revalidation
 cargo run --offline --example action
 cargo run --offline --example external_action
 cargo run --offline --example choose
+cargo run --offline --example scoped_params
+cargo run --offline --example scoped_params_manual
 ```
 
 The resume example uses an application-defined `WaitFrames` from
@@ -130,9 +184,12 @@ an optional function pointer inline. There is no allocation or separate armed
 flag; cancellation may use an indirect function call. Existing custom Drop
 implementations can still be used directly as action state, without this wrapper.
 
-Core provides `BtNode`, `BtControl`, and composition primitives: `seq`, `select`,
-`check`, `leaf`, and `choose!`. Tuple children of arity 0–32 use static dispatch by default. A reusable
-catalog of utility nodes and policies belongs in a separate crate if introduced
+The crate root provides `BtNode`, `BtControl`, and composition primitives: `seq`,
+`select`, `check`, `leaf`, and `choose!`. Local storage, `scope!`, and bindings live
+in `flatbt::scope`. The `flatbt::params` module provides the shared parameter
+traits used by controls/actions, independently of scopes. These are module
+boundaries, not Cargo feature flags. Tuple children of arity 0–32 use static
+dispatch by default. A reusable catalog of utility nodes and policies belongs in a separate crate if introduced
 later. Example helpers are not core exports.
 
 To change the maximum tuple arity, put this in the consuming project's
@@ -141,6 +198,7 @@ To change the maximum tuple arity, put this in the consuming project's
 ```toml
 [env]
 FLATBT_MAX_CHILDREN = "64"
+FLATBT_MAX_PARAMS = "64"
 ```
 
 Cargo passes this setting to FlatBT's build script, including when FlatBT is a
@@ -155,6 +213,11 @@ or per-tree setting. Larger values generate more Rust code and increase build
 cost; very large values can exceed the compiler's macro recursion limit. A tuple
 above the configured limit is rejected at compile time.
 
+`FLATBT_MAX_PARAMS` independently sets the maximum generated parameter tuple arity
+for `params` and `scope!` bindings (default 32). It uses the same configuration and
+regeneration rules. It does not limit custom `ParamShape` structs. Larger arities
+increase generated code and may require a higher Rust macro recursion limit.
+
 Validation:
 
 ```sh
@@ -164,8 +227,13 @@ cargo fmt --check
 ```
 
 Custom nodes use `State: Default + Send + 'static`, separate from their definition.
+`BtNode<C, P = ()>` accepts parameters separately from context and node state.
+The root API supplies `()`; a scope supplies its owned local fields to bound
+children. Parameter-free custom nodes accept a `()` parameter; use
+`no_params(node)` to reuse them under any scope. `BtAction<C, P = ()>` similarly
+receives parameter values directly in each callback.
 A composing node includes nested state fields and calls a child with the chosen
-field: `child.update(&mut state.child, ctx, mode)`. It owns initialization and
+field: `child.update(&mut state.child, ctx, params, mode)`. It owns initialization and
 cleanup when nested invocations start, finish, or are replaced.
 A node can suspend without implementing BtAction. Empty sequences succeed; empty
 selectors fail. Ordinary Failure is silent; `NodeResult::error` and

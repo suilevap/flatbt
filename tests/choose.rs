@@ -36,7 +36,13 @@ impl Drop for ProbeState {
 impl BtNode<Context> for Probe {
     type State = ProbeState;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut Context, mode: EntryMode) -> NodeResult {
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut Context,
+        _: (),
+        mode: EntryMode,
+    ) -> NodeResult {
         state.drops.get_or_insert_with(|| self.drops.clone());
         state.updates += 1;
         ctx.entries.push((self.name, mode, state.updates));
@@ -152,8 +158,8 @@ struct Reject<N>(N);
 impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
     type State = N::State;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, mode: EntryMode) -> NodeResult {
-        let _ = self.0.update(state, ctx, mode);
+    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), mode: EntryMode) -> NodeResult {
+        let _ = self.0.update(state, ctx, (), mode);
         Failure
     }
 }

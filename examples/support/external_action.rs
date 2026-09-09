@@ -84,20 +84,20 @@ pub struct MoveExternally {
 impl BtAction<Agent> for MoveExternally {
     type State = CancelOnDrop<RequestHandle>;
 
-    fn start(&self, ctx: &mut Agent) -> Option<Self::State> {
+    fn start(&self, ctx: &mut Agent, _: ()) -> Option<Self::State> {
         let request = ctx.start_movement(self.name, self.frames)?;
         Some(CancelOnDrop::new(request, |request| {
             request.cancellation.store(true, Ordering::Relaxed);
         }))
     }
 
-    fn is_in_progress(&self, state: &Self::State, ctx: &Agent) -> bool {
+    fn is_in_progress(&self, state: &Self::State, ctx: &Agent, _: ()) -> bool {
         ctx.movement
             .as_ref()
             .is_some_and(|m| m.request == state.request && m.remaining_frames > 0)
     }
 
-    fn complete(&self, state: &mut Self::State, ctx: &mut Agent) -> bool {
+    fn complete(&self, state: &mut Self::State, ctx: &mut Agent, _: ()) -> bool {
         let finished = ctx
             .movement
             .as_ref()

@@ -107,6 +107,7 @@ impl BtNode<Vec<EntryMode>> for SuspendOnce {
         &self,
         state: &mut OwnedState,
         modes: &mut Vec<EntryMode>,
+        _: (),
         mode: EntryMode,
     ) -> NodeResult {
         modes.push(mode);
@@ -233,12 +234,13 @@ fn composed_state_drops_descendants_before_parents() {
             &self,
             state: &mut Self::State,
             trace: &mut Trace,
+            _: (),
             mode: EntryMode,
         ) -> NodeResult {
             state
                 .lease
                 .get_or_insert_with(|| Lease(self.name, trace.clone()));
-            self.child.update(&mut state.child, trace, mode)
+            self.child.update(&mut state.child, trace, (), mode)
         }
     }
 
