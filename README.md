@@ -1,38 +1,29 @@
 # FlatBT
 
-An experimental Behavior Tree runtime in Rust. Development proceeds in small,
-working iterations, using code-authored definitions and compiler-known state
-layouts as the foundation.
+Experimental Rust behavior tree runtime. Static dispatch, resumable execution,
+inline state. No runtime heap allocation; application-owned state may allocate.
+API unstable.
 
-The current implementation supports synchronous composition, suspension, normal resume,
-root re-evaluation, preemption, context-driven choice among statically known nodes,
-invocation-local values shared by a subtree, and a draft action lifecycle. It is based on the simple M1 implementation;
-see the [draft design notes](docs/design/static-state-draft.md) for state composition.
+## Install
 
-The workspace separates the execution kernel from optional helpers. `flatbt` is
-an entry-point crate that re-exports core and enables helpers through Cargo features:
-
-| Package | Responsibility | Feature on `flatbt` |
-| --- | --- | --- |
-| `flatbt-core` | Node protocol, state, parameters, static controls, `seq`, `select`, `leaf`, `check` | Always available |
-| `flatbt-nodes` | `choose!` and its policy; action lifecycle and cancellation adapters | `choose`, `action` (independent) |
-| `flatbt-scope` | Invocation-local storage, bindings, and `scope!` | `scope` |
-
-No optional helpers are enabled by default. For a local checkout, choose the
-features your application needs (replace the path with your checkout location):
+Packages are unpublished. Use a local checkout:
 
 ```toml
 [dependencies]
-flatbt = { path = "../FlatBT", features = ["choose", "scope"] }
+flatbt = { path = "../FlatBT" }
 ```
 
-Omit `features` for core only; add `"action"` for `BtAction`, `action`, and
-`CancelOnDrop`. These packages are not published yet. You can also depend directly
-on `crates/flatbt-core`, `crates/flatbt-nodes`, or `crates/flatbt-scope`; see the
-[package layout draft](docs/design/package-layout-draft.md) for examples and migration notes.
+Includes core, branch choice, local scopes, and actions by default.
+Import the tree authoring API:
 
 ```rust
-use flatbt::{BtState, EntryMode, NodeResult, check, leaf, seq, update};
+use flatbt::prelude::*;
+```
+
+## Run a tree
+
+```rust
+use flatbt::prelude::*;
 
 let tree = seq((
     check(|ammo: &usize| *ammo > 0),
@@ -48,40 +39,47 @@ assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::
 assert_eq!(ammo, 0);
 ```
 
-`BtState::new(&root)` creates state bound by reference to the root definition.
-The free `update` function takes the root, state, context, and entry mode. It checks
-the root binding before executing. Completion and `reset()` discard saved state
-while preserving the binding. One root can serve multiple independent instances
-and must outlive them. The node trait has no state-construction method.
+One immutable tree can serve multiple agents. Each owns a `BtState` bound to that
+tree. The tree must outlive its states. `update` rejects a different root.
 
-`EntryMode::Resume` follows the saved path. `EntryMode::Evaluate` revalidates from
-the root: Sequence preserves its active child, while Selector scans from child
-zero. Fresh invocations always receive Evaluate, regardless of the requested mode.
-A failed candidate leaves the old branch state intact; a new Running candidate
-preempts it. A terminal result releases the invocation, so the next update starts fresh.
+| Event | State lifetime |
+| --- | --- |
+| `Running` | Preserve state for the next update. |
+| `Success` / `Failure` | Drop invocation state. Next update starts fresh. |
+| `state.reset()` or Drop | Drop saved state and descendants. Reset keeps the root binding. |
 
-Each node's `State` includes the state of its statically known descendants.
-`ControlNode::State` combines policy state with a generated enum containing Empty
-or one active child's state. The variant also encodes the active child index.
-Tuple dispatch borrows an existing payload directly. During revalidation, a new
-candidate runs in a local variable while the old payload remains intact. Terminal
-candidates are dropped; a Running candidate replaces and drops the old payload.
+| Control | Behavior | On `Evaluate` |
+| --- | --- | --- |
+| `seq((...))` | Run in order; fail on first Failure. Empty sequence succeeds. | Continue the active child. |
+| `select((...))` | Try in order; stop on Success or Running. Empty selector fails. | Scan from child zero. |
 
-Persistent child state therefore reserves space for the largest alternative plus
-the enum tag and alignment, rather than space for all alternatives together.
-Candidate evaluation needs temporary call-stack space and moves selected state
-into the enum. Ordinary resume updates the saved payload in place. Controls with
-multiple simultaneously active children would need a different state layout.
+`Resume` follows the saved path. Fresh invocations always receive `Evaluate`.
+A completed child can be followed by another child in the same update.
+During revalidation, a failed candidate preserves the old branch; a new Running
+candidate replaces it and drops its state.
 
-The runtime has no frame stack, scratch storage backend, or type erasure. Static
-state layout is known to Rust, and the runtime adds no heap allocations. A custom
-node can still own allocating resources in its state. Frame storage and layout
-descriptors remain deferred to open sets of runtime-defined node types.
+## Tree and state layout
 
-With the `choose` feature, `choose!` selects among compiler-known node types using
-a match on shared context:
+![Static tree definitions and per-agent inline state](docs/images/tree-state.svg)
 
-```rust
+- The tree is one nested Rust value: generic controls own tuples of concrete
+  child definitions. Calls use static dispatch. One tree can serve many agents.
+- Each `BtState` borrows the tree and owns `Option<Tree::State>` inline.
+  State is nested structs/enums in one value, with no runtime frame stack.
+- Each control stores policy state and an enum for one active child. Child storage
+  needs the largest alternative plus tag/alignment, not the sum of all alternatives.
+- Resume borrows saved state in place. A fresh candidate uses temporary stack space;
+  Running moves it into the enum and drops the old branch. User state may own heap data.
+
+## Choose a branch
+
+Node definitions are built once, in arm order. Evaluate repeats
+the match; Resume keeps the saved arm. The selected result is returned directly,
+without fallback.
+
+```rust,ignore
+use flatbt::prelude::*;
+
 let tree = choose!(|bb: &Blackboard| match bb.order {
     Order::Move => MoveNode,
     Order::Attack => AttackNode,
@@ -89,21 +87,16 @@ let tree = choose!(|bb: &Blackboard| match bb.order {
 });
 ```
 
-All arm definitions are constructed once when the tree is built. Evaluate repeats
-the match; Resume follows the saved arm. The selected child's result is returned
-directly, without fallback to another arm. State uses the existing inline child
-enum, including for nested `choose!` calls. No manual enum, indices, type erasure,
-or runtime heap allocation is needed. See the [choice draft](docs/design/choose-draft.md)
-for construction semantics and the initial syntax limits.
+Arm definitions cannot use `bb` or match bindings. Read update-time inputs inside
+the node. See the [choice example](examples/choose.rs).
 
-The `scope` feature exposes `flatbt-scope` as `flatbt::scope` for local storage
-and bindings. It does not enable `choose` or `action`. `scope!` owns named local
-values in the tree state,
-computes them once on entry, and explicitly selects control flow. The application
-context stays unchanged:
+## Share local values
+
+Locals initialize once per invocation and survive suspension
+and revalidation. Nodes receive references to explicitly named fields.
 
 ```rust,ignore
-use flatbt::scope::scope;
+use flatbt::prelude::*;
 
 let tree = scope! {
     context: World;
@@ -117,111 +110,121 @@ let tree = scope! {
 };
 ```
 
-Initializers are ordinary `Fn(&mut World) -> Vector2` functions/closures, not
-nodes. `context: World;` lets closures omit parameter types; otherwise annotate
-them individually. Use `select { ... }` for fallback/priority selection. Controls
-can nest and share the same locals. Initializers run before the selected control,
-in declaration order, and are not replayed on Resume or Evaluate while Running.
+Initializers are `Fn(&mut World) -> T`. `LookAt` receives `&Vector2`; `Walk`
+implements `BtAction<World, &Vector2>`. Use `select { ... }`
+for fallback. Nested controls share locals; nested scopes own separate locals.
 
-`LookAt` implements `BtNode<World, &Vector2>` and receives `position: &Vector2`.
-`Walk` implements `BtAction<World, &Vector2>`; every callback receives a single
-reference. Neither node knows field names or the scope layout. Named arguments
-select their fields explicitly, even when several fields share one type.
+For a suspending producer, declare `let cover: Vector2;` and bind
+`ChooseCover.with(enemy, out cover);`. It receives `(&Enemy, &mut Option<Vector2>)`.
+Missing inputs log a diagnostic and fail the consumer. Shared-local writes survive
+candidate failure.
 
-A suspending producer can still fill a declared slot: `let cover_pos: Vector2;`
-followed inside the body by `ChooseCover.with(enemy, out cover_pos);`. It requests
-`(&Enemy, &mut Option<Vector2>)`, passed directly as a tuple of references.
-Synchronous initializers need no user-authored output parameter. Plain expressions
-such as `Wait;`, `wait_frames(1);`, and `leaf(|bb: &mut World| { ... });` use unit
-parameters. Constructors keep ordinary Rust arguments; `.with(...)` explicitly
-binds runtime locals. There is no `run` keyword or square-bracket wrapper.
+Function API: `scope`, `bind`, `read`, `write`, `params`, and `WithParams`.
+See the [macro example](examples/scoped_params.rs) and
+[function example](examples/scoped_params_manual.rs).
 
-The macro emits a local struct, `scope::<Locals, _>`, an initialization prefix,
-the selected controls, and `bind` adapters. The function API also supports custom
-controls and projections: `bind(LookAt, read(|s: &Locals| s.door_pos.as_ref()))`.
-The function API lives in `flatbt::scope` as well; import helpers such as
-`use flatbt::scope::{bind, read, scope, WithParams};`.
-Import `WithParams` to use the equivalent fluent spelling outside the macro:
-`LookAt.with(read(|s: &Locals| s.door_pos.as_ref()))`.
+## Actions and cancellation
 
-Locals drop when the scope ends. Missing inputs report a diagnostic and fail the
-bound node; writes to shared enclosing locals survive failed candidates. See the
-[local state draft](docs/design/local-state-draft.md) for contracts and limitations
-and the runnable [parameter binding example](examples/scoped_params.rs).
+`action(value)` adapts `BtAction` to `BtNode`:
 
-Examples:
-
-```sh
-cargo run --offline --example synchronous
-cargo run --offline --example resume
-cargo run --offline --example revalidation
-cargo run --offline --example action --features action
-cargo run --offline --example external_action --features action
-cargo run --offline --example choose --features choose
-cargo run --offline --example scoped_params --features scope,action
-cargo run --offline --example scoped_params_manual --features scope,action
+```text
+start → None         → Failure
+start → Some(state)  → is_in_progress
+    true             → tick → Running
+    false            → complete → Success/Failure
 ```
 
-The resume example uses an application-defined `WaitFrames` from
-`examples/support/wait_frames.rs`, shared with tests. It suspends for three updates
-and executes the next child on completion. The revalidation example preserves a
-patrol while a higher-priority candidate fails, then preempts it when that candidate
-becomes eligible.
+Later updates query progress without restarting. State needs `Send + 'static`,
+but not `Default`. Tick defaults to no work. All callbacks run inline and may
+execute on a branch later rejected. Effects are not rolled back.
 
-With the `action` feature, `action(value)` adapts `BtAction` to ordinary
-`BtNode::update`. The lifecycle is
-`start → is_in_progress → tick` while Running, followed by `complete` as soon as
-a later progress query returns false. Start returning None fails immediately.
-Action state does not need Default; the adapter stores Option<A::State>.
+For external work, `start` submits a request, `is_in_progress` observes it, and
+`complete` handles its outcome. The external system advances independently;
+update the BT on completion or periodically with Evaluate for reactivity.
 
-Tick runs inline in this draft, including during speculative traversal. Its
-effects survive rejection by a parent. Completing one action still lets Sequence
-advance and tick the next action in the same update. The action example shows
-this behavior. See the [action draft](docs/design/action-draft.md) and the
-[archived post-commit experiment](experiments/README.md) for the tradeoff.
+State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
+`BtCancel` and use `CancelOnDrop::from(handle)`. Disarm in `complete` after handling
+the outcome. Drop has no context argument; the handle must own cancellation access.
+See the [external action example](examples/external_action.rs).
 
-For externally scheduled work, start submits an operation and returns its request
-handle, is_in_progress observes it, and dropping the cancellation guard requests
-cancellation. Tick has an empty default and need not be implemented. The scheduler
-advances work without running the BT; the application updates the BT on completion
-events or at a lower frequency with Evaluate for reactivity. The external_action example performs ten
-external frames with only three BT updates. It uses an application-owned movement
-component and no async runtime or engine dependency.
+## Custom nodes
 
-Cancellation is owned by action state: a cancel-on-drop handle can stop external
-work when the state is preempted, rejected, reset, or dropped. `complete` receives
-`&mut State` so it can disarm the handle after normal completion. The tree has no
-cancel traversal. Actions that need no cancellation carry no cancellation
-metadata. The external example uses a request-specific
-atomic token, with one allocation on external submission and none on Resume.
-State must own its cancellation access; Drop has no BB argument.
+Implement `BtNode<C, P = ()>`. Keep configuration in the definition and mutable
+invocation data in `State: Default + Send + 'static`.
+`P` carries parameters separately from context; the root supplies `()`.
+Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
-To keep acquisition and cancellation together, start can return
-`CancelOnDrop::new(request, |request| { /* request cancellation */ })`. This
-accepts a function or a non-capturing closure; cancellation data belongs in the
-request. The external example uses this form and needs no separate trait impl.
-Call `state.disarm()` in complete after handling success or failure.
+A composing node stores descendant states and calls
+`child.update(&mut state.child, ctx, params, mode)`. It owns initialization,
+fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
+suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 
-For handles with reusable cancellation logic, implement
-`BtCancel::cancel(&mut self)` and wrap them with `CancelOnDrop::from(handle)`.
-Both forms provide typed access through Deref/DerefMut and store the value plus
-an optional function pointer inline. There is no allocation or separate armed
-flag; cancellation may use an indirect function call. Existing custom Drop
-implementations can still be used directly as action state, without this wrapper.
+- Context mutations and ticks take effect immediately, including on failed branches.
+- `NodeResult::error` and `ControlOp::error` log to stderr and return Failure.
+  Ordinary Failure is silent.
+- User panics propagate. Reset state before reuse after an unwind.
+- Custom policies must terminate; there is no execution budget.
+- Controls store one active child in an enum. Large states and nested candidates
+  can require substantial stack space. State may move when a candidate is selected.
 
-Core exports are available at the `flatbt` root and directly from `flatbt_core`.
-Optional `choose!` and action exports retain their root paths when enabled;
-`scope!` and bindings retain `flatbt::scope` paths. `flatbt::nodes` exposes the
-selected catalog modules. The shared parameter contracts remain in
-`flatbt::params`, independently of scopes. Future utility nodes and policies such
-as priority and random selection belong in `flatbt-nodes`, behind independent
-features where useful. Example helpers remain outside the library crates.
+## Examples
 
-Tuple children of arity 0–32 use static dispatch by default. Generation lives in
-`flatbt-core`; `choose!` uses the same generated indices across crate boundaries.
+Run any example with the default features:
 
-To change the maximum tuple arity, put this in the consuming project's
-`.cargo/config.toml` (at the workspace root when using a Cargo workspace):
+```sh
+cargo run --example resume
+```
+
+| Example | Shows |
+| --- | --- |
+| [synchronous](examples/synchronous.rs) | Composition and custom policy |
+| [resume](examples/resume.rs) | Wait across updates, then continue |
+| [revalidation](examples/revalidation.rs) | Preserve or preempt a saved branch |
+| [choose](examples/choose.rs) | Context-driven and nested choice |
+| [action](examples/action.rs) | Inline lifecycle |
+| [external_action](examples/external_action.rs) | External work, 10 frames / 3 BT updates |
+| [scoped_params](examples/scoped_params.rs) | Named local bindings |
+| [scoped_params_manual](examples/scoped_params_manual.rs) | Equivalent function API |
+
+## Advanced configuration
+
+<details>
+<summary>Selective features, direct crates, and tuple limits</summary>
+
+### Select features
+
+Core only:
+
+```toml
+flatbt = { path = "../FlatBT", default-features = false }
+```
+
+Core with selected helpers:
+
+```toml
+flatbt = { path = "../FlatBT", default-features = false, features = ["choose", "scope"] }
+```
+
+| Feature | API |
+| --- | --- |
+| `choose` | `choose!`, `ChooseNode`, `Choose` |
+| `scope` | `flatbt::scope`: local storage, bindings, `scope!` |
+| `action` | `BtAction`, `action`, cancellation helpers |
+
+Features are independent. Cargo combines features enabled by all consumers.
+Core APIs are always available. Direct dependencies are also supported:
+
+```toml
+[dependencies]
+flatbt-core = { path = "../FlatBT/crates/flatbt-core" }
+flatbt-nodes = { path = "../FlatBT/crates/flatbt-nodes", features = ["choose", "action"] }
+flatbt-scope = { path = "../FlatBT/crates/flatbt-scope" }
+```
+
+### Tuple limits
+
+Default: 32 children and 32 parameters. Configure in the consuming workspace's
+`.cargo/config.toml`:
 
 ```toml
 [env]
@@ -229,56 +232,18 @@ FLATBT_MAX_CHILDREN = "64"
 FLATBT_MAX_PARAMS = "64"
 ```
 
-Cargo passes this setting to FlatBT's build script, including when FlatBT is a
-dependency. The default is 32; zero generates only the empty-tuple implementation.
-The value must be a non-negative integer. Changing it triggers regeneration on
-the next build without editing FlatBT or running `cargo clean`. An existing
-environment variable takes precedence over this config entry; use Cargo's
-`{ value = "64", force = true }` form if the config must override it.
+Limits are non-negative build settings shared by all trees. Zero generates only
+empty tuples. Changes regenerate on the next build. Existing environment variables
+win; use `{ value = "64", force = true }` to override them.
 
-This is a build setting shared by consumers of that FlatBT build, not a runtime
-or per-tree setting. Larger values generate more Rust code and increase build
-cost; very large values can exceed the compiler's macro recursion limit. A tuple
-above the configured limit is rejected at compile time.
+Larger limits increase generated code and may require a higher macro recursion
+limit. Tuples above the limit fail to compile. Custom `ParamShape` structs have
+no generated tuple limit.
 
-`FLATBT_MAX_PARAMS` independently sets the maximum generated parameter tuple arity
-for `params` and `scope!` bindings (default 32). It uses the same configuration and
-regeneration rules. It does not limit custom `ParamShape` structs. Larger arities
-increase generated code and may require a higher Rust macro recursion limit.
+</details>
 
-Validation:
+## API reference
 
-```sh
-cargo test --offline --workspace --all-features
-cargo clippy --offline --workspace --all-targets --all-features -- -D warnings
-cargo fmt --all --check
-# Core-only and independent feature combinations:
-sh scripts/check-features.sh
-```
+From the checkout, run `cargo doc -p flatbt --open`.
 
-Custom nodes use `State: Default + Send + 'static`, separate from their definition.
-`BtNode<C, P = ()>` accepts parameters separately from context and node state.
-The root API supplies `()`; a scope supplies its owned local fields to bound
-children. Parameter-free custom nodes accept a `()` parameter; use
-`no_params(node)` to reuse them under any scope. `BtAction<C, P = ()>` similarly
-receives parameter values directly in each callback.
-A composing node includes nested state fields and calls a child with the chosen
-field: `child.update(&mut state.child, ctx, params, mode)`. It owns initialization and
-cleanup when nested invocations start, finish, or are replaced.
-A node can suspend without implementing BtAction. Empty sequences succeed; empty
-selectors fail. Ordinary Failure is silent; `NodeResult::error` and
-`ControlOp::error` report execution errors to stderr and return Failure.
-
-Context changes, including action ticks, take effect immediately and survive
-failed branches. There is no post-commit phase in this draft. User-code panics
-are not caught; after an unwind,
-reset the state before using it again. Custom policies must ensure termination;
-there is no execution budget.
-
-The API is experimental. Open sets of runtime-defined node types, their storage,
-and the `bt!` compiler remain future work. Memory requirements for open candidate
-sets will be considered separately from the current static composition model.
-
-The [decision log](docs/design/decisions.md) records earlier iterations.
-The [original architecture document](docs/design/original-architecture.md) is an
-unmodified Russian source snapshot for discussion, not a binding contract.
+[Contributing](CONTRIBUTING.md)

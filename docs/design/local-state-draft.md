@@ -1,26 +1,20 @@
-# Local values, control flow, and node parameters
+# Local values and node parameters
 
-Status: implemented draft. No bt! compiler, FrameStorage, type-directed field
-lookup, or runtime-owned heap allocation. This replaces the Scoped context and
-double-reference parameter experiments.
+Implemented draft. Replaces the Scoped-context and double-reference experiments.
+Inline state; no bt! compiler, FrameStorage, type-based field lookup, or runtime
+heap allocation.
 
-## Module boundary
+## API boundary
 
-`flatbt::scope` contains scope storage, synchronous computation, bindings, and
-the `scope!` macro. `use flatbt::scope::scope;` imports both the macro and the
-function. Manual construction imports its helpers from the same module, for
-example `use flatbt::scope::{bind, compute, read, write, scope};`.
+Feature `scope` exposes storage, computation, bindings, and `scope!` through
+`flatbt::scope`. `use flatbt::scope::scope;` imports both macro and function.
+Direct crate: `flatbt_scope`.
 
-Ordinary trees use the crate-root node and composition APIs without importing
-scope. The shared `ParamShape`, `ParamValue`, `Read`, and `Write` types live in
-`flatbt::params`; controls/actions depend on this protocol, not on scope storage
-or bindings. `Read` and `Write` are also re-exported by `flatbt::scope` for tuple
-bindings. This separation does not introduce conditional compilation or change
-the node interface, state layout, or execution behavior.
+Core's `flatbt::params` owns `ParamShape`, `ParamValue`, `Read`, and `Write`.
+Controls/actions use this protocol independently of scope storage. Scope also
+re-exports Read/Write for bindings.
 
-## Independent contracts
-
-Context, owned state, and parameters are separate:
+## Parameters
 
 ```rust,ignore
 trait BtNode<C, P = ()> {
@@ -30,19 +24,18 @@ trait BtNode<C, P = ()> {
 }
 ```
 
-LookAt requests `&Vector2` and receives `position: &Vector2`. A producer requests
-`&mut Option<Vector2>` and receives exactly that reference. Multiple arguments
-are an ordinary tuple such as `(&Enemy, &mut Option<Vector2>)`, passed by value.
-Neither node knows the surrounding local container or field names. All nodes
-keep the same World context. Passing references by value does not transfer
-ownership of the local data, and State cannot retain update-local references.
+| Request | Received value |
+| --- | --- |
+| Shared input | `&Vector2` |
+| Output slot | `&mut Option<Vector2>` |
+| Multiple arguments | `(&Enemy, &mut Option<Vector2>)`, in written order |
 
-`BtAction<C, P = ()>` receives P directly in every callback, including the progress
-query. Read inputs stay shared; declared outputs remain exclusive. Parameters
-are borrowed anew each update. An action requiring a snapshot must copy an owned
-value or ID into its own state, including for external work and cancellation.
+Nodes keep the same context type and know neither field names nor scope layout.
+Parameters borrow locals for each update; state cannot retain those references.
+`BtAction<C, P>` receives P in every callback, including progress queries. Store
+an owned value or ID in action state when a snapshot or cancellation access is needed.
 
-## Synchronous locals and explicit control flow
+## Initializers and controls
 
 ```rust,ignore
 use flatbt::scope::scope;
@@ -59,20 +52,19 @@ scope! {
 }
 ```
 
-A local initializer is `Fn(&mut World) -> T`, not a node. The optional context
-header supplies its argument type, permitting short `|bb| bb.field` closures.
-Without the header, use `|bb: &mut World| bb.field`. Named functions have the same
-mutable-context signature. Captured configuration belongs to the definition;
-constructing the tree does not call the initializer.
+- Initializers are `Fn(&mut World) -> T`. The optional context header supplies the
+  argument type; otherwise annotate closure arguments.
+- Tree construction stores definitions/captures. Initializers run once on entry,
+  in declaration order, before any body child.
+- Values survive Running, Resume, and Evaluate. Completion/reset permits fresh
+  initialization on the next entry.
+- Initializers receive context only. Option/Result returns are values, not BT
+  control flow. Use a producer node for failure or suspension.
+- Body control is explicit: `sequence` or `select`. Nested controls share locals.
+- Nested scopes own independent locals and inherit no slots. Put a scope inside
+  a branch for lazy initialization; enclosing initializers run before selection.
 
-Initializers execute once per scope invocation, in declaration order, before any
-body child. Their values survive Running, Resume, and Evaluate. The next entry
-after completion/reset initializes fresh values. Initializers currently receive
-context only, not other local fields, and return a value without a BT failure or
-Running result. A returned Option/Result is itself the local value, not implicit
-control flow. Use a producer node when selection needs a BT result or suspension.
-
-There is no default body control. The macro requires sequence or select:
+A selector body rescans on Evaluate without replaying initializers:
 
 ```rust,ignore
 scope! {
@@ -89,29 +81,16 @@ scope! {
 }
 ```
 
-The selector revalidates its candidates on Evaluate without rerunning the local
-initializers. Resume follows its saved branch. Both initializers above run before
-selection; for branch-lazy computation put a separate scope inside that branch.
-Nested sequence/select blocks share their containing scope's locals. A nested
-scope owns independent locals and does not implicitly inherit its parent's slots.
+## Calls and output slots
 
-## Calls and optional output slots
+`Node.with(name)` or `Node.with(in name)` binds a shared input; `out name` binds
+an exclusive output. Plain node expressions use unit parameters. Constructors
+keep ordinary Rust arguments: `wait_frames(frames)` reads outer configuration;
+`LookAt.with(frames)` selects a local field.
 
-`LookAt.with(door_pos);` explicitly supplies an input. Plain expressions such as
-`Wait;`, `wait_frames(1);`, and `leaf(|bb: &mut World| { ... });` use unit parameters.
-Configured definitions, paths, and adapters work directly:
-`action(Walk).with(walk_pos);`. No `run` keyword or square brackets are required.
-
-Constructor arguments are always ordinary Rust expressions. Only the final
-`.with(...)` suffix binds runtime local names; the macro never guesses whether a
-constructor argument names a local. Locals are not definition-time Rust variables.
-For example, `wait_frames(frames)` uses an outer Rust configuration variable,
-while `LookAt.with(frames)` selects the scope field, even if both names exist.
-To use an unrelated existing `.with` method, parenthesize that complete expression.
-Binding syntax is recognized at the statement level, not inside opaque Rust
-expressions such as tuple arguments; use nested sequence/select blocks for locals.
-
-Only producers that need a node protocol require explicit output slots:
+Only the final statement-level `.with(...)` suffix binds locals. Parenthesize an
+expression to use an unrelated `.with` method. Binding syntax inside opaque Rust
+expressions, such as tuple arguments, is not expanded; use nested control blocks.
 
 ```rust,ignore
 scope! {
@@ -127,22 +106,15 @@ scope! {
 }
 ```
 
-ChooseCover requests `(&Enemy, &mut Option<Vector2>)`; it can suspend before
-filling the output. Its own state ends when it completes, but the scope retains
-the output for later siblings. A successful producer that leaves None does not
-silently supply a value: the consuming binding reports a diagnostic and fails.
-The optional `in name` spelling also denotes a shared input. Multiple arguments
-form a tuple in written order, independently of their types.
+ChooseCover receives `(&Enemy, &mut Option<Vector2>)` and may suspend before writing.
+The output survives producer completion. If the producer leaves None, the consumer
+logs a diagnostic and fails without running.
 
-## Function API and implementation
+Rust rejects unknown/duplicate fields, wrong parameter types, overlapping exclusive
+outputs, or reading and writing the same slot in one call. Repeated shared inputs
+are valid. Missing values are runtime errors.
 
-`scope::<Locals, _>(subtree)` itself has no control policy and initializes Locals
-with Default. The macro generates Option fields, initializes them with bound
-`compute(callback)` nodes, and places the requested control after that prefix in
-an ordinary sequence. The sequence preserves the active body on Evaluate, so
-initializers are not replayed. With no initializers there is no prefix wrapper.
-
-The function API supports arbitrary controls and binding projections:
+## Function API
 
 ```rust,ignore
 use flatbt::scope::{bind, params, read, scope, Read, Write};
@@ -151,57 +123,50 @@ scope::<Locals, _>(select((
     bind(LookAt, read(|s: &Locals| s.door_pos.as_ref())),
     bind(action(Walk), read(|s: &Locals| s.walk_pos.as_ref())),
 )))
+
 bind(ChooseCover, params::<(Read<Enemy>, Write<Option<Vector2>>), _, _>(
     |s: &mut CombatLocals| Some((s.enemy.as_ref()?, &mut s.cover_pos)),
 ))
 ```
 
-With the `WithParams` extension trait imported, `node.with(binding)` is the same
-operation as `bind(node, binding)` in ordinary Rust. In scope!, `.with(local)`
-generates the binding projection, so both authoring paths use the same operation.
+`scope::<Locals, _>(subtree)` initializes Locals with Default and adds no control
+policy. Import `WithParams` for `node.with(binding)`, equivalent to `bind(node, binding)`.
+The function API accepts custom controls and projections.
 
-Read/write projections select concrete fields; Rust verifies disjoint writes.
-Repeated shared inputs are valid, but two exclusive outputs cannot alias, nor
-can one call read and write the same slot. Unknown/duplicate fields and wrong
-parameter types are compile errors. Missing values are detected at runtime.
+The macro generates Option fields, bound `compute(callback)` initializers, and an
+outer sequence containing initialization plus the requested body. Sequence preserves
+the active body on Evaluate. No initializers means no prefix wrapper.
 
-ParamShape describes a lifetime-indexed view and how to reborrow it. ParamValue
-maps concrete unit/reference/tuple values to that shape. Controls and the action
-adapter use these traits internally to lend the same parameters across successive
-calls. Ordinary leaf/action authors use plain references and need no explicit
-reborrowing. Custom parameter structs used by controls/actions need corresponding
-ParamShape/ParamValue implementations; ParamBinding describes custom projections.
+## Reborrowing and limits
 
-Tuple implementations are generated through FLATBT_MAX_PARAMS (default 32),
-independently of FLATBT_MAX_CHILDREN. Both can be configured at build time; no
-runtime code generation or type erasure is involved. The initializer prefix and
-each body control separately obey the child-count limit. Large macros can also
-require a higher Rust recursion limit.
+ParamShape defines a lifetime-indexed view and reborrowing; ParamValue maps concrete
+values to it. Controls/actions reborrow between calls. Ordinary nodes use references
+directly. Custom parameter structs used by controls/actions need both traits;
+custom projections implement ParamBinding.
+
+`FLATBT_MAX_PARAMS` controls tuple generation (default 32), independently of
+`FLATBT_MAX_CHILDREN`. The initialization prefix and each control obey the child
+limit separately. Large macros may need a higher Rust recursion limit.
 
 ## State and effects
 
-ScopeState stores child state before Locals so descendants drop first. Macro
-slots are Option<T>; payloads need Send + static, but not Default or Clone. The
-child subtree retains the normal active-child enum. All storage stays inline.
+ScopeState stores child state before locals, so descendants drop first. Macro slots
+are inline `Option<T>`; payloads need `Send + 'static`, not Default or Clone.
+Each BtState owns independent locals. Completion, rejection, preemption, reset,
+and Drop release them.
 
-Completion, rejection, preemption, reset, and BtState destruction release owned
-locals. Independent BtState instances own independent values. Branch-private
-scopes isolate their values. Writes to an enclosing scope shared by selector
-candidates remain visible after candidate failure, like context effects; there
-is no transactional rollback. Params are live views, not implicit snapshots.
+Writes to an enclosing scope survive failed candidates, like context writes.
+Branch-private scopes isolate their own values. Parameters are live views.
+Policies still read context only; choose! does not automatically read locals.
+Root update supplies `()`. The macro uses `no_params` for plain nodes; custom
+composers pass or reborrow parameters explicitly.
 
-Root update still supplies unit parameters without changing its external call.
-Custom composing nodes now pass parameters by value or explicitly reborrow them
-for successive calls. Control policies still observe context only; choose! does
-not automatically read locals. no_params adapts unit-parameter nodes to any
-surrounding parameter contract. The macro applies it to plain node expressions.
+## Validation
 
-Tests cover initialized values across suspension and selector revalidation,
-construction versus entry timing, initialization order and fresh entry, mixed
-parameter reborrowing across action callbacks, named same-type bindings, producer
-suspension, independent instances, missing inputs, shared writes, and scope cleanup.
-Compile-fail doctests check shared access and exclusive aliasing. The runnable
-example is `cargo run --offline --example scoped_params --features scope,action`.
+Tests cover entry timing/order, suspension, revalidation, fresh values, callback
+reborrowing, same-type fields, producers, independent instances, missing inputs,
+shared writes, and cleanup. Compile-fail doctests cover shared access and aliasing.
 
-`examples/scoped_params_manual.rs` is the equivalent tree written using functions
-only, with the same initialization prefix, bindings, and execution assertions.
+Run `cargo run --offline --example scoped_params --features scope,action`.
+[scoped_params_manual.rs](../../examples/scoped_params_manual.rs) builds the same
+tree with functions and the same execution assertions.

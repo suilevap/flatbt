@@ -1,7 +1,6 @@
 use flatbt::{BtControl, ControlOp};
 
 /// Repeats one child a fixed number of times, stopping at the first failure.
-/// This is an application-defined policy using only the public API.
 pub struct Repeat(pub usize);
 
 impl<C> BtControl<C> for Repeat {

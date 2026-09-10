@@ -1,11 +1,10 @@
 use crate::{BtNode, EntryMode, NodeResult};
 
-/// A leaf backed by an immutable callable. Captured configuration stays in the
-/// definition; mutable application data belongs in the context.
+/// Stateless callable. Captures hold configuration; context holds mutable data.
 pub struct Leaf<F>(F);
 
-/// Creates a stateless leaf. Context changes take effect immediately, without
-/// rollback. For invocation-local state, implement `BtNode` directly.
+/// Wraps a callable. Context effects are immediate and survive failure.
+/// Implement [`BtNode`] directly for invocation-local state.
 pub fn leaf<C, F: Fn(&mut C) -> NodeResult>(f: F) -> Leaf<F> {
     Leaf(f)
 }
@@ -18,10 +17,10 @@ impl<C, P, F: Fn(&mut C) -> NodeResult> BtNode<C, P> for Leaf<F> {
     }
 }
 
-/// A condition with shared access to the context.
+/// Predicate over shared context.
 pub struct Check<F>(F);
 
-/// Creates a condition that succeeds when its predicate is true.
+/// Returns Success for true, Failure for false.
 pub fn check<C, F: Fn(&C) -> bool>(predicate: F) -> Check<F> {
     Check(predicate)
 }

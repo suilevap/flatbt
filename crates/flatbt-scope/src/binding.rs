@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use flatbt_core::params::ParamShape;
 use flatbt_core::{BtNode, EntryMode, NodeResult};
 
-/// Provides a node's parameters by borrowing explicitly selected local fields.
+/// Projects local fields into borrowed node parameters.
 pub trait ParamBinding<L> {
     type Params<'a>
     where
@@ -14,7 +14,7 @@ pub trait ParamBinding<L> {
 
 pub struct ReadBinding<F>(F);
 
-/// Binds one shared input. Return None when its producer has not supplied it.
+/// Binds a shared input. Return None for a missing value.
 pub fn read<L, T, F>(project: F) -> ReadBinding<F>
 where
     F: Fn(&L) -> Option<&T>,
@@ -38,7 +38,7 @@ where
 
 pub struct WriteBinding<F>(F);
 
-/// Binds one exclusive parameter. Output nodes usually request `&mut Option<T>`.
+/// Binds an exclusive parameter, usually an `Option<T>` output slot.
 pub fn write<L, T, F>(project: F) -> WriteBinding<F>
 where
     F: Fn(&mut L) -> &mut T,
@@ -65,9 +65,9 @@ pub struct ParamsBinding<P, F> {
     shape: PhantomData<fn() -> P>,
 }
 
-/// Binds several inputs/outputs in one projection, so Rust checks disjoint writes.
-/// For example use `(Read<Enemy>, Write<Option<Position>>)` as the shape.
-/// A custom ParamShape can describe named parameter fields instead of a tuple.
+/// Binds multiple parameters with one projection; Rust checks disjoint writes.
+/// Shape example: `(Read<Enemy>, Write<Option<Position>>)`. Custom [`ParamShape`]
+/// implementations can use named fields.
 pub fn params<P, L, F>(project: F) -> ParamsBinding<P, F>
 where
     P: ParamShape,
@@ -99,17 +99,15 @@ pub struct Bound<N, B> {
     binding: B,
 }
 
-/// Adapts the scope's local fields to the node's declared parameter contract.
-/// The context type and node state are unchanged. Parameters are borrowed anew
-/// on every update and cannot be retained in the node's static state.
-/// An unavailable input reports a diagnostic and fails without calling the node.
-/// Effects on local output slots, like BB effects, are not rolled back on Failure.
+/// Binds local fields to node parameters on each update; context and state stay
+/// unchanged. Missing inputs log a diagnostic and fail without calling the node.
+/// Output writes survive Failure. State cannot retain parameter borrows.
 pub fn bind<N, B>(node: N, binding: B) -> Bound<N, B> {
     Bound { node, binding }
 }
 
-/// Fluent spelling of bind for ordinary Rust tree construction.
-/// In scope!, `.with(local)` generates the field binding automatically.
+/// Adds `node.with(binding)`, equivalent to [`bind`].
+/// Inside `scope!`, `.with(local)` generates the projection.
 pub trait WithParams: Sized {
     fn with<B>(self, binding: B) -> Bound<Self, B> {
         bind(self, binding)
@@ -139,7 +137,7 @@ where
 
 pub struct WithoutParams<N>(N);
 
-/// Reuses a node with no parameters inside any scope.
+/// Adapts a unit-parameter node to any parameter contract.
 pub fn no_params<N>(node: N) -> WithoutParams<N> {
     WithoutParams(node)
 }

@@ -2,8 +2,7 @@ use std::marker::PhantomData;
 
 use crate::{BtNode, EntryMode, NodeResult};
 
-/// Per-agent data bound to its root definition. The root's concrete state includes
-/// its statically composed descendants. Execution is driven by `update`.
+/// Per-agent state bound to a borrowed root. Includes descendant state.
 pub struct BtState<'root, N: BtNode<C>, C> {
     root_node: &'root N,
     root_state: Option<N::State>,
@@ -23,16 +22,15 @@ impl<'root, N: BtNode<C>, C> BtState<'root, N, C> {
         self.root_state.is_some()
     }
 
-    /// Drops the root state, including all descendants; keeps the root binding.
+    /// Drops state and descendants; keeps the root binding.
     pub fn reset(&mut self) {
         self.root_state = None;
     }
 }
 
-/// Runs the root with its state and application context.
-/// Resume follows the saved selection; Evaluate revalidates from the root.
-/// Newly created state always enters as Evaluate. A different root is rejected
-/// without modifying state or application context.
+/// Runs the root. Resume follows saved selection; Evaluate revalidates from root.
+/// Fresh state always enters as Evaluate. A different root logs an error and
+/// returns Failure without changing state or context.
 pub fn update<C, N: BtNode<C>>(
     root_node: &N,
     state: &mut BtState<'_, N, C>,
@@ -45,8 +43,7 @@ pub fn update<C, N: BtNode<C>>(
     run_node(root_node, &mut state.root_state, ctx, mode)
 }
 
-/// Manages the lifetime of a concrete state slot selected by its owner.
-/// This helper neither locates state nor chooses a continuation.
+/// Initializes fresh state with Evaluate; clears the slot on terminal results.
 pub(crate) fn run_node<C, N: BtNode<C>>(
     node: &N,
     slot: &mut Option<N::State>,

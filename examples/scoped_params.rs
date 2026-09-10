@@ -1,5 +1,4 @@
-use flatbt::scope::scope;
-use flatbt::{BtState, EntryMode, NodeResult, action, update};
+use flatbt::prelude::*;
 
 #[path = "support/scoped_params.rs"]
 mod support;

@@ -31,7 +31,6 @@ fn main() {
         if frame == 2 {
             agent.urgent = true;
         }
-        // The external system keeps working on frames where the BT does not run.
         let completed = agent.advance_movement();
         if let Some(movement) = &agent.movement {
             println!(
@@ -39,8 +38,8 @@ fn main() {
                 movement.name, movement.remaining_frames
             );
         }
-        // Periodic full reevaluation provides reactivity. Completion can wake the
-        // current path earlier. Ignore stale events and do not restart an idle BT.
+        // Reevaluate periodically; resume early on completion of the current request.
+        // Ignore stale events and idle trees.
         let mode = if frame % 4 == 0 {
             Some(EntryMode::Evaluate)
         } else if completed.is_some_and(|request| agent.is_current(request)) {

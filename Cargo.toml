@@ -20,7 +20,7 @@ publish.workspace = true
 description = "An experimental behavior tree runtime with optional composition helpers"
 
 [features]
-default = []
+default = ["choose", "scope", "action"]
 action = ["dep:flatbt-nodes", "flatbt-nodes/action"]
 choose = ["dep:flatbt-nodes", "flatbt-nodes/choose"]
 scope = ["dep:flatbt-scope"]

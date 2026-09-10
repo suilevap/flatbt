@@ -1,4 +1,4 @@
-//! A resumable behavior tree runtime with static composition.
+//! Resumable behavior trees with static dispatch and inline state.
 //!
 //! ```
 //! use flatbt_core::{BtState, EntryMode, NodeResult, check, leaf, seq, update};
@@ -16,7 +16,7 @@
 //! assert_eq!(ammo, 0);
 //! ```
 //!
-//! This crate has no dependencies on the optional node catalog or scope DSL.
+//! Independent of the optional node catalog and scope DSL.
 
 #![forbid(unsafe_code)]
 

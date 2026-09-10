@@ -1,7 +1,7 @@
-//! A resumable behavior tree runtime with static composition.
+//! Resumable behavior trees with static dispatch and inline state.
 //!
 //! ```
-//! use flatbt::{BtState, EntryMode, NodeResult, check, leaf, seq, update};
+//! use flatbt::prelude::*;
 //!
 //! let tree = seq((
 //!     check(|ammo: &usize| *ammo > 0),
@@ -16,23 +16,22 @@
 //! assert_eq!(ammo, 0);
 //! ```
 //!
-//! Core is always available. Enable `choose`, `scope`, or `action` independently
-//! in Cargo.toml to add optional helpers. No features are enabled by default.
-//! Depend on `flatbt-core` directly when no entry-point crate is needed.
-//!
-//! See `examples/resume.rs` for suspension with an application-defined node.
+//! Includes `choose`, `scope`, and `action` by default. Set `default-features = false`
+//! for core only, then enable individual features as needed.
 
 #![forbid(unsafe_code)]
 
+pub mod prelude;
+
 pub use flatbt_core::*;
 
-/// Optional catalog of ready-made nodes and policies.
+/// Optional nodes and policies.
 #[cfg(any(feature = "action", feature = "choose"))]
 pub use flatbt_nodes as nodes;
 #[cfg(feature = "action")]
 pub use flatbt_nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
 #[cfg(feature = "choose")]
 pub use flatbt_nodes::{Choose, ChooseNode, choose};
-/// Invocation-local storage, parameter bindings, and the scope macro.
+/// Invocation-local storage, bindings, and `scope!`.
 #[cfg(feature = "scope")]
 pub use flatbt_scope as scope;

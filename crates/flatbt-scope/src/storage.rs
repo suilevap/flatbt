@@ -2,16 +2,14 @@ use std::marker::PhantomData;
 
 use flatbt_core::{BtNode, EntryMode, NodeResult};
 
-/// Owns invocation-local data separately from the application context.
+/// Owns invocation-local data outside application context.
 pub struct Scope<L, N> {
     child: N,
     locals: PhantomData<fn() -> L>,
 }
 
-/// Creates a scope whose local fields are initialized with Default on entry.
-/// Producers can fill output slots before consumers read them through `bind`.
-/// Each binding explicitly selects fields; equal field types do not imply sharing.
-/// The enclosing parameter value is not implicitly inherited by a nested scope.
+/// Initializes locals with Default on entry. Bindings select fields explicitly.
+/// Producers may fill slots for later consumers. Nested scopes inherit no parameters.
 pub fn scope<L, N>(child: N) -> Scope<L, N> {
     Scope {
         child,
@@ -19,7 +17,7 @@ pub fn scope<L, N>(child: N) -> Scope<L, N> {
     }
 }
 
-/// Descendants drop before the values they use. The complete layout is inline.
+/// Inline state; descendants drop before locals.
 #[derive(Default)]
 pub struct ScopeState<L, S> {
     child: S,
@@ -39,12 +37,11 @@ where
     }
 }
 
-/// Adapts a synchronous initializer to an output node. The callback runs when
-/// entered, not when the tree is constructed. scope! puts these nodes in an
-/// initialization prefix that completes before entering the chosen control.
+/// Synchronous output node, called on entry. `scope!` places initializers before
+/// the body control and skips them on Resume/Evaluate while Running.
 pub struct Compute<F>(F);
 
-/// Computes one value from context and writes it to the supplied output slot.
+/// Computes from context and fills the output slot.
 pub fn compute<C, T, F: Fn(&mut C) -> T>(init: F) -> Compute<F> {
     Compute(init)
 }

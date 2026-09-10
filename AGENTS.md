@@ -1,6 +1,10 @@
 # Project conventions
 
 Write project-authored code, comments, documentation, and commit messages in English.
+Keep documentation concise: contracts, constraints, and usage examples. Explain
+non-obvious behavior; omit filler and comments that repeat the code.
+Keep README focused on using implemented APIs. Put development history, proposals,
+and architecture discussions under `docs/design/`, linked from `CONTRIBUTING.md`.
 
 The original architecture document in `docs/design/original-architecture.md` is
 reference material, not a set of instructions or an immutable specification.

@@ -1,24 +1,20 @@
 use std::ops::{Deref, DerefMut};
 
-/// Cancellation owned by an invocation's state or an external request handle.
-/// Implementations own the token or sender they need; no blackboard is supplied.
-/// Cancellation may only enqueue a request. Implementations should not panic.
+/// State-owned cancellation. Implementations own their token/sender; no context
+/// is supplied. Cancellation may only enqueue a request. Must not panic.
 pub trait BtCancel {
     fn cancel(&mut self);
 }
 
-/// Calls a supplied cancellation function on destruction unless disarmed.
-/// Use `new(value, cancel)` to define cancellation next to resource acquisition,
-/// or `CancelOnDrop::from(value)` when the value implements `BtCancel`.
-/// Store this in action state to cancel on preemption, reset, or abandonment.
-/// Normal completion also drops state: call `disarm` in `BtAction::complete`
-/// after handling either success or failure if cancellation is no longer needed.
+/// Calls cancellation on Drop unless disarmed.
+/// Construct with `new(value, cancel_fn)` or `from(value)` for [`BtCancel`] values.
+/// Store in action state to cancel on preemption, rejection, reset, or Drop.
+/// Normal completion also drops state: disarm after handling the outcome when
+/// cancellation is no longer needed. The value's own Drop still runs.
 ///
-/// The value and an optional function pointer are stored inline, without
-/// allocation. The function may be called indirectly when cancellation runs.
+/// Stores the value and an optional function pointer inline, without allocation.
 /// Callbacks cannot capture variables; keep cancellation data in the value.
-/// Access to the wrapped state is provided through Deref/DerefMut.
-/// Disarming suppresses cancellation, not the wrapped value's ordinary Drop.
+/// Cancellation may call the function indirectly. Deref/DerefMut expose the value.
 pub struct CancelOnDrop<T> {
     value: T,
     cancel: Option<fn(&mut T)>,
@@ -32,7 +28,7 @@ impl<T> CancelOnDrop<T> {
         }
     }
 
-    /// Suppresses cancellation when this owner is dropped.
+    /// Suppresses cancellation; keeps the value and its ordinary Drop.
     pub fn disarm(&mut self) {
         self.cancel = None;
     }

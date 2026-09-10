@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use flatbt::{BtNode, BtState, EntryMode, NodeResult, leaf, select, seq, update};
+use flatbt::prelude::*;
 
 #[path = "../examples/support/wait_frames.rs"]
 mod wait;
@@ -100,9 +100,6 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
 #[cfg(all(feature = "choose", feature = "scope"))]
 #[test]
 fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
-    use flatbt::choose;
-    use flatbt::scope::scope;
-
     struct Observe;
     impl BtNode<Vec<u32>, &u32> for Observe {
         type State = ();

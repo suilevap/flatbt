@@ -1,7 +1,6 @@
 use flatbt::{BtNode, EntryMode, NodeResult};
 
-/// Suspends for a fixed number of updates, then succeeds on the following update.
-/// This counts updates, not elapsed wall-clock time, and requires no tick.
+/// Counts updates until completion. No wall-clock timing or tick required.
 pub struct WaitFrames(usize);
 
 /// `wait_frames(3)` returns Running three times, then Success.

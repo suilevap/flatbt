@@ -1,23 +1,21 @@
-//! Parameter views shared by nodes, controls, and action adapters.
-//! Ordinary nodes use unit or reference parameters directly. Implement these
-//! traits only for custom parameter structs that composing nodes must reborrow.
+//! Parameter reborrowing for controls and actions.
+//! Unit, references, and tuples are supported. Implement these traits for custom
+//! parameter structs that must be borrowed across successive calls.
 
 use std::marker::PhantomData;
 
-/// A lifetime-indexed parameter shape, independent of the scope that supplies it.
-/// Implement this for application-defined structs containing several borrows.
-/// Tuple shapes are generated through FLATBT_MAX_PARAMS (default 32).
+/// Lifetime-indexed view, independent of its source scope.
+/// Tuple shapes are generated through `FLATBT_MAX_PARAMS` (default 32).
 pub trait ParamShape {
     type Value<'a>;
 
-    /// Lends the same parameters to another callback without retaining its borrow.
+    /// Borrows the parameters for a shorter lifetime.
     fn reborrow<'a, 'b: 'a>(value: &'a mut Self::Value<'b>) -> Self::Value<'a>;
 }
 
-/// Identifies how a parameter value can be lent repeatedly by a composing node.
-/// Implemented for unit, shared/exclusive references, and generated tuples.
-/// Leaf nodes accept ordinary values; this trait is needed by controls/actions
-/// that invoke several children or callbacks using the same parameters.
+/// Maps a value to its reborrowable shape for successive child/callback calls.
+/// Implemented for unit, references, and generated tuples. Leaves can accept
+/// values without this trait.
 pub trait ParamValue {
     type Shape: ParamShape;
 
@@ -26,8 +24,7 @@ pub trait ParamValue {
         Self: 'a;
 }
 
-/// A shared input parameter.
-/// The node cannot mutate the referenced input:
+/// Shared input shape. Its view prevents direct mutation:
 ///
 /// ```compile_fail,E0594
 /// use flatbt_core::{BtNode, EntryMode, NodeResult};
@@ -59,7 +56,7 @@ impl<T: 'static> ParamValue for &T {
     }
 }
 
-/// An exclusive parameter, typically an output slot such as `Option<T>`.
+/// Exclusive parameter shape; often an `Option<T>` output slot.
 pub struct Write<T>(PhantomData<fn() -> T>);
 impl<T: 'static> ParamShape for Write<T> {
     type Value<'a> = &'a mut T;

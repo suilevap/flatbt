@@ -8,7 +8,7 @@ use flatbt::{BtAction, CancelOnDrop};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RequestId(u64);
 
-/// Application-owned component, advanced independently of behavior tree updates.
+/// Movement advanced by the external system between BT updates.
 pub struct Movement {
     pub request: RequestId,
     pub name: &'static str,
@@ -16,8 +16,7 @@ pub struct Movement {
     cancellation: Arc<AtomicBool>,
 }
 
-/// An external operation's cancellation handle. It never borrows or locks the
-/// behavior's blackboard. The action opts into cancellation on destruction.
+/// Request-specific cancellation access without borrowing or locking context.
 pub struct RequestHandle {
     request: RequestId,
     cancellation: Arc<AtomicBool>,
@@ -34,8 +33,7 @@ impl Agent {
     fn start_movement(&mut self, name: &'static str, frames: u32) -> Option<RequestHandle> {
         let request = RequestId(self.next_request);
         self.next_request = self.next_request.checked_add(1)?;
-        // One allocation per external request, not per BT update. A scheduler
-        // can instead supply pooled or generational cancellation handles.
+        // One allocation per request. Pooled/generational handles can avoid it.
         let cancellation = Arc::new(AtomicBool::new(false));
         self.movement = Some(Movement {
             request,
@@ -49,8 +47,8 @@ impl Agent {
         })
     }
 
-    /// Simulates an external system. Cancellation is a request: component removal
-    /// happens here, without executing the BT. Completed state is kept for query.
+    /// Applies cancellation and advances movement without running the BT.
+    /// Keeps terminal status until the BT observes it.
     pub fn advance_movement(&mut self) -> Option<RequestId> {
         let movement = self.movement.as_mut()?;
         if movement.cancellation.load(Ordering::Relaxed) {
@@ -75,7 +73,7 @@ impl Agent {
     }
 }
 
-/// This node submits and observes work; its handle owns cancellation.
+/// Submits and observes work; its handle owns cancellation.
 pub struct MoveExternally {
     pub name: &'static str,
     pub frames: u32,

@@ -452,7 +452,7 @@ impl BtNode<World, &mut Option<Vector2>> for GetVisibleDoorPos {
         output: &mut Option<Vector2>,
         _: EntryMode,
     ) -> NodeResult {
-        // Demonstrate a producer whose computation takes more than one update.
+        // Suspend before producing the value.
         if !*started {
             *started = true;
             return NodeResult::Running;

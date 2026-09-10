@@ -1,4 +1,4 @@
-/// The result of an invocation: terminal completion or suspension.
+/// Success/Failure ends an invocation; Running preserves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use]
 pub enum NodeResult {
@@ -8,8 +8,7 @@ pub enum NodeResult {
 }
 
 impl NodeResult {
-    /// Reports an execution error to stderr and returns Failure.
-    /// Ordinary behavior failures should return `Failure` directly without a log.
+    /// Logs to stderr and returns Failure. Use `Failure` directly for normal outcomes.
     pub fn error(message: impl std::fmt::Display) -> Self {
         log_error(message);
         Self::Failure
@@ -18,32 +17,29 @@ impl NodeResult {
 
 pub(crate) fn log_error(message: impl std::fmt::Display) {
     use std::io::Write;
-    // A failed diagnostic write must not turn an execution error into a panic.
+    // Ignore stderr errors to keep diagnostics non-panicking.
     let _ = writeln!(std::io::stderr().lock(), "[flatbt] {message}");
 }
 
-/// How execution enters the current invocation. Evaluate does not imply reset.
+/// Entry mode. Evaluate rechecks decisions without resetting state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryMode {
     Evaluate,
     Resume,
 }
 
-/// An immutable definition with separate, statically composed state.
-/// A composing node includes its descendants in State and chooses which fields
-/// to pass to them. It owns initialization and cleanup of nested invocations.
-/// C is application context; P is a separate parameter contract (unit by default).
-/// Bindings borrow the declared inputs/outputs from an owning scope's state.
-/// Parameters may contain update-local references; State must own its data.
+/// Immutable definition with owned invocation state.
 ///
-/// Fresh invocations enter as Evaluate. Existing invocations can receive Resume
-/// or Evaluate; Evaluate alone must not reset existing state.
-/// State survives only while Running. Use optional state fields to initialize
-/// context-dependent data.
-/// Use the free `update` function to drive execution with a root and `BtState`.
-/// Composing nodes call this method on children with their chosen state fields.
-/// User code should report recoverable errors with `NodeResult::error`.
-/// Panics in user code are not caught by the runtime.
+/// `C` is application context; `P` carries parameters, including update-local
+/// borrows. State survives while Running and cannot retain those borrows.
+/// Use optional state fields for context-dependent initialization.
+///
+/// Fresh entry receives Evaluate. Existing entry receives Resume or Evaluate;
+/// Evaluate must not reset state. Composers own descendant state, initialization,
+/// and cleanup, and pass the appropriate fields to child updates.
+///
+/// Drive roots with [`crate::update`] and [`crate::BtState`]. Report recoverable
+/// errors with [`NodeResult::error`]. User panics propagate.
 pub trait BtNode<C, P = ()> {
     type State: Default + Send + 'static;
 

@@ -18,7 +18,7 @@ struct Task {
     succeeds: bool,
 }
 
-// Deliberately has no Default implementation.
+// No Default: start must initialize state.
 struct TaskState {
     name: &'static str,
     remaining: usize,

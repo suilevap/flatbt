@@ -1,14 +1,17 @@
-# Rust Behavior Tree — Master Architecture Spec
+# Original architecture proposal
 
-## 1. Главная идея
+Historical design, translated from the Russian source. This records the original
+v1 plan, including unimplemented and superseded proposals. For current behavior,
+see the [README](../../README.md) and [decision log](decisions.md).
+Signatures and snippets below are conceptual.
 
-BT должен ощущаться не как runtime-граф объектов, а как **resumable executable program**.
+## 1. Core idea
 
-При этом архитектура делится на два уровня:
+A behavior tree is a resumable program. Two APIs share its execution semantics.
 
-### Low-level/runtime API
+### Low-level runtime API
 
-Типизированные Rust-комбинаторы:
+Typed Rust combinators use generic composition and static dispatch:
 
 ```rust
 select((
@@ -18,15 +21,10 @@ select((
 ))
 ```
 
-Они:
+This permanent reference API validates runtime semantics before the DSL compiler.
+Statically known children require no `dyn` dispatch.
 
-- полностью статически типизированы;
-- используют generic composition;
-- не требуют `dyn` для statically-known children;
-- являются reference/low-level API;
-- позволяют реализовать и проверить всю runtime semantics до появления DSL compiler.
-
-### High-level compiled API
+### Compiled API
 
 ```rust
 bt! {
@@ -35,7 +33,6 @@ bt! {
             check(ctx.can_attack());
             attack();
         }
-
         {
             move_to_target();
             wait(0.5);
@@ -44,23 +41,13 @@ bt! {
 }
 ```
 
-`bt!` является частью v1, но реализуется **после стабилизации runtime semantics**.
+The original v1 plan includes `bt!`, implemented after runtime semantics stabilize.
+It can flatten control flow, inline synchronous conditions, omit trivial nodes,
+and persist only locals that survive suspension.
 
-Его цель — не просто красивый синтаксис.
+## 2. `BtNode`
 
-Он может компилировать BT в более эффективный resumable state machine:
-
-- flatten standard control flow;
-- inline synchronous conditions;
-- не создавать `BtNode` для trivial operations;
-- хранить transient locals на обычном stack;
-- хранить persistent locals только там, где они действительно переживают suspension.
-
----
-
-# 2. `BtNode`
-
-`BtNode` — самый низкоуровневый executable semantic protocol.
+Lowest-level execution protocol; exact signatures and lifetimes remain open.
 
 ```rust
 enum EntryMode {
@@ -81,160 +68,49 @@ trait BtNode<C> {
 }
 ```
 
-Точная Rust-signature/lifetimes остаётся implementation-open.
+| Entry mode | Behavior |
+| --- | --- |
+| `Resume` | Follow the saved continuation of the selected invocation. |
+| `Evaluate` | Re-run its decision logic. Preserve existing state. |
 
-## `EntryMode::Resume`
+On Evaluate, Sequence continues its active child, reactive Selector scans from
+child zero, and DynamicOrder rereads the current order. Fresh invocations always
+enter as Evaluate. Nodes unaffected by revalidation may ignore the mode.
 
-Продолжить уже выбранную invocation по сохранённой continuation.
+## 3. Revalidation
 
-## `EntryMode::Evaluate`
+Revalidation belongs to execution. The evaluator selects the policy; execution
+computes each node's `EntryMode`. Nodes do not query storage for the policy.
 
-Повторно выполнить decision semantics текущей invocation.
+Initial policies: `ResumeCurrentPath` and `ReevaluateFromRoot`. Intermediate
+checkpoints may follow.
 
-`Evaluate` **не означает reset state**.
-
-Примеры:
-
-```text
-Sequence.evaluate
-    → продолжает active child
-
-Reactive Selector.evaluate
-    → начинает priority scan с child 0
-
-DynamicOrder.evaluate
-    → заново читает источник текущего order
-```
-
-Fresh invocation всегда входит как `Evaluate`.
-
-Node может игнорировать `EntryMode`, если её семантика от revalidation не зависит.
-
----
-
-# 3. Revalidation
-
-Revalidation — часть execution semantics, но не storage.
-
-v1 внешне поддерживает:
-
-```text
-ResumeCurrentPath
-ReevaluateFromRoot
-```
-
-Позже возможны intermediate checkpoints.
-
-Пример persisted path:
-
-```text
-Root
-  Combat
-    DynamicOrder
-      Sequence
-        Move [Running]
-```
-
-Normal continuation:
+Example saved path and normal continuation:
 
 ```text
 Root          Resume
-Combat        Resume
-DynamicOrder  Resume
-Sequence      Resume
-Move          Resume/Evaluate согласно suspension semantics
+  Combat      Resume
+    DynamicOrder  Resume
+      Sequence    Resume
+        Move      Resume/Evaluate, according to suspension semantics
 ```
 
-Full reevaluation:
+Full reevaluation starts at Root with Evaluate.
 
-```text
-Root          Evaluate
-...
-```
+## 4. Execution and storage
 
-Главный invariant:
+| Layer | Responsibilities |
+| --- | --- |
+| `ExecutionCursor` | Traverse saved paths; track revalidation boundaries; distinguish fresh and existing invocations; choose entry modes; evaluate candidates; change continuations; coordinate commit/rollback. |
+| `BtState`, `FrameStorage`, `ThinkScratch` | Own frames; provide typed access, allocation, alignment, destruction, persistent/scratch memory, physical commit, and relocation. |
 
-> evaluator выбирает revalidation policy; execution layer вычисляет `EntryMode` для конкретных node entries.
+Dependency: `ExecutionCursor → FrameStorage`. Storage has no Sequence/Selector,
+entry-mode, revalidation-boundary, or full-reevaluation semantics.
 
-`BtNode` не спрашивает у storage, происходит ли сейчас full think.
+## 5. Static dispatch
 
----
-
-# 4. Execution и storage — разные сущности
-
-## 4.1 Execution layer
-
-Концептуальная сущность:
-
-```rust
-ExecutionCursor
-```
-
-Она отвечает за:
-
-- traversal по persisted path;
-- положение относительно revalidation boundary;
-- existing vs fresh child invocation;
-- определение `EntryMode`;
-- speculative traversal;
-- logical continuation changes;
-- coordination commit/rollback.
-
-Execution layer может использовать storage.
-
-## 4.2 Storage layer
-
-Концептуальные сущности:
-
-```rust
-BtState
-FrameStorage
-ThinkScratch
-```
-
-Storage отвечает только за:
-
-- владение памятью frame-ов;
-- typed access;
-- allocation;
-- alignment;
-- destruction;
-- persistent/scratch backing;
-- physical commit;
-- relocation.
-
-Storage **не знает**:
-
-- что такое Sequence/Selector;
-- почему node Resume/Evaluate;
-- где находится revalidation boundary;
-- что такое full think.
-
-Зависимость:
-
-```text
-ExecutionCursor
-      ↓
-FrameStorage
-```
-
-но не наоборот.
-
----
-
-# 5. Static dispatch
-
-Static child dispatch является архитектурным требованием.
-
-Для statically-known children нельзя незаметно переходить к:
-
-```rust
-&dyn BtNode
-```
-
-Concrete/generated parent сам статически вызывает concrete child.
-
-Например:
+Concrete parents call concrete children. Statically known children must not
+silently become `&dyn BtNode`:
 
 ```rust
 match child_index {
@@ -245,68 +121,27 @@ match child_index {
 }
 ```
 
-Generic helper допустим:
+Generic helpers such as `run_child_static<N: BtNode<C>>` are monomorphized.
+Reserve `DynBtNode` for explicit runtime-dynamic boundaries.
 
-```rust
-fn run_child_static<N: BtNode<C>>(...)
-```
+## 6. Tuple children
 
-Он monomorphized и не создаёт virtual dispatch.
-
-`DynBtNode` используется только на явных runtime-dynamic boundaries.
-
----
-
-# 6. Tuple как representation heterogeneous children
-
-Для low-level generic backend children представляются обычными Rust tuple:
-
-```rust
-(Check1, A, B)
-```
-
-Тип:
-
-```rust
-(Check1, A, B)
-```
-
-никакой собственный HList не требуется.
-
-Поскольку stable Rust не имеет variadic generics, библиотека один раз генерирует impl-ы для tuple arities, например 1–32.
-
-Концептуально:
+Represent heterogeneous children with ordinary Rust tuples, e.g. `(Check1, A, B)`.
+No custom HList. Without variadic generics, generate tuple implementations once
+in the library, for example for arities 1–32.
 
 ```rust
 trait BtChildren<C> {
     const LEN: usize;
 
-    fn run_child(
-        &self,
-        index: usize,
-        ...
-    ) -> NodeResult;
+    fn run_child(&self, index: usize, ...) -> NodeResult;
 }
 ```
 
-Для `(A, B, C)` implementation содержит:
+Each implementation matches the index and calls the concrete tuple field.
+This machinery is shared across trees.
 
-```rust
-match index {
-    0 => run_static(&self.0, ...),
-    1 => run_static(&self.1, ...),
-    2 => run_static(&self.2, ...),
-    _ => unreachable!(),
-}
-```
-
-Это shared library machinery, а не generated type per BT.
-
----
-
-# 7. `ControlNode`
-
-Generic runtime representation:
+## 7. `ControlNode`
 
 ```rust
 struct ControlNode<P, Children> {
@@ -315,42 +150,18 @@ struct ControlNode<P, Children> {
 }
 ```
 
-Стандартный combinator API:
-
 ```rust
 seq((a(), b(), c()))
-
-select((
-    branch1,
-    branch2,
-    branch3,
-))
+select((branch1, branch2, branch3))
 ```
 
-Итоговый тип может быть большим:
+Rust infers nested types such as `ControlNode<Selector, (ControlNode<Sequence,
+(...)>, ...)>`; users need not write them.
 
-```text
-ControlNode<
-    Selector,
-    (
-        ControlNode<Sequence, (...)>,
-        ControlNode<Sequence, (...)>,
-        ...
-    )
->
-```
+## 8. `BtControl`
 
-но пользователю его никогда не требуется писать вручную.
-
----
-
-# 8. `BtControl`
-
-`BtControl` — **не `BtNode`**.
-
-Это compile-time control-flow policy.
-
-Концептуально:
+Compile-time control-flow policy. Returns logical child indices; `ControlNode`
+performs static dispatch. Custom policies must preserve static dispatch.
 
 ```rust
 trait BtControl<C> {
@@ -360,12 +171,9 @@ trait BtControl<C> {
     fn begin(...) -> ControlOp;
     fn child_succeeded(...) -> ControlOp;
     fn child_failed(...) -> ControlOp;
-
     fn child_committed(...) {}
 }
-```
 
-```rust
 enum ControlOp {
     RunChild(usize),
     Success,
@@ -373,40 +181,16 @@ enum ControlOp {
 }
 ```
 
-`BtControl` возвращает logical child index.
+## 9. `EntryMode` and `BtControl`
 
-`ControlNode` статически dispatch-ит соответствующий concrete child.
+`EntryMode` belongs to `BtNode`. In `ControlNode::update`:
 
-Custom `BtControl` внутри generic/static tree не должен вводить virtual dispatch.
+- Resume follows the framework-owned active child without calling `begin()`.
+- Evaluate calls `begin()` to revalidate the decision.
 
----
+Calling `begin()` supplies the revalidation signal; the policy needs no mode.
 
-# 9. `EntryMode` и `BtControl`
-
-`EntryMode` принадлежит `BtNode`, а не `BtControl`.
-
-Generic `ControlNode::update` делает:
-
-```text
-Resume
-    → не вызывает policy.begin()
-    → следует framework-owned active_child
-
-Evaluate
-    → вызывает policy.begin()
-```
-
-Сам вызов `begin()` уже является сигналом:
-
-> control decision point сейчас revalidated.
-
-Policy не нужен отдельный `EntryMode`.
-
----
-
-# 10. Control state
-
-Framework-owned continuation:
+## 10. Control state
 
 ```rust
 struct ControlState<S> {
@@ -415,113 +199,53 @@ struct ControlState<S> {
 }
 ```
 
-`active_child` меняет framework.
+The framework writes `active_child`. The policy owns `inner` and may read
+continuation metadata.
 
-Control policy может использовать `inner` и при необходимости читать continuation metadata.
+## 11. Sequence
 
----
-
-# 11. Sequence
-
-Sequence memoryful.
-
-На fresh entry:
-
-```text
-child 0
-```
-
-На existing invocation:
-
-```text
-active_child
-```
-
-При `Evaluate` существующий Sequence **не обязан сбрасываться на child 0**.
-
-Его `begin()` может вернуть:
+Memoryful: fresh entry starts at child zero; existing entry keeps the active
+child, including on Evaluate.
 
 ```rust
 RunChild(state.active_child.unwrap_or(0))
 ```
 
-Семантика:
+| Child result | Sequence response |
+| --- | --- |
+| Success | Run the next child. |
+| Failure | Return Failure. |
+| Running | Save the active child. |
 
-```text
-Success → следующий child
-Failure → Sequence Failure
-Running → сохранить active child
-```
+A suspended child may finish and the next child run in the same external update.
 
-Если running child завершился `Success`, Sequence может продолжить следующий child в том же external update.
+## 12. Reactive Selector
 
----
+Resume follows the active child without `begin()`. Evaluate starts at child zero.
 
-# 12. Reactive Selector
+| Child result | Selector response |
+| --- | --- |
+| Success | Return Success. |
+| Failure | Try the next child. |
+| Running | Save the active child. |
 
-На Resume:
+Reevaluation can try child zero, receive Failure, then Evaluate the old Running
+child one with its saved state. Existing state and entry mode are independent.
 
-```text
-framework следует active_child
-begin() не вызывается
-```
+## 13. Invocation identity
 
-На Evaluate:
+Valid combinations:
 
-```text
-begin() → child 0
-```
+- Existing frame + Resume.
+- Existing frame + Evaluate.
+- Fresh frame + Evaluate.
 
-Семантика:
+A terminal result ends the invocation. Selecting the same index again starts a
+fresh invocation, even within the same external update.
 
-```text
-Success → Selector Success
-Failure → следующий child
-Running → сохранить active child
-```
+## 14. DynamicOrder
 
-Full reevaluation может:
-
-```text
-old child1 Running
-
-child0 Evaluate → Failure
-child1 Evaluate → reuse old invocation/state
-```
-
-Existing state и `EntryMode` — разные вещи.
-
----
-
-# 13. Invocation identity
-
-Возможны три комбинации:
-
-```text
-existing frame + Resume
-existing frame + Evaluate
-fresh frame + Evaluate
-```
-
-`fresh + Resume` не имеет смысла.
-
-При terminal result reused invocation заканчивается.
-
-Если control затем снова выбирает тот же child index:
-
-```text
-RunChild(same_index)
-```
-
-это уже новая invocation.
-
----
-
-# 14. DynamicOrder
-
-`DynamicOrder` — пример custom low-level `BtNode`, не `BtControl`.
-
-State:
+Example custom `BtNode` with runtime selection:
 
 ```rust
 struct DynamicOrderState {
@@ -529,116 +253,38 @@ struct DynamicOrderState {
 }
 ```
 
-Resume:
+Resume uses `state.selected`; Evaluate rereads the order from context/blackboard.
+The saved selection needs owned, stable identity: `Arc`, asset/behavior handle,
+or stable ID with compatible lookup.
 
-```text
-использовать state.selected
-```
+Invariant: saved state must never reach an incompatible dynamic definition.
 
-Evaluate:
+## 15. Suspension
 
-```text
-заново прочитать current order из context/BB
-```
+Any `BtNode` may return Running across several external updates, then complete.
+No action or tick capability is required. All entries use `update(..., EntryMode)`;
+there is no separate `resume()` method.
 
-Псевдо:
+## 16. `BtTick`
 
-```rust
-match mode {
-    EntryMode::Resume => use_saved(),
-    EntryMode::Evaluate => choose_again(),
-}
-```
-
-Persisted selected behavior должен иметь owned stable identity:
-
-- `Arc`;
-- asset handle;
-- behavior handle;
-- stable ID + compatible lookup.
-
-Core invariant:
-
-> persisted state никогда не передаётся несовместимой dynamic definition.
-
----
-
-# 15. Любой `BtNode` может suspend
-
-`Running` не является action-specific feature.
-
-Любой custom node может:
-
-```text
-Running
-Running
-Success
-```
-
-через несколько external updates.
-
-Отдельного `resume()` метода нет.
-
-Всё проходит через:
-
-```rust
-update(..., EntryMode)
-```
-
----
-
-# 16. `BtTick`
-
-`BtTick` — отдельная optional capability:
+Optional post-commit execution:
 
 ```rust
 trait BtTick<C>: BtNode<C> {
-    fn tick(
-        &self,
-        state: &mut Self::State,
-        ctx: &mut C,
-    );
+    fn tick(&self, state: &mut Self::State, ctx: &mut C);
 }
 ```
 
-`Running` означает suspension.
+Running suspends an invocation. `BtTick` requests work after the resulting Running
+continuation has been selected. Only `tick()` has that guarantee.
 
-`BtTick` означает:
+## 17. Speculative side effects
 
-> эта node хочет post-commit execution.
+`BtNode::update` and action `start`, `is_in_progress`, and `complete` may run on
+candidates later rejected. Irreversible gameplay effects that depend on final
+branch selection belong in `BtTick::tick`.
 
-Только `tick()` гарантированно выполняется **после выбора resulting Running continuation**.
-
----
-
-# 17. Speculative side effects
-
-`BtNode::update` является decision/speculative phase.
-
-Поэтому:
-
-- `BtNode::update`;
-- `BtAction::start`;
-- `BtAction::is_in_progress`;
-- `BtAction::complete`
-
-могут выполняться на speculative branch, который потом проиграет.
-
-Только:
-
-```rust
-BtTick::tick
-```
-
-имеет post-commit guarantee.
-
-Необратимые gameplay effects, зависящие от окончательного выбора branch, должны происходить в `tick`.
-
----
-
-# 18. `NodeResult`
-
-Conceptual:
+## 18. `NodeResult`
 
 ```rust
 enum NodeResult {
@@ -650,201 +296,86 @@ enum NodeResult {
 }
 ```
 
-Точная representation implementation-open.
+Representation remains open. Running need not include a tick target.
 
-Running может не иметь Tick target.
+## 19. `ActiveRef`
 
----
+Transient lifetime: update result → logical commit → immediate tick.
+Resumption does not depend on it.
 
-# 19. `ActiveRef`
+Only the framework may construct a target for the current concrete frame,
+pairing `N` with `N::State` where `N: BtTick<C>`. Safe user code must not pair a
+node with another node type's state.
 
-`ActiveRef` transient.
-
-Живёт только:
-
-```text
-update result
-→ logical commit
-→ immediate tick
-```
-
-Не нужен для resumability.
-
-Он может создаваться только framework-ом для текущего concrete frame:
-
-```text
-N
-N::State
-N: BtTick<C>
-```
-
-Safe user code не может создать произвольную пару:
-
-```text
-NodeA + StateOfNodeB
-```
-
----
-
-# 20. `BtAction`
-
-High-level lifecycle abstraction:
+## 20. `BtAction`
 
 ```rust
 trait BtAction<C> {
     type State: Send + 'static;
 
     fn start(&self, ctx: &mut C) -> Option<Self::State>;
-
-    fn is_in_progress(
-        &self,
-        state: &Self::State,
-        ctx: &C,
-    ) -> bool;
-
-    fn tick(
-        &self,
-        state: &mut Self::State,
-        ctx: &mut C,
-    );
-
-    fn complete(
-        &self,
-        state: &Self::State,
-        ctx: &mut C,
-    ) -> bool {
+    fn is_in_progress(&self, state: &Self::State, ctx: &C) -> bool;
+    fn tick(&self, state: &mut Self::State, ctx: &mut C);
+    fn complete(&self, state: &Self::State, ctx: &mut C) -> bool {
         true
     }
 }
-```
 
-Adapter state:
-
-```rust
 struct ActionNodeState<S> {
     action: Option<S>,
 }
 ```
 
-Lifecycle:
-
 ```text
-Start
-→ None
-    Failure
-
-Start
-→ Some(state)
-→ IsInProgress
-
-true
-    Running + Tick target
-
-false
-    Complete immediately
-    Success/Failure
+start → None         → Failure
+start → Some(state)  → is_in_progress
+    true             → Running + tick target
+    false            → complete immediately → Success/Failure
 ```
 
 No PendingComplete phase.
 
----
+## 21. Runtime state
 
-# 21. Runtime state
+Definitions hold immutable code/configuration and may be shared across agents.
+Each agent owns mutable invocation state for its current execution path only.
 
-Definition и runtime state разделены.
+## 22. Threading
 
-Definition:
+Frame state requires `Send + 'static`, not `Sync`. Each `BtState` is accessed
+exclusively but may move between worker threads between updates.
 
-```text
-immutable code/config
-может быть shared между агентами
-```
+Target: `BtState: Send + !Sync`. Marker implementation remains open. Bevy may use
+an exclusive-access wrapper.
 
-Runtime:
+## 23. Prototype storage
 
-```text
-mutable invocation state конкретного агента
-```
+One Box per active frame:
 
-Persistent state содержит только текущий execution path, а не state всех потенциальных nodes.
+- Stable addresses; descendant allocation preserves parent borrows.
+- Allocator handles alignment.
+- Arbitrary owning state and normal Drop.
+- Simple execution-semantics validation.
 
----
+Keep as a possible reference/debug backend for differential testing.
 
-# 22. Threading
+## 24. Production storage target
 
-Frame state:
-
-```rust
-State: Send + 'static
-```
-
-`Sync` не требуется.
-
-Один `BtState` всегда используется эксклюзивно, хотя между updates может попадать на разные worker threads.
-
-Core `BtState` должен намеренно быть:
-
-```text
-Send + !Sync
-```
-
-Точная marker implementation-open.
-
-Bevy integration может использовать exclusive-access wrapper.
-
----
-
-# 23. Prototype storage
-
-Первый runtime backend намеренно простой:
-
-```text
-one Box per active frame
-```
-
-Преимущества:
-
-- frame address stable;
-- parent borrow не инвалидируется descendant allocation;
-- alignment решён Rust allocator;
-- arbitrary owning state;
-- Drop простой;
-- легко проверить execution semantics.
-
-Это reference/debug backend, а не production representation.
-
-Он может остаться в библиотеке для differential testing.
-
----
-
-# 24. Production storage target
-
-После стабилизации semantics boxed storage заменяется на:
-
-```text
-inline persistent capacity
-+
-stable overflow segments
-+
-reusable scratch
-```
+After semantics stabilize: inline persistent capacity + stable overflow segments
++ reusable scratch.
 
 Requirements:
 
-- existing frames не двигаются во время traversal;
-- BtState movable between external updates;
-- no persistent raw pointers;
-- proper alignment;
-- arbitrary `Send + 'static` frame state;
-- logical `StateOffset`;
-- relocation only at quiescent points;
-- standalone destruction.
+- Frames stay in place during traversal.
+- `BtState` may move between external updates.
+- Logical `StateOffset`; no persistent raw pointers.
+- Correct alignment and arbitrary `Send + 'static` state.
+- Relocation only at quiescent points.
+- Standalone destruction.
 
----
+## 25. Drop infrastructure
 
-# 25. Drop infrastructure
-
-Каждый owning storage содержит sparse destructor metadata:
+Each owning storage keeps sparse destructor metadata for `needs_drop::<S>()` frames:
 
 ```rust
 struct DropEntry {
@@ -853,179 +384,56 @@ struct DropEntry {
 }
 ```
 
-Только:
+Support reverse-order destruction, scratch rollback, persistent suffix discard,
+exactly-once ownership transfer on commit, ZSTs with Drop, and standalone
+`BtState::drop`. Memory safety must not depend on semantic cancellation traversal.
 
-```rust
-needs_drop::<S>()
-```
+## 26. Logical and physical commit
 
-frames регистрируются.
+| Phase | Contract |
+| --- | --- |
+| Logical commit | Select the resulting Running continuation. No sibling may replace it in this traversal. Call `child_committed` here. |
+| Physical commit | After frame borrows unwind, discard the old divergent suffix, move candidate state and DropEntry ownership, then compact/relocate if needed. |
 
-Нужно поддержать:
+Keep these phases separate.
 
-- reverse-order destruction;
-- scratch rollback;
-- persistent suffix discard;
-- commit ownership transfer exactly once;
-- ZST with Drop;
-- standalone `BtState::drop`.
+## 27. Cancellation
 
-Memory safety не зависит от semantic cancel traversal.
+No native cancel/abort hooks in v1. Preemption guarantees normal Rust Drop of
+discarded state. Gameplay cleanup uses tick-confirmed effects, RAII, leases,
+reconciliation, and game-level ownership.
 
----
+## 28. Unsafe boundary
 
-# 26. Logical и physical commit
+Confine unsafe code to framework storage, alignment, logical-to-physical address
+resolution, typed reconstruction, relocation, drop thunks, and necessary erased
+dynamic adapters.
 
-## Logical commit
+Keep `BtNode`, `BtTick`, `BtAction`, `BtControl`, combinators, and `bt!` safe.
 
-Execution layer решил:
+## 29. `bt!` compiler frontend
 
-```text
-этот Running branch является resulting continuation
-```
+Part of the original v1 plan; implemented after the runtime/combinator backend.
+Compile the DSL to resumable code without requiring a node-for-node graph.
 
-После этого sibling уже не может победить в текущем traversal.
+## 30. Standard control-flow flattening
 
-`child_committed` относится к этому моменту.
+Compiler primitive: `compile(node, on_success, on_failure)`.
 
-## Physical commit
+For children A, B, C:
 
-После unwind frame borrows storage:
+| Node/result | Sequence edge | Selector edge |
+| --- | --- | --- |
+| A.Success | B | Selector.Success |
+| A.Failure | Sequence.Failure | B |
+| B.Success | C | Selector.Success |
+| B.Failure | Sequence.Failure | C |
+| C.Success | Sequence.Success | Selector.Success |
+| C.Failure | Sequence.Failure | Selector.Failure |
 
-- удаляет old divergent suffix;
-- переносит candidate state;
-- переносит DropEntry ownership;
-- при необходимости compact/relocate.
+Running saves a resume label and returns Running.
 
-Эти две фазы не должны смешиваться.
-
----
-
-# 27. Cancellation
-
-Native cancel/abort hooks отсутствуют в v1.
-
-Preemption гарантирует только normal Rust Drop discarded state.
-
-Gameplay cleanup строится через:
-
-- Tick-confirmed effects;
-- RAII;
-- leases;
-- reconciliation;
-- game-level ownership.
-
----
-
-# 28. Unsafe boundary
-
-Unsafe локализован в framework internals:
-
-- heterogeneous frame storage;
-- alignment;
-- logical→physical resolution;
-- typed reconstruction;
-- relocation;
-- drop thunk;
-- erased dynamic adapters где необходимо.
-
-User-facing APIs безопасны:
-
-```text
-BtNode
-BtTick
-BtAction
-BtControl
-combinators
-bt!
-```
-
----
-
-# 29. `bt!` — compiled frontend
-
-`bt!` остаётся обязательной частью v1.
-
-Но он реализуется **в конце**, после runtime/combinator backend.
-
-Он не обязан сохранять node-for-node graph representation.
-
-Главная цель:
-
-> компилировать BT DSL в resumable executable code.
-
----
-
-# 30. Standard control-flow flattening
-
-Для standard `Sequence` и `Selector` macro может строить flat CFG.
-
-Compiler primitive:
-
-```text
-compile(node, on_success, on_failure)
-```
-
-## Sequence
-
-Для:
-
-```text
-A
-B
-C
-```
-
-edges:
-
-```text
-A.Success → B
-A.Failure → Sequence.Failure
-
-B.Success → C
-B.Failure → Sequence.Failure
-
-C.Success → Sequence.Success
-C.Failure → Sequence.Failure
-```
-
-## Selector
-
-Для:
-
-```text
-select {
-    A
-    B
-    C
-}
-```
-
-edges:
-
-```text
-A.Success → Selector.Success
-A.Failure → B
-
-B.Success → Selector.Success
-B.Failure → C
-
-C.Success → Selector.Success
-C.Failure → Selector.Failure
-```
-
-Running:
-
-```text
-save resume label
-return Running
-```
-
----
-
-# 31. Generated flat state machine
-
-Conceptually:
+## 31. Generated state machine
 
 ```rust
 enum Pc {
@@ -1038,69 +446,17 @@ enum Pc {
 }
 ```
 
-Generated node:
+Generated execution loops over `match pc`. Resume loads the saved PC and jumps
+to the suspended point, avoiding traversal through static ancestors. Sequence
+and Selector frames may disappear because the PC encodes their continuation.
 
-```rust
-loop {
-    match pc {
-        Pc::Start => { ... }
-        Pc::A => { ... }
-        Pc::B => { ... }
-        ...
-    }
-}
-```
+## 32. Why explicit flattening
 
-Normal resume может стать:
+Inlining nested generic calls does not necessarily combine persistent
+`Selector.active_child` and `Sequence.active_child` into one PC across updates.
+Explicit CFG lowering may help. Benchmark the generic backend first.
 
-```text
-load resume_pc
-→ jump directly to suspended point
-```
-
-вместо:
-
-```text
-Root Resume
-→ Selector Resume
-→ Sequence Resume
-→ leaf Resume
-```
-
-Standard Sequence/Selector frames могут исчезнуть полностью, потому что их continuation уже закодирована в PC.
-
----
-
-# 32. Почему explicit flattening может быть нужен
-
-Nested generic combinators позволяют compiler-у inline-ить function calls.
-
-Но compiler вряд ли автоматически преобразует persistent state:
-
-```text
-Selector.active_child
-Sequence.active_child
-```
-
-в единый:
-
-```text
-Pc::D
-```
-
-между external updates.
-
-Поэтому explicit CFG lowering остаётся потенциально полезной optimization.
-
-Тем не менее до реализации flattening generic backend должен быть benchmarked.
-
----
-
-# 33. Inline synchronous code в `bt!`
-
-Не всё внутри `bt!` обязано быть `BtNode`.
-
-Например:
+## 33. Inline synchronous code
 
 ```rust
 bt! {
@@ -1109,33 +465,16 @@ bt! {
 }
 ```
 
-может стать:
-
-```rust
-if !ctx.has_target() {
-    goto_failure;
-}
-
-run_shoot();
-```
-
-`check` не требует:
+May lower directly to:
 
 ```text
-Check<Closure>
-BtNode frame
-BtNode state
+if !ctx.has_target(): goto failure
+run_shoot()
 ```
 
-Это важная часть идеи compiled BT.
+The check needs no `Check<Closure>`, node frame, or node state.
 
----
-
-# 34. Locals
-
-`bt!` может содержать обычные локальные вычисления.
-
-Например:
+## 34. Locals
 
 ```rust
 bt! {
@@ -1145,29 +484,19 @@ bt! {
 }
 ```
 
-Если `distance` не нужен после suspension point, он остаётся обычным Rust stack local.
+A local unused after suspension stays on the Rust stack; no persistent field.
 
-Никакого persistent state для него не создаётся.
-
----
-
-# 35. Locals через suspension
-
-Пример:
+## 35. Locals across suspension
 
 ```rust
 bt! {
     let target: Entity = ctx.best_target();
-
-    move_to(target); // может Running
-
+    move_to(target); // May return Running.
     shoot(target);
 }
 ```
 
-`target` live across suspension, поэтому должен стать частью generated persistent state.
-
-Conceptually:
+`target` survives suspension and becomes a generated state field:
 
 ```rust
 struct GeneratedState {
@@ -1176,366 +505,112 @@ struct GeneratedState {
 }
 ```
 
-В v1 такой persistent local может требовать explicit type annotation:
+v1 may require explicit types for persistent locals: proc macros lack rustc's
+full type inference for generated fields.
 
-```rust
-let target: Entity = ...
-```
+## 36. DSL scope
 
-потому что proc macro не имеет полноценного rustc type inference для generated fields.
+Controlled grammar with BT-specific suspension semantics.
 
----
+| In v1 | Outside v1 |
+| --- | --- |
+| Sequence, Selector, BtNode calls, static dispatch, flat CFG | Arbitrary loops with suspension |
+| Inline conditions, explicit success/failure, simple `if`, synchronous expressions | Arbitrary `match` with complex persistent bindings |
+| Stack locals and typed persistent locals | Borrowed locals across suspension, iterator lowering |
+| Explicit persistent field types | Full Rust coroutine semantics or automatic field-type inference |
 
-# 36. Граница сложности `bt!`
+## 37. Custom controls and flattening
 
-v1 должен поддерживать контролируемый DSL, а не пытаться стать новым `async fn`.
-
-## Реалистично для v1
-
-- Sequence;
-- Selector;
-- BtNode calls;
-- static dispatch;
-- flattened CFG;
-- inline conditions;
-- explicit `success` / `failure`;
-- простые `if`;
-- synchronous expressions;
-- ordinary locals, не переживающие suspension;
-- typed persistent locals через suspension.
-
-## Не требуется в v1
-
-- arbitrary loops с suspension внутри;
-- arbitrary `match` с complex persistent bindings;
-- borrowed locals across suspension;
-- iterator state lowering;
-- полноценная Rust coroutine semantics;
-- automatic inference типов generated persistent fields;
-- arbitrary Rust control flow как внутри `async fn`.
-
-Главный принцип:
-
-> `bt!` выглядит как код, но имеет контролируемую grammar и BT-specific suspension semantics.
-
----
-
-# 37. Custom controls и flattening
-
-Standard:
-
-```text
-Sequence
-Selector
-```
-
-могут быть compiler primitives и flatten-иться.
-
-Custom `BtControl` в первой версии compiled frontend может быть optimization boundary.
-
-То есть:
+Standard Sequence/Selector regions may flatten around custom control nodes:
 
 ```text
 flattened standard region
-    ↓
-CustomControlNode
-    ↓
-flattened standard child region
+    → CustomControlNode
+        → flattened standard child region
 ```
 
-Custom control всё ещё может использовать statically-known heterogeneous children без dyn dispatch.
+Custom `BtControl` is an initial optimization boundary. Its heterogeneous static
+children still use static dispatch. An opt-in lowering protocol may follow v1.
 
-Позже возможно opt-in compile-time lowering protocol для custom controls, но это не requirement v1.
-
----
-
-# 38. Dynamic boundaries в `bt!`
-
-Explicit runtime-dynamic behavior остаётся boundary:
+## 38. Dynamic boundaries in `bt!`
 
 ```text
-flattened static code
-    ↓
-DynamicOrder / DynBtNode
-    ↓
-runtime-selected behavior
+flattened static code → DynamicOrder / DynBtNode → runtime-selected behavior
 ```
 
-`bt!` не обязан пытаться flatten-ить opaque runtime behavior.
-
----
-
-# 39. Milestones
-
-Каждый milestone должен завершаться реально исполняемым BT-примером, а не только внутренними unit tests.
-
-## M0 — synchronous generic runtime
-
-Без `bt!`.
-
-Implement:
-
-- `BtNode`;
-- Success/Failure;
-- `BtControl`;
-- `ControlNode`;
-- tuple children;
-- Sequence;
-- Selector;
-- custom BtControl;
-- static dispatch.
-
-No Running/state stack.
-
-Deliverable:
-
-```rust
-select((
-    seq((check1(), a(), b())),
-    seq((check2(), c(), d())),
-))
-```
-
-реально выполняется.
-
----
-
-## M1 — Running + normal resume
-
-Add:
-
-- persistent state;
-- `EntryMode`;
-- `ResumeCurrentPath`;
-- boxed frame storage.
-
-Deliverable:
-
-```text
-check
-wait_frames(3)
-fire
-```
-
-работает across updates.
-
----
-
-## M2 — root revalidation + speculation
-
-Add:
-
-```text
-ReevaluateFromRoot
-```
-
-Required:
-
-- reactive selector reuse;
-- speculative losing branch;
-- preemption;
-- existing state + Evaluate.
-
-Deliverable:
-
-runtime priority change visibly preempts old behavior.
-
----
-
-## M3 — `BtTick`
-
-Add post-commit execution.
-
-Required:
-
-- losing candidate never ticks;
-- committed Running node ticks exactly once per external update.
-
----
-
-## M4 — `BtAction`
-
-Add action lifecycle adapter.
-
-Deliverable:
-
-small multi-frame AI using Move/Aim/Fire/Wait.
-
----
-
-## M5 — dynamic composition
-
-Add:
-
-- `DynBtNode`;
-- BehaviorHandle;
-- DynamicOrder.
-
-Deliverable:
-
-runtime high-level order switching while static subtrees remain statically dispatched.
-
----
-
-## M6 — production storage
-
-Replace boxed backend with:
-
-- inline storage;
-- stable overflow;
-- scratch;
-- logical offsets;
-- DropEntry;
-- rollback;
-- suffix discard;
-- physical commit;
-- ZST/alignment support;
-- panic guards.
-
-All behavioral tests M1–M5 remain unchanged.
-
----
-
-## M7 — ECS/Bevy integration
-
-Add:
-
-- movable BtState;
-- Send + !Sync;
-- ECS wrapper;
-- archetype relocation tests;
-- despawn/destruction tests.
-
----
-
-## M8 — `bt!` compiler frontend
-
-Still v1.
-
-### M8.1 — basic DSL
-
-Support:
-
-- Sequence;
-- Selector;
-- BtNode invocation;
-- success/failure/check constructs.
-
-First implementation may initially lower close to generic semantics.
-
-### M8.2 — standard CFG flattening
-
-Compile Sequence/Selector to flat state machine.
-
-Benchmark against generic backend.
-
-### M8.3 — synchronous inline code
-
-Inline checks and synchronous expressions directly into generated control flow.
-
-Avoid wrapper BtNodes where unnecessary.
-
-### M8.4 — locals
-
-Support ordinary stack locals.
-
-### M8.5 — typed locals across suspension
-
-Promote only live-across-suspend locals into generated persistent state.
-
-Do not attempt full Rust coroutine semantics.
-
----
-
-# 40. Critical tests
+Opaque runtime behavior need not flatten.
+
+## 39. Milestones
+
+Each milestone ends with an executable BT example.
+
+| Milestone | Implementation | Deliverable |
+| --- | --- | --- |
+| M0: synchronous runtime | BtNode, Success/Failure, BtControl, ControlNode, tuple children, Sequence, Selector, custom policies, static dispatch. No Running/state stack or `bt!`. | Execute nested `select((seq(...), seq(...)))`. |
+| M1: suspension | Persistent state, EntryMode, ResumeCurrentPath, boxed frames. | `check → wait_frames(3) → fire` across updates. |
+| M2: revalidation | ReevaluateFromRoot, reactive selector reuse, losing candidates, preemption, existing state + Evaluate. | Priority changes preempt the old behavior. |
+| M3: BtTick | Post-commit execution. | Losing candidates never tick; committed Running node ticks once per external update. |
+| M4: BtAction | Lifecycle adapter. | Multi-frame Move/Aim/Fire/Wait AI. |
+| M5: dynamic composition | DynBtNode, BehaviorHandle, DynamicOrder. | Switch runtime orders while static subtrees retain static dispatch. |
+| M6: production storage | Inline storage, stable overflow, scratch, offsets, DropEntry, rollback, suffix discard, physical commit, ZST/alignment support, panic guards. | M1–M5 behavior tests unchanged. |
+| M7: ECS/Bevy | Movable BtState, Send + !Sync, ECS wrapper. | Archetype relocation and despawn/destruction tests. |
+| M8: compiler frontend | `bt!`, still in v1. | Stages below. |
+
+M8 stages:
+
+1. Basic DSL: Sequence, Selector, BtNode calls, success/failure/check. Initial
+   lowering may follow generic semantics.
+2. Flatten standard controls to a state machine; benchmark against the generic backend.
+3. Inline checks and synchronous expressions; omit unnecessary wrapper nodes.
+4. Support ordinary stack locals.
+5. Persist typed locals live across suspension; no full Rust coroutine lowering.
+
+## 40. Critical tests
 
 1. Plain BtNode may suspend without Tick.
 2. Fresh invocation enters as Evaluate.
 3. Sequence preserves active child across revalidation.
 4. Reactive Selector Resume follows active child.
-5. Reactive Selector Evaluate starts priority scan again.
+5. Reactive Selector Evaluate restarts priority scanning.
 6. Existing invocation may receive Evaluate.
 7. DynamicOrder Resume uses saved selection.
-8. DynamicOrder Evaluate rereads source.
-9. Suspended child can complete and next child runs in same update.
-10. Higher-priority candidate can preempt old branch.
-11. Losing speculative branch never ticks.
+8. DynamicOrder Evaluate rereads its source.
+9. A suspended child completes and the next child runs in the same update.
+10. A higher-priority candidate preempts the old branch.
+11. Losing speculative branches never tick.
 12. Tick occurs after logical commit.
-13. Repeated same child after terminal result is fresh invocation.
-14. child_committed only occurs on actual policy commit.
-15. Static tuple children have no virtual dispatch.
+13. Repeating a child after a terminal result starts a fresh invocation.
+14. `child_committed` occurs only on an actual policy commit.
+15. Static tuple children use no virtual dispatch.
 16. Custom BtControl remains statically dispatched.
 17. Standalone BtState Drop works.
 18. Scratch rollback drops exactly once.
 19. Commit transfers ownership exactly once.
 20. ZST custom Drop works.
 21. Parent references survive descendant storage growth.
-22. Dynamic behavior state never reaches incompatible definition.
+22. Dynamic state never reaches an incompatible definition.
 23. BtState may move between external updates.
 24. BtState is Send but not Sync.
-25. Generic and compiled `bt!` implementations have equivalent observable behavior.
-26. Flattened `bt!` Resume does not require walking all standard static ancestors.
-27. Inline `check` in `bt!` creates no runtime node/frame.
-28. Non-persistent local stays stack-local.
-29. Typed local live across suspension survives correctly.
+25. Generic and compiled trees have equivalent observable behavior.
+26. Flattened Resume avoids walking all standard static ancestors.
+27. Inline check creates no runtime node/frame.
+28. Non-persistent locals stay on the stack.
+29. Typed locals survive suspension.
 
----
+## 41. Open implementation questions
 
-# 41. Current implementation-open items
+- BtNode signatures/lifetimes; EntryMode representation; separate restricted
+  Resume/Evaluate execution interfaces; ExecutionCursor and child-entry APIs.
+- Definition/state schema binding; boxed frames; StateOffset encoding; inline
+  capacity; overflow layout; scratch API; logical/physical commit algorithm.
+- ActiveRef and DynBtNode representation; panic guards; !Sync marker; Bevy wrapper.
+- Tuple arity limit; DSL grammar; generated CFG; persistent-local syntax/types;
+  benchmark threshold for compiled versus generic execution.
 
-- exact `BtNode::update` signature/lifetimes;
-- exact `EntryMode` representation;
-- whether Resume/Evaluate eventually deserve distinct restricted execution façades;
-- `ExecutionCursor` API;
-- child-entry API;
-- behavior/state schema binding;
-- boxed frame representation;
-- final StateOffset encoding;
-- inline capacity;
-- overflow segment layout;
-- scratch scope API;
-- logical/physical commit algorithm;
-- ActiveRef representation;
-- DynBtNode API;
-- panic guards;
-- !Sync marker;
-- Bevy wrapper;
-- tuple arity limit;
-- DSL grammar;
-- generated CFG representation;
-- persistent-local syntax/type rules;
-- compiled-vs-generic benchmark threshold.
+## 42. Original design commitments
 
----
-
-# 42. Current locked direction
-
-The working low-level API is:
-
-```rust
-BtNode::update(..., EntryMode)
-```
-
-not separate `resume()` / `evaluate()` methods.
-
-Physical frame storage and revalidation/execution traversal are separate abstractions.
-
-Generic composition uses:
-
-```text
-ControlNode<P, TupleChildren>
-```
-
-and is a permanent low-level/reference API.
-
-`bt!` is also part of v1, but is implemented last.
-
-It is treated as:
-
-> a BT-specific resumable compiler frontend,
-
-not merely:
-
-> syntax sugar for nested generic combinators.
-
-The project deliberately validates BT semantics first with simple stable boxed storage, then optimizes memory representation, and only afterwards introduces compiled `bt!` lowering.
+- One `BtNode::update(..., EntryMode)` method.
+- Separate physical storage from execution and revalidation.
+- Permanent generic reference API: `ControlNode<P, TupleChildren>`.
+- `bt!` in v1, implemented last as a resumable compiler frontend.
+- Validate semantics with boxed storage, then optimize storage, then add compiled lowering.

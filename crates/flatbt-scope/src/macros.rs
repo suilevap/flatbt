@@ -1,19 +1,17 @@
-/// Owns named locals with synchronous initializers and explicit control flow.
+/// Owns named locals with explicit sequence/select control flow.
 ///
-/// `let name: Type = callback;` invokes Fn(&mut Context) -> Type once on entry.
-/// `let name: Type;` reserves a slot for a suspending producer. The body must be
-/// sequence { ... } or select { ... }; these controls can nest using the same
-/// locals. `Node.with(name);` binds a shared input; `out name` lends an exclusive
-/// slot. `node_expression.with(args);` supports configured nodes and actions.
-/// Plain node expressions such as `wait_frames(1);` use unit parameters, with no
-/// extra syntax. Constructors keep ordinary Rust arguments; `.with(...)` names
-/// runtime local fields. Tuple bindings use FLATBT_MAX_PARAMS.
-/// An optional `context: Type;` header lets initializer closures infer their
-/// context argument type. Without it, annotate closure parameters explicitly.
+/// - `let name: Type = callback;`: initialize with `Fn(&mut Context) -> Type`.
+/// - `let name: Type;`: reserve an output slot for a producer.
+/// - `Node.with(name);`: shared input. `out name`: exclusive output slot.
+/// - Plain node expressions use unit parameters; constructors take ordinary Rust
+///   arguments. Only `.with(...)` binds runtime fields.
+/// - `context: Type;` supplies initializer closure argument types. Otherwise
+///   annotate them. Nested sequence/select blocks share locals.
 ///
-/// Initializers run in declaration order before the body. They are not replayed
-/// on Resume or Evaluate of a running scope. Node/closure definitions are built
-/// once. Missing inputs fail at runtime; aliasing writes are rejected by Rust.
+/// Definitions are built once. Initializers run in declaration order before the
+/// body, once per invocation; Resume/Evaluate preserve them while Running.
+/// Missing inputs fail at runtime; Rust rejects aliasing writes.
+/// Parameter tuple limit: `FLATBT_MAX_PARAMS`.
 ///
 /// ```
 /// use flatbt_core::{BtNode, BtState, EntryMode, NodeResult, update};
@@ -99,8 +97,7 @@ macro_rules! __flatbt_scope {
     (@children $setup:tt $control:ident $nodes:tt; $($rest:tt)+) => {
         $crate::scope!(@expression $setup $control $nodes []; $($rest)+)
     };
-    // Recognize only a final .with(...) suffix. Everything before it remains an
-    // ordinary Rust expression; nested calls, closures, and blocks stay opaque.
+    // Only the final .with(...) binds locals; preceding Rust expressions stay opaque.
     (@expression $setup:tt $control:ident [$($nodes:tt)*] [$($node:tt)+];
         . with ($($args:tt)*) ; $($rest:tt)*) => {
         $crate::scope!(@children $setup $control

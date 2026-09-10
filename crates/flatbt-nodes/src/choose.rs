@@ -1,7 +1,7 @@
 use flatbt_core::{BtControl, BtNode, ControlNode, ControlOp, EntryMode, NodeResult, control};
 
-/// Chooses one child from shared application context and forwards its result.
-/// Resume follows the saved child through the ordinary control protocol.
+/// Selects from shared context on Evaluate; forwards the child's result.
+/// Resume follows the saved child.
 pub struct Choose<F>(pub F);
 
 impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
@@ -20,19 +20,17 @@ impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
     }
 }
 
-/// Selects one statically known candidate from the application context.
-/// Construct with [`crate::choose!`] to generate candidate indices automatically.
+/// Static choice node. Use [`crate::choose!`] to generate candidate indices.
 pub struct ChooseNode<F, Children>(ControlNode<Choose<F>, Children>);
 
 impl<F, Children> ChooseNode<F, Children> {
-    /// Low-level constructor. The chooser returns a tuple child index.
-    /// Prefer [`crate::choose!`] for an exhaustive match with no manual indices.
+    /// Chooser returns a tuple index. [`crate::choose!`] generates these indices.
     pub fn new(children: Children, choose: F) -> Self {
         Self(control(Choose(choose), children))
     }
 }
 
-// The wrapper keeps the constructor local to this crate and reuses core execution.
+// A local wrapper permits an inherent constructor across the crate boundary.
 impl<C, P, F, Children> BtNode<C, P> for ChooseNode<F, Children>
 where
     ControlNode<Choose<F>, Children>: BtNode<C, P>,
@@ -50,7 +48,7 @@ where
     }
 }
 
-/// Selects among concrete node definitions using a match on shared context.
+/// Matches shared context to select a statically typed node.
 ///
 /// ```
 /// use flatbt_core::{BtState, EntryMode, NodeResult, check, leaf, update};
@@ -69,15 +67,13 @@ where
 /// assert_eq!(value, 1);
 /// ```
 ///
-/// Every arm's node expression is evaluated once, in source order, when building
-/// the tree. Those expressions cannot use the context argument or match bindings.
-/// Patterns and guards execute on Evaluate; Resume follows the saved candidate.
-/// The chosen child's result is returned directly, without trying other arms.
-/// Each arm is a separate candidate even when two arms have the same node type.
+/// Arm definitions are built once, in order, without access to context or match
+/// bindings. Evaluate repeats patterns/guards; Resume follows the saved arm.
+/// Returns the chosen result without fallback. Each arm has distinct identity,
+/// even with the same node type; an or-pattern shares one arm.
 ///
-/// Candidates use the existing tuple child enum and static dispatch, including
-/// when nesting this macro. No type erasure or runtime heap allocation is added.
-/// The candidate count shares the FLATBT_MAX_CHILDREN tuple limit (default 32).
+/// Nested choices use static tuple dispatch and inline state. No added heap
+/// allocation or type erasure. Limit: `FLATBT_MAX_CHILDREN` (default 32).
 /// Use `move |context: &Context| match ...` to own chooser captures.
 #[macro_export]
 macro_rules! choose {
@@ -90,7 +86,7 @@ macro_rules! choose {
     (move |$bb:ident: $context:ty| match $($tail:tt)+) => {
         $crate::choose!(@match [move] [$bb: $context] [] $($tail)+)
     };
-    // Collect the scrutinee until the final brace group, which contains the arms.
+    // The final brace group contains match arms; earlier tokens form the scrutinee.
     (@match [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]
         { $($arms:tt)* } $(,)?) => {
         $crate::choose!(@parse [[$($capture)*] [$bb: $context] [$($value)+]]
@@ -101,7 +97,7 @@ macro_rules! choose {
         $crate::choose!(@match [$($capture)*] [$bb: $context]
             [$($value)* $next] $($tail)*)
     };
-    // Rust (and rustfmt) allows block arms to omit the separating comma.
+    // Block arms may omit commas.
     (@parse $setup:tt [$($arms:tt)*] ;
         $pattern:pat $(if $guard:expr)? => $node:block $(,)? $($rest:tt)*) => {
         $crate::choose!(@parse $setup

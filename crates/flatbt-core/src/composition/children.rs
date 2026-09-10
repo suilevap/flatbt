@@ -1,19 +1,18 @@
 use crate::{BtNode, EntryMode, NodeResult};
 
-/// Static dispatch over child definitions and their corresponding state variants.
-/// Implemented through the build-time FLATBT_MAX_CHILDREN limit (default 32).
-/// At most one child stays active between calls.
+/// Static tuple dispatch with at most one active child.
+/// Generated through `FLATBT_MAX_CHILDREN` (default 32).
 pub trait BtChildren<C, P = ()> {
     type State: Default + Send + 'static;
     const LEN: usize;
 
-    /// Reads the active selection from the child state itself.
+    /// Reads selection from the saved state variant.
     fn active_child_index(&self, state: &Self::State) -> Option<usize>;
 
-    /// Updates the active child in place or evaluates another child in local state.
-    /// A terminal candidate preserves the old selection; a Running candidate
-    /// replaces it. Completion of the active child clears the selection.
-    /// Invalid indices report an error and return Failure without modifying state.
+    /// Updates the saved child in place or enters a fresh candidate with Evaluate.
+    /// Terminal candidates preserve saved state; Running candidates replace it.
+    /// A terminal saved child clears selection. Invalid indices log an error and
+    /// return Failure without changing state.
     fn run_child(
         &self,
         state: &mut Self::State,
@@ -46,11 +45,9 @@ impl<C, P> BtChildren<C, P> for () {
     }
 }
 
-// Generate each tuple's state enum and concrete child dispatch together.
 macro_rules! tuple_children {
     (@generate_impl $state:ident; $($index:tt $node:ident $variant:ident),+) => {
-        /// State of at most one child in a statically composed tuple.
-        /// The variant identifies the child; no separate saved index is needed.
+        /// One active child state; the variant encodes its index.
         #[derive(Default)]
         pub enum $state<$($node),+> {
             #[default]
@@ -100,8 +97,7 @@ macro_rules! tuple_children {
     (@generate_prefix [$($done:tt)*]) => {};
 }
 
-/// Generated state enums for tuple children. Payload types are child states,
-/// not node definitions. These enums are not general-purpose node combinators.
+/// Generated tuple state enums, parameterized by child state types.
 pub mod child_state {
     use super::{BtChildren, BtNode, EntryMode, NodeResult};
 

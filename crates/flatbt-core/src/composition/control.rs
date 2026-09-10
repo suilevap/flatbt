@@ -1,7 +1,7 @@
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtChildren, BtNode, EntryMode, NodeResult};
 
-/// The next step requested by a control policy.
+/// Next step requested by a policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlOp {
     RunChild(usize),
@@ -10,33 +10,29 @@ pub enum ControlOp {
 }
 
 impl ControlOp {
-    /// Reports a policy error to stderr and terminates this control with Failure.
+    /// Logs to stderr and terminates the control with Failure.
     pub fn error(message: impl std::fmt::Display) -> Self {
         crate::log_error(message);
         Self::Failure
     }
 }
 
-/// Active child state and policy-local state. The child state encodes selection.
+/// Policy state plus child state, whose variant encodes selection.
 #[derive(Default)]
 pub struct ControlState<S, ChildrenState> {
-    // Field order releases descendants before the policy state.
+    // Drop descendants before policy state.
     children: ChildrenState,
     inner: S,
 }
 
-/// A statically dispatched control-flow policy, separate from node execution.
-///
-/// State belongs to one invocation and survives suspension. Child indices must be
-/// below `child_count`. Policies must eventually terminate: there is currently
-/// no execution budget to stop a policy that repeatedly requests a child.
+/// Static control-flow policy with per-invocation state.
+/// Child indices must be below `child_count`. Policies must terminate;
+/// execution has no iteration budget.
 pub trait BtControl<C> {
     type State: Default + Send + 'static;
 
-    /// Revalidates this control's decision. `active_child_index` is derived from
-    /// child state, passed by value so the policy cannot overwrite the selection.
-    /// Sequence preserves it; Selector deliberately starts a new priority scan.
-    /// Normal Resume follows the active child without calling this method.
+    /// Selects a child on fresh entry or Evaluate. Resume skips this callback.
+    /// `active_child_index` reports saved selection; the framework owns it.
     fn begin(
         &self,
         state: &mut Self::State,
@@ -45,7 +41,7 @@ pub trait BtControl<C> {
         child_count: usize,
     ) -> ControlOp;
 
-    /// Handles the child that just succeeded, after its invocation has ended.
+    /// Called after the successful child invocation ends.
     fn child_succeeded(
         &self,
         state: &mut Self::State,
@@ -54,7 +50,7 @@ pub trait BtControl<C> {
         child_count: usize,
     ) -> ControlOp;
 
-    /// Handles the child that just failed, after its invocation has ended.
+    /// Called after the failed child invocation ends.
     fn child_failed(
         &self,
         state: &mut Self::State,
@@ -64,13 +60,13 @@ pub trait BtControl<C> {
     ) -> ControlOp;
 }
 
-/// A policy paired with concrete, usually heterogeneous tuple children.
+/// Policy with statically typed children.
 pub struct ControlNode<P, Children> {
     policy: P,
     children: Children,
 }
 
-/// Composes a custom policy with its children without erasing their types.
+/// Combines a policy and children with static dispatch.
 pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Children> {
     ControlNode { policy, children }
 }
@@ -135,12 +131,12 @@ where
     }
 }
 
-/// Runs children in order, stopping on the first failure. Re-evaluation preserves
-/// the active child instead of replaying completed children.
+/// Runs children in order; fails on first Failure. Evaluate preserves the active
+/// child without replaying completed children.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sequence;
 
-/// Creates a sequence. An empty sequence succeeds.
+/// Runs a sequence. Empty sequences succeed.
 pub fn seq<Children>(children: Children) -> ControlNode<Sequence, Children> {
     control(Sequence, children)
 }
@@ -187,12 +183,12 @@ impl<C> BtControl<C> for Sequence {
     }
 }
 
-/// Tries children in priority order, stopping on the first success. Re-evaluation
-/// starts at child zero; Resume follows the saved child without rescanning.
+/// Tries children in order; stops on Success or Running.
+/// Evaluate scans from child zero; Resume follows the saved child.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selector;
 
-/// Creates a selector. An empty selector fails.
+/// Runs a selector. Empty selectors fail.
 pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
     control(Selector, children)
 }

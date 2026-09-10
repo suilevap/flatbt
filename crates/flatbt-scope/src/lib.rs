@@ -1,8 +1,6 @@
-//! Invocation-local values and explicit bindings to node parameters.
-//!
-//! Import [`scope!`] for named locals, or use [`scope()`] and [`bind`] to build
-//! the same tree with ordinary functions. Scope owns data; its child controls
-//! execution. Ordinary trees need no imports from this crate.
+//! Invocation-local values and parameter bindings.
+//! Use [`scope!`] for named locals, or [`scope()`] and [`bind`] for function-based
+//! construction. Scope owns data; its child controls execution.
 
 #![forbid(unsafe_code)]
 

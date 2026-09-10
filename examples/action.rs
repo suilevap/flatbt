@@ -1,4 +1,4 @@
-use flatbt::{BtAction, BtState, EntryMode, NodeResult, action, seq, update};
+use flatbt::prelude::*;
 
 #[derive(Default)]
 struct Agent {
@@ -10,7 +10,7 @@ struct Task {
     steps: usize,
 }
 
-// Invocation data can require initialization through start rather than Default.
+// Initialized by start; no Default required.
 struct Progress(usize);
 
 impl BtAction<Agent> for Task {

@@ -1,5 +1,4 @@
-//! Optional ready-made nodes and policies for FlatBT.
-//! Enable `choose` or `action` independently. Future policies belong here.
+//! Optional nodes and policies. Independent features: `choose`, `action`.
 
 #![forbid(unsafe_code)]
 
@@ -13,7 +12,7 @@ pub use action::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
 #[cfg(feature = "choose")]
 pub use choose::{Choose, ChooseNode};
 
-// Exported macros must also work when this dependency is renamed by a consumer.
+// Keep macro paths valid when consumers rename dependencies.
 #[doc(hidden)]
 pub mod __private {
     pub use flatbt_core as core;
