@@ -9,6 +9,7 @@ Code and tests define current behavior; historical proposals may differ.
 | --- | --- |
 | [Package layout](package-layout-draft.md) | Crate boundaries and feature wiring |
 | [Static state](static-state-draft.md) | State composition, dispatch, ownership |
+| [Tree and state](tree-state.md) | Diagram: graph, code, memory layout |
 | [Choice](choose-draft.md) | Candidate identity and selection |
 | [Local state](local-state-draft.md) | Scopes, parameter contracts, bindings |
 | [Actions](action-draft.md) | Inline lifecycle and cancellation |

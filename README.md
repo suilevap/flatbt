@@ -60,16 +60,16 @@ candidate replaces it and drops its state.
 
 ## Tree and state layout
 
-![Static tree definitions and per-agent inline state](docs/images/tree-state.svg)
+Full diagram: [tree and state](docs/design/tree-state.md).
 
-- The tree is one nested Rust value: generic controls own tuples of concrete
-  child definitions. Calls use static dispatch. One tree can serve many agents.
-- Each `BtState` borrows the tree and owns `Option<Tree::State>` inline.
-  State is nested structs/enums in one value, with no runtime frame stack.
-- Each control stores policy state and an enum for one active child. Child storage
-  needs the largest alternative plus tag/alignment, not the sum of all alternatives.
-- Resume borrows saved state in place. A fresh candidate uses temporary stack space;
-  Running moves it into the enum and drops the old branch. User state may own heap data.
+- Tree = one nested Rust value: generic controls own tuples of child defs.
+  Static dispatch. One tree, many agents.
+- Each `BtState` borrows the tree, owns `Option<Tree::State>` inline:
+  nested structs/enums, one value, no runtime frames.
+- Control = policy state + one-active-child enum. Child size ≈ largest
+  alternative + tag/align, not the sum.
+- Resume borrows saved state in place. Fresh candidate = temp stack space;
+  Running moves in, drops the old branch. User state may heap-alloc.
 
 ## Choose a branch
 
