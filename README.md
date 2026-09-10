@@ -9,6 +9,28 @@ root re-evaluation, preemption, context-driven choice among statically known nod
 invocation-local values shared by a subtree, and a draft action lifecycle. It is based on the simple M1 implementation;
 see the [draft design notes](docs/design/static-state-draft.md) for state composition.
 
+The workspace separates the execution kernel from optional helpers. `flatbt` is
+an entry-point crate that re-exports core and enables helpers through Cargo features:
+
+| Package | Responsibility | Feature on `flatbt` |
+| --- | --- | --- |
+| `flatbt-core` | Node protocol, state, parameters, static controls, `seq`, `select`, `leaf`, `check` | Always available |
+| `flatbt-nodes` | `choose!` and its policy; action lifecycle and cancellation adapters | `choose`, `action` (independent) |
+| `flatbt-scope` | Invocation-local storage, bindings, and `scope!` | `scope` |
+
+No optional helpers are enabled by default. For a local checkout, choose the
+features your application needs (replace the path with your checkout location):
+
+```toml
+[dependencies]
+flatbt = { path = "../FlatBT", features = ["choose", "scope"] }
+```
+
+Omit `features` for core only; add `"action"` for `BtAction`, `action`, and
+`CancelOnDrop`. These packages are not published yet. You can also depend directly
+on `crates/flatbt-core`, `crates/flatbt-nodes`, or `crates/flatbt-scope`; see the
+[package layout draft](docs/design/package-layout-draft.md) for examples and migration notes.
+
 ```rust
 use flatbt::{BtState, EntryMode, NodeResult, check, leaf, seq, update};
 
@@ -56,7 +78,8 @@ state layout is known to Rust, and the runtime adds no heap allocations. A custo
 node can still own allocating resources in its state. Frame storage and layout
 descriptors remain deferred to open sets of runtime-defined node types.
 
-`choose!` selects among compiler-known node types using a match on shared context:
+With the `choose` feature, `choose!` selects among compiler-known node types using
+a match on shared context:
 
 ```rust
 let tree = choose!(|bb: &Blackboard| match bb.order {
@@ -73,8 +96,9 @@ enum, including for nested `choose!` calls. No manual enum, indices, type erasur
 or runtime heap allocation is needed. See the [choice draft](docs/design/choose-draft.md)
 for construction semantics and the initial syntax limits.
 
-The separate `flatbt::scope` module provides local storage and bindings. Ordinary
-trees need no imports from it. `scope!` owns named local values in the tree state,
+The `scope` feature exposes `flatbt-scope` as `flatbt::scope` for local storage
+and bindings. It does not enable `choose` or `action`. `scope!` owns named local
+values in the tree state,
 computes them once on entry, and explicitly selects control flow. The application
 context stays unchanged:
 
@@ -131,11 +155,11 @@ Examples:
 cargo run --offline --example synchronous
 cargo run --offline --example resume
 cargo run --offline --example revalidation
-cargo run --offline --example action
-cargo run --offline --example external_action
-cargo run --offline --example choose
-cargo run --offline --example scoped_params
-cargo run --offline --example scoped_params_manual
+cargo run --offline --example action --features action
+cargo run --offline --example external_action --features action
+cargo run --offline --example choose --features choose
+cargo run --offline --example scoped_params --features scope,action
+cargo run --offline --example scoped_params_manual --features scope,action
 ```
 
 The resume example uses an application-defined `WaitFrames` from
@@ -144,7 +168,8 @@ and executes the next child on completion. The revalidation example preserves a
 patrol while a higher-priority candidate fails, then preempts it when that candidate
 becomes eligible.
 
-`action(value)` adapts `BtAction` to ordinary `BtNode::update`. The lifecycle is
+With the `action` feature, `action(value)` adapts `BtAction` to ordinary
+`BtNode::update`. The lifecycle is
 `start → is_in_progress → tick` while Running, followed by `complete` as soon as
 a later progress query returns false. Start returning None fails immediately.
 Action state does not need Default; the adapter stores Option<A::State>.
@@ -184,13 +209,16 @@ an optional function pointer inline. There is no allocation or separate armed
 flag; cancellation may use an indirect function call. Existing custom Drop
 implementations can still be used directly as action state, without this wrapper.
 
-The crate root provides `BtNode`, `BtControl`, and composition primitives: `seq`,
-`select`, `check`, `leaf`, and `choose!`. Local storage, `scope!`, and bindings live
-in `flatbt::scope`. The `flatbt::params` module provides the shared parameter
-traits used by controls/actions, independently of scopes. These are module
-boundaries, not Cargo feature flags. Tuple children of arity 0–32 use static
-dispatch by default. A reusable catalog of utility nodes and policies belongs in a separate crate if introduced
-later. Example helpers are not core exports.
+Core exports are available at the `flatbt` root and directly from `flatbt_core`.
+Optional `choose!` and action exports retain their root paths when enabled;
+`scope!` and bindings retain `flatbt::scope` paths. `flatbt::nodes` exposes the
+selected catalog modules. The shared parameter contracts remain in
+`flatbt::params`, independently of scopes. Future utility nodes and policies such
+as priority and random selection belong in `flatbt-nodes`, behind independent
+features where useful. Example helpers remain outside the library crates.
+
+Tuple children of arity 0–32 use static dispatch by default. Generation lives in
+`flatbt-core`; `choose!` uses the same generated indices across crate boundaries.
 
 To change the maximum tuple arity, put this in the consuming project's
 `.cargo/config.toml` (at the workspace root when using a Cargo workspace):
@@ -221,9 +249,11 @@ increase generated code and may require a higher Rust macro recursion limit.
 Validation:
 
 ```sh
-cargo test --offline
-cargo clippy --offline --all-targets -- -D warnings
-cargo fmt --check
+cargo test --offline --workspace --all-features
+cargo clippy --offline --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+# Core-only and independent feature combinations:
+sh scripts/check-features.sh
 ```
 
 Custom nodes use `State: Default + Send + 'static`, separate from their definition.

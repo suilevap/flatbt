@@ -38,11 +38,11 @@ active child index: BtChildren reads it from the variant. The generated State1
 through State32 types describe state alternatives, not node definitions; they do
 not implement a general-purpose Either node combinator.
 
-`build.rs` derives the enum, type parameter, and variant names from the child
+`crates/flatbt-core/build.rs` derives the enum, type parameter, and variant names from the child
 index, using FLATBT_MAX_CHILDREN from the build environment (default 32). Consumers
 can set it in their workspace's .cargo/config.toml under [env], without editing
 FlatBT. Cargo tracks changes through rerun-if-env-changed. It writes only the macro invocation to
-Cargo's OUT_DIR; the enum and dispatch implementation remain in src/children.rs.
+Cargo's OUT_DIR; the enum and dispatch implementation remain in `crates/flatbt-core/src/composition/children.rs`.
 This avoids a handwritten name table without identifier-concatenation dependencies
 or unstable macro features.
 

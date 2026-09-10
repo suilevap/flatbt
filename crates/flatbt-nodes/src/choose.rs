@@ -1,6 +1,4 @@
-use crate::{BtControl, ControlNode, ControlOp, control};
-
-include!(concat!(env!("OUT_DIR"), "/choose_indices.rs"));
+use flatbt_core::{BtControl, BtNode, ControlNode, ControlOp, EntryMode, NodeResult, control};
 
 /// Chooses one child from shared application context and forwards its result.
 /// Resume follows the saved child through the ordinary control protocol.
@@ -24,20 +22,39 @@ impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
 
 /// Selects one statically known candidate from the application context.
 /// Construct with [`crate::choose!`] to generate candidate indices automatically.
-pub type ChooseNode<F, Children> = ControlNode<Choose<F>, Children>;
+pub struct ChooseNode<F, Children>(ControlNode<Choose<F>, Children>);
 
 impl<F, Children> ChooseNode<F, Children> {
     /// Low-level constructor. The chooser returns a tuple child index.
     /// Prefer [`crate::choose!`] for an exhaustive match with no manual indices.
     pub fn new(children: Children, choose: F) -> Self {
-        control(Choose(choose), children)
+        Self(control(Choose(choose), children))
+    }
+}
+
+// The wrapper keeps the constructor local to this crate and reuses core execution.
+impl<C, P, F, Children> BtNode<C, P> for ChooseNode<F, Children>
+where
+    ControlNode<Choose<F>, Children>: BtNode<C, P>,
+{
+    type State = <ControlNode<Choose<F>, Children> as BtNode<C, P>>::State;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        params: P,
+        mode: EntryMode,
+    ) -> NodeResult {
+        self.0.update(state, ctx, params, mode)
     }
 }
 
 /// Selects among concrete node definitions using a match on shared context.
 ///
 /// ```
-/// use flatbt::{BtState, EntryMode, NodeResult, check, choose, leaf, update};
+/// use flatbt_core::{BtState, EntryMode, NodeResult, check, leaf, update};
+/// use flatbt_nodes::choose;
 ///
 /// let tree = choose!(|value: &usize| match *value {
 ///     0 => leaf(|value: &mut usize| {
@@ -64,6 +81,9 @@ impl<F, Children> ChooseNode<F, Children> {
 /// Use `move |context: &Context| match ...` to own chooser captures.
 #[macro_export]
 macro_rules! choose {
+    ([$($indices:literal)*] $($args:tt)*) => {
+        $crate::choose!(@arms [$($indices)*] $($args)*)
+    };
     (|$bb:ident: $context:ty| match $($tail:tt)+) => {
         $crate::choose!(@match [] [$bb: $context] [] $($tail)+)
     };
@@ -93,7 +113,7 @@ macro_rules! choose {
             [$($arms)* [$pattern $(if $guard)?] [$node]] ; $($($rest)*)?)
     };
     (@parse [$($setup:tt)*] [$($arms:tt)*] ;) => {
-        $crate::__flatbt_choose_indices!($($setup)* [] [] ; $($arms)*)
+        $crate::__private::core::__flatbt_child_indices!([$crate::choose]; $($setup)* [] [] ; $($arms)*)
     };
     (@arms [$index:literal $($indices:literal)*]
         [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]

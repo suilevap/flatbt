@@ -16,84 +16,23 @@
 //! assert_eq!(ammo, 0);
 //! ```
 //!
+//! Core is always available. Enable `choose`, `scope`, or `action` independently
+//! in Cargo.toml to add optional helpers. No features are enabled by default.
+//! Depend on `flatbt-core` directly when no entry-point crate is needed.
+//!
 //! See `examples/resume.rs` for suspension with an application-defined node.
 
 #![forbid(unsafe_code)]
 
-mod action;
-mod cancel;
-mod children;
-mod choose;
-mod control;
-mod execution;
-mod leaf;
-pub mod params;
-pub mod scope;
+pub use flatbt_core::*;
 
-pub use action::{ActionNode, BtAction, action};
-pub use cancel::{BtCancel, CancelOnDrop};
-pub use children::{BtChildren, child_state};
-pub use choose::{Choose, ChooseNode};
-pub use control::{
-    BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
-};
-pub use execution::{BtState, update};
-pub use leaf::{Check, Leaf, check, leaf};
-
-/// The result of an invocation: terminal completion or suspension.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[must_use]
-pub enum NodeResult {
-    Success,
-    Failure,
-    Running,
-}
-
-impl NodeResult {
-    /// Reports an execution error to stderr and returns Failure.
-    /// Ordinary behavior failures should return `Failure` directly without a log.
-    pub fn error(message: impl std::fmt::Display) -> Self {
-        log_error(message);
-        Self::Failure
-    }
-}
-
-pub(crate) fn log_error(message: impl std::fmt::Display) {
-    use std::io::Write;
-    // A failed diagnostic write must not turn an execution error into a panic.
-    let _ = writeln!(std::io::stderr().lock(), "[flatbt] {message}");
-}
-
-/// How execution enters the current invocation. Evaluate does not imply reset.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EntryMode {
-    Evaluate,
-    Resume,
-}
-
-/// An immutable definition with separate, statically composed state.
-/// A composing node includes its descendants in State and chooses which fields
-/// to pass to them. It owns initialization and cleanup of nested invocations.
-/// C is application context; P is a separate parameter contract (unit by default).
-/// Bindings borrow the declared inputs/outputs from an owning scope's state.
-/// Parameters may contain update-local references; State must own its data.
-///
-/// Fresh invocations enter as Evaluate. Existing invocations can receive Resume
-/// or Evaluate; Evaluate alone must not reset existing state.
-/// State survives only while Running. Use optional state fields to initialize
-/// context-dependent data.
-/// Use the free `update` function to drive execution with a root and `BtState`.
-/// Composing nodes call this method on children with their chosen state fields.
-/// User code should report recoverable errors with `NodeResult::error`.
-/// Panics in user code are not caught by the runtime.
-pub trait BtNode<C, P = ()> {
-    type State: Default + Send + 'static;
-
-    fn update(
-        &self,
-        state: &mut Self::State,
-        ctx: &mut C,
-        params: P,
-        mode: EntryMode,
-    ) -> NodeResult;
-}
+/// Optional catalog of ready-made nodes and policies.
+#[cfg(any(feature = "action", feature = "choose"))]
+pub use flatbt_nodes as nodes;
+#[cfg(feature = "action")]
+pub use flatbt_nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
+#[cfg(feature = "choose")]
+pub use flatbt_nodes::{Choose, ChooseNode, choose};
+/// Invocation-local storage, parameter bindings, and the scope macro.
+#[cfg(feature = "scope")]
+pub use flatbt_scope as scope;

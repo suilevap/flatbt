@@ -1,5 +1,5 @@
-use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult};
+use flatbt_core::params::{ParamShape, ParamValue};
+use flatbt_core::{BtNode, EntryMode, NodeResult};
 
 /// A convenience lifecycle executed directly inside BtNode::update.
 /// All callbacks, including tick, may run while a branch is still speculative.

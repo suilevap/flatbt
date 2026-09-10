@@ -201,7 +201,7 @@ construction versus entry timing, initialization order and fresh entry, mixed
 parameter reborrowing across action callbacks, named same-type bindings, producer
 suspension, independent instances, missing inputs, shared writes, and scope cleanup.
 Compile-fail doctests check shared access and exclusive aliasing. The runnable
-example is `cargo run --offline --example scoped_params`.
+example is `cargo run --offline --example scoped_params --features scope,action`.
 
 `examples/scoped_params_manual.rs` is the equivalent tree written using functions
 only, with the same initialization prefix, bindings, and execution assertions.

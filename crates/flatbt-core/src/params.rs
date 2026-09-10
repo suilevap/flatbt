@@ -30,7 +30,7 @@ pub trait ParamValue {
 /// The node cannot mutate the referenced input:
 ///
 /// ```compile_fail,E0594
-/// use flatbt::{BtNode, EntryMode, NodeResult};
+/// use flatbt_core::{BtNode, EntryMode, NodeResult};
 /// struct InvalidWriter;
 /// impl BtNode<(), &u32> for InvalidWriter {
 ///     type State = ();

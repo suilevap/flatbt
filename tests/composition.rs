@@ -96,3 +96,43 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
         std::mem::size_of_val(&BtState::new(&eight)),
     );
 }
+
+#[cfg(all(feature = "choose", feature = "scope"))]
+#[test]
+fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
+    use flatbt::choose;
+    use flatbt::scope::scope;
+
+    struct Observe;
+    impl BtNode<Vec<u32>, &u32> for Observe {
+        type State = ();
+
+        fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: EntryMode) -> NodeResult {
+            ctx.push(*input);
+            NodeResult::Success
+        }
+    }
+
+    let tree = scope! {
+        context: Vec<u32>;
+        let value: u32 = |_| 42;
+        sequence {
+            choose!(|trace: &Vec<u32>| match trace.is_empty() {
+                true => Observe,
+                false => leaf(|_: &mut Vec<u32>| NodeResult::Failure),
+            }).with(value);
+        }
+    };
+    let mut state = BtState::new(&tree);
+    let mut trace = Vec::new();
+    assert_eq!(
+        update(&tree, &mut state, &mut trace, EntryMode::Resume),
+        NodeResult::Success
+    );
+    assert_eq!(trace, [42]);
+    assert_eq!(
+        update(&tree, &mut state, &mut trace, EntryMode::Resume),
+        NodeResult::Failure
+    );
+    assert_eq!(trace, [42]);
+}

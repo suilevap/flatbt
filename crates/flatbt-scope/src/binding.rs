@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::params::ParamShape;
-use crate::{BtNode, EntryMode, NodeResult};
+use flatbt_core::params::ParamShape;
+use flatbt_core::{BtNode, EntryMode, NodeResult};
 
 /// Provides a node's parameters by borrowing explicitly selected local fields.
 pub trait ParamBinding<L> {

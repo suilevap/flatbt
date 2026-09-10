@@ -167,3 +167,16 @@ permits effects from branches later rejected by their parent and changes the
 ordering of candidate effects relative to preempted state destruction. Immediate
 completion and same-update sequence continuation remain intact. The experimental version and the main implementation were committed separately
 after explicit review approval.
+
+## 2026-09-10 — Separate core and optional composition helpers
+
+The workspace now contains `flatbt-core`, `flatbt-nodes`, and `flatbt-scope`, with
+`flatbt` as an entry point. Core owns execution and basic composition. The node
+catalog contains independently enabled `choose` and `action` helpers; scope owns
+local storage and its DSL. The entry point enables no helpers by default.
+
+This supersedes the single-crate packaging and deferred-catalog decisions above.
+See [the package layout draft](package-layout-draft.md) for dependency direction,
+module placement, migration details, and validation commands. Execution semantics
+are unchanged; `ChooseNode` becomes a delegating wrapper to keep its constructor
+in the crate that owns it.
