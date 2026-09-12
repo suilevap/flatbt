@@ -13,6 +13,7 @@ Code and tests define current behavior; historical proposals may differ.
 | [Choice](choose-draft.md) | Candidate identity and selection |
 | [Local state](local-state-draft.md) | Scopes, parameter contracts, bindings |
 | [Actions](action-draft.md) | Inline lifecycle and cancellation |
+| [Bevy integration](bevy-integration-draft.md) | Context declaration, agent component, tick scheduling |
 
 ## Proposals and history
 
