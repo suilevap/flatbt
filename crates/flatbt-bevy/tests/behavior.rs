@@ -475,3 +475,102 @@ fn a_frame_longer_than_the_period_evaluates_once() {
         EntryMode::Evaluate
     );
 }
+
+// --- turn based --------------------------------------------------------------
+
+/// Whose turn it is. Only the holder matches the agent query, so only the
+/// holder is ticked: the query is the gate, and the game moves the marker.
+#[derive(Component)]
+struct Turn;
+
+#[derive(Component, Debug, Default, PartialEq)]
+struct Journal(Vec<u32>);
+
+#[derive(Resource, Default)]
+struct Clock {
+    tick: u32,
+}
+
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Fighter {
+    _turn: &'static Turn,
+    journal: &'static mut Journal,
+}
+
+impl BehaviorContext for Fighter {
+    type Agent = Self;
+    type Param = Res<'static, Clock>;
+}
+
+/// A turn that spans more than one tick: act, wait, act, then hand the turn on.
+fn take_turn() -> impl BehaviorNode<Fighter> {
+    seq((
+        leaf(|bt: &mut Bt<Fighter>| {
+            let tick = bt.shared.tick;
+            bt.journal.0.push(tick);
+            NodeResult::Success
+        }),
+        Recharge(2),
+        leaf(|bt: &mut Bt<Fighter>| {
+            let tick = bt.shared.tick;
+            bt.journal.0.push(tick);
+            bt.agent_commands().remove::<Turn>();
+            NodeResult::Success
+        }),
+    ))
+}
+
+fn advance_clock(mut clock: ResMut<Clock>) {
+    clock.tick += 1;
+}
+
+/// The game owns the order: when nobody holds the turn, the next fighter gets it.
+fn pass_the_turn(
+    holders: Query<(), With<Turn>>,
+    order: Res<Order>,
+    mut next: Local<usize>,
+    mut commands: Commands,
+) {
+    if holders.is_empty() {
+        *next = (*next + 1) % order.0.len();
+        commands.entity(order.0[*next]).insert(Turn);
+    }
+}
+
+#[derive(Resource)]
+struct Order(Vec<Entity>);
+
+#[test]
+fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
+    let mut app = App::new();
+    app.init_resource::<Clock>()
+        .add_plugins(FlatBtPlugin::new())
+        .add_systems(Update, advance_clock.before(BehaviorSystems))
+        .add_systems(Update, pass_the_turn.after(BehaviorSystems));
+
+    let fighters: Vec<Entity> = (0..2)
+        .map(|_| {
+            app.world_mut()
+                .spawn((Journal::default(), Behavior::for_tree(take_turn)))
+                .id()
+        })
+        .collect();
+    app.insert_resource(Order(fighters.clone()));
+    app.world_mut().entity_mut(fighters[0]).insert(Turn);
+
+    for _ in 0..6 {
+        app.update();
+    }
+
+    // Each turn spans two ticks and resumes where it suspended; no fighter acts
+    // inside another's turn; and the order comes back round.
+    assert_eq!(
+        app.world().get::<Journal>(fighters[0]),
+        Some(&Journal(vec![1, 2, 5, 6]))
+    );
+    assert_eq!(
+        app.world().get::<Journal>(fighters[1]),
+        Some(&Journal(vec![3, 4]))
+    );
+}

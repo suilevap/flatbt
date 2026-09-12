@@ -296,8 +296,9 @@ pub fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
         });
 }
 
-/// Reports entities that own a behavior but do not match the agent query.
-/// Debug builds only, and once per system, since the cause is a fixed mismatch.
+/// Reports entities that own a behavior but do not match the agent query, which
+/// is either a missing component or a deliberate gate. Debug builds only, and
+/// once per system, since either cause is a standing condition.
 fn report_skipped<C: BehaviorContext, F: TreeBuilder<C>>(
     all: &Owners<C, F>,
     ticked: impl FnOnce() -> usize,
@@ -309,8 +310,9 @@ fn report_skipped<C: BehaviorContext, F: TreeBuilder<C>>(
             *reported = true;
             let missing = total - ticked;
             log_error(format_args!(
-                "skipping Behavior<{}, {}> on {missing} entities that do not match its \
-                 BehaviorContext::Agent query",
+                "not ticking Behavior<{}, {}> on {missing} entities: they do not match its \
+                 BehaviorContext::Agent query. Expected if that query is your gate; \
+                 otherwise the entities are missing a component it asks for",
                 core::any::type_name::<C>(),
                 core::any::type_name::<F>(),
             ));
