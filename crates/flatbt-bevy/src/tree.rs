@@ -6,12 +6,23 @@ use flatbt_core::{BtNode, EntryMode, NodeResult};
 use crate::plugin::request_registration;
 use crate::{BehaviorContext, Bt};
 
-/// A tree that can drive agents of context `C`.
+/// A tree that can drive agents of context `C`, with one state type.
 ///
-/// Implemented for every [`BtNode`] whose context is [`Bt<C>`](Bt) at any update
-/// lifetime, so it is the one bound worth naming: `Bt<C>` carries the update's
-/// borrows, which makes every use of it higher-ranked over five lifetimes.
-/// Naming it also names a subtree without spelling out its type:
+/// `Bt<C>` carries the update's borrows, so being a node for it means being one
+/// at every update: `for<'w, 's, 'q, 'a, 'c> BtNode<Bt<'w, 's, 'q, 'a, 'c, C>>`.
+/// That much is only long to write. What this trait adds is `State = Self::Data`,
+/// which pins the invocation state to a *single* type across that whole family,
+/// and that cannot be written inline:
+///
+/// - `BtNode<..., State: Default + Send + Sync>` is a bound, not an equality, so
+///   the state stays a separate projection per instantiation and
+///   [`Behavior`] has no size to reserve.
+/// - `BtNode<..., State = u32>` does pin it, but only to a type that can be
+///   named. A composed tree's state is nested control state over closures, which
+///   cannot be.
+///
+/// An associated type is the only equality target left, so it takes a trait. In
+/// return position it then names a subtree without naming its type:
 /// `fn patrol() -> impl BehaviorNode<Guard>`.
 ///
 /// Bevy resources and components must be `Sync`, so a tree and its inline state

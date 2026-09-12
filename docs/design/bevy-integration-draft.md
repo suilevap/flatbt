@@ -244,10 +244,16 @@ core:
 | `Bt`'s five lifetimes | Bevy: `QueryData::Item<'w, 's>` and `Commands<'w, 's>`. `QueryData::shrink` moves `'w` only, so `'s` cannot be collapsed. |
 | `BehaviorTree` resource, `Behavior` component, `TreeBuilder` | Bevy resources and components are `'static`, and the state type has to be nameable without naming the tree. |
 | Plugins, tick systems, self-registration | Bevy scheduling. |
-| `BehaviorNode<C>` | FlatBT: `BtNode<C>` takes the context as a plain type parameter, so a borrowed context needs `for<'w, 's, 'q, 'a, 'c>` at every use. |
+| `BehaviorNode<C>` | FlatBT: `BtNode<C>` takes the context as a plain type parameter, so a borrowed context needs `for<'w, 's, 'q, 'a, 'c>` at every use — and one state type across that family, which only an associated type can pin. |
 
-Only the last is FlatBT's shape, and it earns its keep: it is what makes
-`impl BehaviorNode<Guard>` a subtree's name in return position.
+Only the last is FlatBT's shape. Its length is incidental; what it carries is
+not. The quantifier `for<'w, 's, 'q, 'a, 'c> BtNode<Bt<..., C>>` could be written
+at each use, but `Behavior` also needs the invocation state to be one type across
+that whole family. `State: Bound` leaves a separate projection per instantiation,
+and `State = T` pins it only to a type that can be named, which a composed tree's
+state is not. An associated type is the only equality target left, so it takes a
+trait — and in return position that trait also names a subtree without naming its
+type.
 
 A context trait with a GAT (`type View<'a>`) would reduce that quantifier to one
 lifetime and let core's constructors carry real bounds again. It was considered
