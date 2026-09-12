@@ -83,9 +83,10 @@
 //! [`BehaviorContext::entry_mode`] decides per agent per tick when a tree should
 //! reconsider instead — on a timer, on a changed resource, on a perception
 //! component — reading the same world the tree declared. [`evaluate_every`]
-//! answers it on a period without putting a whole population on one frame. [`BehaviorPaused`]
-//! stops an agent until it is removed, and a node can insert it through
-//! [`Bt::pause`].
+//! answers it on a period without putting a whole population on one frame.
+//!
+//! Stopping agents is the game's own: a run condition on [`BehaviorSystems`]
+//! halts every tree, and a guard at the root of a tree halts that one.
 //!
 //! [`Commands`]: bevy_ecs::prelude::Commands
 
@@ -101,7 +102,7 @@ pub use context::{AgentItem, BehaviorContext, Bt, ParamItem, evaluate_every};
 pub use plugin::{
     BehaviorPlugin, BehaviorSystems, FlatBtPlugin, tick_behaviors, tick_behaviors_parallel,
 };
-pub use tree::{Behavior, BehaviorNode, BehaviorPaused, BehaviorTree, TreeBuilder};
+pub use tree::{Behavior, BehaviorNode, BehaviorTree, TreeBuilder};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.
 pub(crate) fn log_error(message: impl core::fmt::Display) {

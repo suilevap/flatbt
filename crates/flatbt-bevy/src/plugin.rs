@@ -8,8 +8,7 @@ use bevy_ecs::system::{ParallelCommands, StaticSystemParam, SystemParamItem};
 use bevy_ecs::world::DeferredWorld;
 
 use crate::{
-    AgentItem, Behavior, BehaviorContext, BehaviorPaused, BehaviorTree, Bt, ParamItem, TreeBuilder,
-    log_error,
+    AgentItem, Behavior, BehaviorContext, BehaviorTree, Bt, ParamItem, TreeBuilder, log_error,
 };
 
 /// Builds and ticks every tree an agent asks for, with no registration per tree.
@@ -222,11 +221,10 @@ type Agents<'w, 's, C, F> = Query<
         &'static mut Behavior<C, F>,
         <C as BehaviorContext>::Agent,
     ),
-    Without<BehaviorPaused>,
 >;
 
 /// Every agent of this tree the tick is responsible for, matched or not.
-type Owners<'w, 's, C, F> = Query<'w, 's, (), (With<Behavior<C, F>>, Without<BehaviorPaused>)>;
+type Owners<'w, 's, C, F> = Query<'w, 's, (), With<Behavior<C, F>>>;
 
 /// One agent's update, shared by both tick systems.
 fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(

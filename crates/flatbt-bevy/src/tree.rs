@@ -165,8 +165,7 @@ pub struct Behavior<C: BehaviorContext, F: TreeBuilder<C>> {
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     /// Runs the tree named by `builder`, restarted after every terminal result.
-    /// Insert [`BehaviorPaused`] to stop it. Whether a suspended invocation
-    /// resumes or reconsiders is
+    /// Whether a suspended invocation resumes or reconsiders is
     /// [`BehaviorContext::entry_mode`](crate::BehaviorContext::entry_mode).
     ///
     /// `builder` is not called here: it names the tree. The first agent to name
@@ -223,12 +222,3 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> core::fmt::Debug for Behavior<C, F> 
             .finish_non_exhaustive()
     }
 }
-
-/// Stops every behavior on an entity until it is removed.
-///
-/// A tree can stop itself with [`Bt::pause`], which a flag on the component
-/// could not offer: a node reaches the agent through [`Bt<C>`](Bt), which does
-/// not name the behavior component. As a component it is also queryable and
-/// removable from ordinary systems, which a flag was not.
-#[derive(Component, Debug, Default, Clone, Copy)]
-pub struct BehaviorPaused;

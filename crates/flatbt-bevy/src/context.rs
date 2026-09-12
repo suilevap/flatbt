@@ -124,12 +124,6 @@ impl<C: BehaviorContext> Bt<'_, '_, '_, '_, '_, C> {
     pub fn agent_commands(&mut self) -> EntityCommands<'_> {
         self.commands.entity(self.entity)
     }
-
-    /// Stops every behavior on this agent, from the next tick, by inserting
-    /// [`BehaviorPaused`](crate::BehaviorPaused). Remove it to resume.
-    pub fn pause(&mut self) {
-        self.agent_commands().insert(crate::BehaviorPaused);
-    }
 }
 
 impl<'q, 'a, C: BehaviorContext> Deref for Bt<'_, '_, 'q, 'a, '_, C> {

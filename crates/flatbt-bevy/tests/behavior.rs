@@ -253,35 +253,30 @@ fn the_context_decides_when_a_standing_decision_is_stale() {
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(1)));
 }
 
-fn shoot_then_stop() -> impl BehaviorNode<Guard> {
-    seq((
-        shoot(),
-        leaf(|bt: &mut Bt<Guard>| {
-            bt.pause();
-            NodeResult::Success
-        }),
-    ))
-}
+#[derive(Resource)]
+struct Halted(bool);
 
 #[test]
-fn a_tree_can_stop_itself() {
+fn a_run_condition_on_the_set_gates_self_registered_ticks() {
     let mut app = app();
+    app.insert_resource(Halted(false)).configure_sets(
+        Update,
+        BehaviorSystems.run_if(|halted: Res<Halted>| !halted.0),
+    );
     let entity = app
         .world_mut()
-        .spawn((Ammo(5), Fired(0), Behavior::for_tree(shoot_then_stop)))
+        .spawn((Ammo(4), Fired(0), Behavior::for_tree(shoot)))
         .id();
 
-    for _ in 0..3 {
-        app.update();
-    }
-    // One tick ran, then the agent paused itself.
+    app.update();
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(1)));
-    assert!(app.world().get::<BehaviorPaused>(entity).is_some());
 
-    // Pausing is a component, so any system can lift it.
-    app.world_mut()
-        .entity_mut(entity)
-        .remove::<BehaviorPaused>();
+    // The tick system is added at runtime, and still inherits the set.
+    app.world_mut().resource_mut::<Halted>().0 = true;
+    app.update();
+    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(1)));
+
+    app.world_mut().resource_mut::<Halted>().0 = false;
     app.update();
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(2)));
 }
