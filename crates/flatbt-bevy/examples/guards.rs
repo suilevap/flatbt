@@ -45,6 +45,16 @@ struct Guard {
 impl BehaviorContext for Guard {
     type Agent = Self;
     type Param = Res<'static, Alarm>;
+
+    /// A guard sticks with what it is doing until the alarm itself moves, which
+    /// is the only thing here worth abandoning a reload for.
+    fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+        if bt.shared.is_changed() {
+            EntryMode::Evaluate
+        } else {
+            EntryMode::Resume
+        }
+    }
 }
 
 /// Reloads over several ticks: start, stay in progress, then finish.

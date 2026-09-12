@@ -3,6 +3,7 @@ use core::ops::{Deref, DerefMut};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::{IterQueryData, QueryData};
 use bevy_ecs::system::{ReadOnlySystemParam, SystemParamItem};
+use flatbt_core::EntryMode;
 
 /// Declares the world access one family of behavior trees needs.
 ///
@@ -43,6 +44,50 @@ pub trait BehaviorContext: Send + Sync + 'static {
     /// agent's own components go through [`Bt::commands`], which defers them to
     /// the end of the schedule step.
     type Param: ReadOnlySystemParam + 'static;
+
+    /// Decides, per agent per tick, whether a suspended invocation continues or
+    /// reconsiders from the root.
+    ///
+    /// Resuming is the cheap path and the default: a decision already taken
+    /// stands. [`EntryMode::Evaluate`] re-runs the choices above the active node,
+    /// which is what makes a tree react. Deciding here rather than storing a mode
+    /// per agent means the answer comes from the world the tree already declared
+    /// — a timer, a changed resource, a perception component — and costs nothing
+    /// when it is a constant.
+    ///
+    /// A fresh invocation always enters as [`EntryMode::Evaluate`], whatever this
+    /// returns.
+    ///
+    /// ```
+    /// # use bevy_ecs::prelude::*;
+    /// # use bevy_ecs::query::QueryData;
+    /// # use flatbt_bevy::prelude::*;
+    /// # #[derive(Component)]
+    /// # struct Ammo(u32);
+    /// # #[derive(Resource)]
+    /// # struct Alarm(bool);
+    /// # #[derive(QueryData)]
+    /// # #[query_data(mutable)]
+    /// # struct Guard { ammo: &'static mut Ammo }
+    /// impl BehaviorContext for Guard {
+    ///     type Agent = Self;
+    ///     type Param = Res<'static, Alarm>;
+    ///
+    ///     fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+    ///         if bt.shared.is_changed() {
+    ///             EntryMode::Evaluate
+    ///         } else {
+    ///             EntryMode::Resume
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    fn entry_mode(_bt: &Bt<'_, '_, '_, '_, '_, Self>) -> EntryMode
+    where
+        Self: Sized,
+    {
+        EntryMode::Resume
+    }
 }
 
 /// The agent view for a context, as nodes receive it.

@@ -80,10 +80,11 @@
 //! is a function returning a node, so it composes into any tree by being called.
 //!
 //! Agents resume by default, the cheap path: decisions already taken stand.
-//! Insert [`BehaviorRevalidate`] to make the next tick reconsider — on a timer,
-//! on a perception event, when an order changes — and [`BehaviorPaused`] to stop
-//! an agent. Both are components, so a game system can aim them without naming
-//! `Behavior<C, F>`, and a node can insert them through `bt`.
+//! [`BehaviorContext::entry_mode`] decides per agent per tick when a tree should
+//! reconsider instead — on a timer, on a changed resource, on a perception
+//! component — reading the same world the tree declared. [`BehaviorPaused`]
+//! stops an agent until it is removed, and a node can insert it through
+//! [`Bt::pause`].
 //!
 //! [`Commands`]: bevy_ecs::prelude::Commands
 
@@ -99,9 +100,7 @@ pub use context::{AgentItem, BehaviorContext, Bt, ParamItem};
 pub use plugin::{
     BehaviorPlugin, BehaviorSystems, FlatBtPlugin, tick_behaviors, tick_behaviors_parallel,
 };
-pub use tree::{
-    Behavior, BehaviorNode, BehaviorPaused, BehaviorRevalidate, BehaviorTree, TreeBuilder,
-};
+pub use tree::{Behavior, BehaviorNode, BehaviorPaused, BehaviorTree, TreeBuilder};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.
 pub(crate) fn log_error(message: impl core::fmt::Display) {

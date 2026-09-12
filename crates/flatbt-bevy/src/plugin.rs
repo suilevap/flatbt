@@ -6,11 +6,10 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules};
 use bevy_ecs::system::{ParallelCommands, StaticSystemParam, SystemParamItem};
 use bevy_ecs::world::DeferredWorld;
-use flatbt_core::EntryMode;
 
 use crate::{
-    AgentItem, Behavior, BehaviorContext, BehaviorPaused, BehaviorRevalidate, BehaviorTree, Bt,
-    ParamItem, TreeBuilder, log_error,
+    AgentItem, Behavior, BehaviorContext, BehaviorPaused, BehaviorTree, Bt, ParamItem, TreeBuilder,
+    log_error,
 };
 
 /// Builds and ticks every tree an agent asks for, with no registration per tree.
@@ -221,7 +220,6 @@ type Agents<'w, 's, C, F> = Query<
     (
         Entity,
         &'static mut Behavior<C, F>,
-        Has<BehaviorRevalidate>,
         <C as BehaviorContext>::Agent,
     ),
     Without<BehaviorPaused>,
@@ -236,23 +234,16 @@ fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
     shared: &'a ParamItem<'w, 's, C>,
     entity: Entity,
     behavior: &mut Behavior<C, F>,
-    revalidate: bool,
     agent: AgentItem<'a, 'q, C>,
-    mut commands: Commands<'c, 'c>,
+    commands: Commands<'c, 'c>,
 ) {
-    // Revalidation is a one-shot request: spend it here.
-    let mode = if revalidate {
-        commands.entity(entity).remove::<BehaviorRevalidate>();
-        EntryMode::Evaluate
-    } else {
-        EntryMode::Resume
-    };
     let mut bt = Bt {
         entity,
         agent,
         shared,
         commands,
     };
+    let mode = C::entry_mode(&bt);
     let _ = behavior.tick(tree, &mut bt, mode);
 }
 
@@ -271,13 +262,12 @@ pub fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
 ) {
     report_skipped::<C, F>(&all, || agents.iter().count(), reported);
     let (tree, shared) = (tree.get(), &*shared);
-    for (entity, mut behavior, revalidate, agent) in agents.iter_mut() {
+    for (entity, mut behavior, agent) in agents.iter_mut() {
         tick_agent(
             tree,
             shared,
             entity,
             &mut behavior,
-            revalidate,
             agent,
             commands.reborrow(),
         );
@@ -301,17 +291,9 @@ pub fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
     let (tree, shared) = (tree.get(), &*shared);
     agents
         .par_iter_mut()
-        .for_each(|(entity, mut behavior, revalidate, agent)| {
+        .for_each(|(entity, mut behavior, agent)| {
             par_commands.command_scope(|commands| {
-                tick_agent(
-                    tree,
-                    shared,
-                    entity,
-                    &mut behavior,
-                    revalidate,
-                    agent,
-                    commands,
-                );
+                tick_agent(tree, shared, entity, &mut behavior, agent, commands);
             });
         });
 }

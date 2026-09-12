@@ -25,6 +25,15 @@ struct Guard {
 impl BehaviorContext for Guard {
     type Agent = Self;
     type Param = Res<'static, Alarm>;
+
+    /// Standing decisions hold until the alarm itself changes.
+    fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+        if bt.shared.is_changed() {
+            EntryMode::Evaluate
+        } else {
+            EntryMode::Resume
+        }
+    }
 }
 
 fn shoot() -> impl BehaviorNode<Guard> {
@@ -220,7 +229,7 @@ fn hold_or_fire() -> impl BehaviorNode<Guard> {
 }
 
 #[test]
-fn revalidation_is_asked_for_and_spent_once() {
+fn the_context_decides_when_a_standing_decision_is_stale() {
     let mut app = app();
     app.insert_resource(Alarm(false));
     let entity = app
@@ -232,20 +241,14 @@ fn revalidation_is_asked_for_and_spent_once() {
     app.update();
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
 
-    // The alarm goes up, but resuming keeps the branch already chosen.
-    app.world_mut().resource_mut::<Alarm>().0 = true;
+    // Nothing changed, so the branch already chosen simply resumes.
     app.update();
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
 
-    // The game decides when that decision is stale.
-    app.world_mut()
-        .entity_mut(entity)
-        .insert(BehaviorRevalidate);
+    // The alarm moves: the context asks for Evaluate and the selector rescans.
+    app.world_mut().resource_mut::<Alarm>().0 = true;
     app.update();
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(1)));
-
-    // The request is spent, not sticky.
-    assert!(app.world().get::<BehaviorRevalidate>(entity).is_none());
 }
 
 fn shoot_then_stop() -> impl BehaviorNode<Guard> {

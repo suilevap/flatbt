@@ -165,8 +165,9 @@ pub struct Behavior<C: BehaviorContext, F: TreeBuilder<C>> {
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     /// Runs the tree named by `builder`, restarted after every terminal result.
-    /// Insert [`BehaviorPaused`] to stop it, [`BehaviorRevalidate`] to make the
-    /// next tick reconsider its decisions.
+    /// Insert [`BehaviorPaused`] to stop it. Whether a suspended invocation
+    /// resumes or reconsiders is
+    /// [`BehaviorContext::entry_mode`](crate::BehaviorContext::entry_mode).
     ///
     /// `builder` is not called here: it names the tree. The first agent to name
     /// a tree builds it, so no registration is needed beyond
@@ -181,8 +182,9 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
 
     /// Runs one update.
     ///
-    /// `mode` is the caller's per-tick decision, not a stored setting: the tick
-    /// systems resume unless the agent carries [`BehaviorRevalidate`].
+    /// `mode` is the caller's per-tick decision, not a stored setting. The tick
+    /// systems take it from
+    /// [`BehaviorContext::entry_mode`](crate::BehaviorContext::entry_mode).
     pub fn tick(
         &mut self,
         tree: &F::Tree,
@@ -221,16 +223,6 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> core::fmt::Debug for Behavior<C, F> 
             .finish_non_exhaustive()
     }
 }
-
-/// Makes the next tick re-enter with [`EntryMode::Evaluate`], then is consumed.
-///
-/// Trees resume by default, which is the cheap path: decisions already taken
-/// stand until something says otherwise. Revalidation is a tool the game aims —
-/// on a timer, on a perception event, when an order changes — rather than a
-/// per-agent setting, so it is a component any system can insert without naming
-/// `Behavior<C, F>`.
-#[derive(Component, Debug, Default, Clone, Copy)]
-pub struct BehaviorRevalidate;
 
 /// Stops every behavior on an entity until it is removed.
 ///
