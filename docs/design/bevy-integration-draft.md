@@ -56,7 +56,7 @@ typed view of the agent. Reifying it would add the cost without buying anything.
 - `type Param: ReadOnlySystemParam` — shared world access: resources, lookup
   queries.
 
-Nodes receive `Bt<C>`: the agent view (via `Deref`), `shared`, `entity`, and
+Nodes receive `Blackboard<C>`: the agent view (via `Deref`), `shared`, `entity`, and
 `commands`. Read-only shared access is a deliberate restriction rather than an
 omission: per-entity mutation plus deferred everything-else is the discipline
 that makes `Query::par_iter_mut` sound with no further declaration, so the serial
@@ -92,7 +92,7 @@ that marks agents before the tick. Left open until something needs it;
 staggering removes the spike that motivates it.
 
 Nothing is stored to be looked at either: observation is the tree's own
-business, through `Bt<C>` and `Commands`. Nothing is erased,
+business, through `Blackboard<C>` and `Commands`. Nothing is erased,
 allocated, copied per agent, or reference counted.
 
 Identity is the builder `F`, not the tree it returns. `TreeBuilder<C>` is
@@ -143,7 +143,7 @@ leaves that choice to the consuming app and enables it for its own tests.
 
 ## Closure binding
 
-A stored tree must satisfy `for<'w, 's, 'q, 'a, 'c> BtNode<Bt<'w, 's, 'q, 'a, 'c, C>>`.
+A stored tree must satisfy `for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>>`.
 A closure commits to one fixed set of update lifetimes as soon as a constructor
 names the context in a bound, and can then never satisfy that. This is not a Bevy
 problem but a borrowed-context one, so the fix belongs in core: `check` and
@@ -204,7 +204,7 @@ construct its use from Bevy, and it only ever saved an argument annotation that
   at a call site, because `F` is a builder's own type and nothing there infers
   it. Schedule, ordering, run conditions and the parallel tick are all reachable
   through the plugins, so the hatch only widened the surface.
-- **A `BehaviorPaused` component** with a `Bt::pause` helper, filtered out of the
+- **A `BehaviorPaused` component** with a `Blackboard::pause` helper, filtered out of the
   tick. Rejected once it was clear the crate adds nothing: a run condition on
   `BehaviorSystems` already halts every tree, self-registered ticks included,
   and halting one agent is a guard at the root of its tree, which is what a
@@ -213,8 +213,8 @@ construct its use from Bevy, and it only ever saved an argument annotation that
   the context, not as a component the crate owns.
 - **A `BehaviorStatus<C>` component** carrying the last result, so systems could
   observe agents whose tree type they cannot name. Rejected: the user's code is
-  the tree's nodes, which already read and write the agent through `Bt<C>` and
-  can signal anything through `bt.commands`. It also added a `&mut` access shared
+  the tree's nodes, which already read and write the agent through `Blackboard<C>` and
+  can signal anything through `bb.commands`. It also added a `&mut` access shared
   by every tree of a context, which would have serialized them beyond what the
   agent components already force.
 
@@ -240,14 +240,14 @@ core:
 
 | Piece | Forced by |
 | --- | --- |
-| `BehaviorContext`, `Bt` | Declaring ECS access and building a per-agent view. This is the integration. |
-| `Bt`'s five lifetimes | Bevy: `QueryData::Item<'w, 's>` and `Commands<'w, 's>`. `QueryData::shrink` moves `'w` only, so `'s` cannot be collapsed. |
+| `BehaviorContext`, `Blackboard` | Declaring ECS access and building a per-agent view. This is the integration. |
+| `Blackboard`'s five lifetimes | Bevy: `QueryData::Item<'w, 's>` and `Commands<'w, 's>`. `QueryData::shrink` moves `'w` only, so `'s` cannot be collapsed. |
 | `BehaviorTree` resource, `Behavior` component, `TreeBuilder` | Bevy resources and components are `'static`, and the state type has to be nameable without naming the tree. |
 | Plugins, tick systems, self-registration | Bevy scheduling. |
 | `BehaviorNode<C>` | FlatBT: `BtNode<C>` takes the context as a plain type parameter, so a borrowed context needs `for<'w, 's, 'q, 'a, 'c>` at every use — and one state type across that family, which only an associated type can pin. |
 
 Only the last is FlatBT's shape. Its length is incidental; what it carries is
-not. The quantifier `for<'w, 's, 'q, 'a, 'c> BtNode<Bt<..., C>>` could be written
+not. The quantifier `for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<..., C>>` could be written
 at each use, but `Behavior` also needs the invocation state to be one type across
 that whole family. `State: Bound` leaves a separate projection per instantiation,
 and `State = T` pins it only to a type that can be named, which a composed tree's

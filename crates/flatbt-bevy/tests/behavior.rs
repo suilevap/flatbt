@@ -29,8 +29,8 @@ impl BehaviorContext for Guard {
     type Param = Res<'static, Alarm>;
 
     /// Standing decisions hold until the alarm itself changes.
-    fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
-        if bt.shared.is_changed() {
+    fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
+        if bb.shared.is_changed() {
             EntryMode::Evaluate
         } else {
             EntryMode::Resume
@@ -40,11 +40,11 @@ impl BehaviorContext for Guard {
 
 fn shoot() -> impl BehaviorNode<Guard> {
     seq((
-        check(|bt: &Bt<Guard>| bt.shared.0),
-        check(|bt: &Bt<Guard>| bt.ammo.0 > 0),
-        leaf(|bt: &mut Bt<Guard>| {
-            bt.ammo.0 -= 1;
-            bt.fired.0 += 1;
+        check(|bb: &Blackboard<Guard>| bb.shared.0),
+        check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+        leaf(|bb: &mut Blackboard<Guard>| {
+            bb.ammo.0 -= 1;
+            bb.fired.0 += 1;
             NodeResult::Success
         }),
     ))
@@ -118,8 +118,8 @@ fn one_tree_serves_many_agents_in_parallel() {
 fn reload_when_dry() -> impl BehaviorNode<Guard> {
     select((
         shoot(),
-        leaf(|bt: &mut Bt<Guard>| {
-            bt.agent_commands().insert(Reloading);
+        leaf(|bb: &mut Blackboard<Guard>| {
+            bb.agent_commands().insert(Reloading);
             NodeResult::Success
         }),
     ))
@@ -142,13 +142,13 @@ fn nodes_defer_world_edits_through_commands() {
 /// A named node type, so `Behavior<Guard, Recharge>` can be written out.
 struct Recharge(u32);
 
-impl<C: BehaviorContext> BtNode<Bt<'_, '_, '_, '_, '_, C>> for Recharge {
+impl<C: BehaviorContext> BtNode<Blackboard<'_, '_, '_, '_, '_, C>> for Recharge {
     type State = u32;
 
     fn update(
         &self,
         elapsed: &mut u32,
-        _: &mut Bt<'_, '_, '_, '_, '_, C>,
+        _: &mut Blackboard<'_, '_, '_, '_, '_, C>,
         _: (),
         _: EntryMode,
     ) -> NodeResult {
@@ -193,13 +193,13 @@ impl Default for Trail {
     }
 }
 
-impl<C: BehaviorContext> BtNode<Bt<'_, '_, '_, '_, '_, C>> for Bulky {
+impl<C: BehaviorContext> BtNode<Blackboard<'_, '_, '_, '_, '_, C>> for Bulky {
     type State = Trail;
 
     fn update(
         &self,
         _: &mut Trail,
-        _: &mut Bt<'_, '_, '_, '_, '_, C>,
+        _: &mut Blackboard<'_, '_, '_, '_, '_, C>,
         _: (),
         _: EntryMode,
     ) -> NodeResult {
@@ -220,9 +220,9 @@ fn only_agent_state_lives_in_the_component() {
 fn hold_or_fire() -> impl BehaviorNode<Guard> {
     select((
         seq((
-            check(|bt: &Bt<Guard>| bt.shared.0),
-            leaf(|bt: &mut Bt<Guard>| {
-                bt.fired.0 += 1;
+            check(|bb: &Blackboard<Guard>| bb.shared.0),
+            leaf(|bb: &mut Blackboard<Guard>| {
+                bb.fired.0 += 1;
                 NodeResult::Success
             }),
         )),
@@ -282,8 +282,8 @@ fn a_run_condition_on_the_set_gates_self_registered_ticks() {
 }
 
 fn advance(step: u32) -> impl BehaviorNode<Guard> {
-    leaf(move |bt: &mut Bt<Guard>| {
-        bt.fired.0 += step;
+    leaf(move |bb: &mut Blackboard<Guard>| {
+        bb.fired.0 += step;
         NodeResult::Success
     })
 }
@@ -506,16 +506,16 @@ impl BehaviorContext for Fighter {
 /// A turn that spans more than one tick: act, wait, act, then hand the turn on.
 fn take_turn() -> impl BehaviorNode<Fighter> {
     seq((
-        leaf(|bt: &mut Bt<Fighter>| {
-            let tick = bt.shared.tick;
-            bt.journal.0.push(tick);
+        leaf(|bb: &mut Blackboard<Fighter>| {
+            let tick = bb.shared.tick;
+            bb.journal.0.push(tick);
             NodeResult::Success
         }),
         Recharge(2),
-        leaf(|bt: &mut Bt<Fighter>| {
-            let tick = bt.shared.tick;
-            bt.journal.0.push(tick);
-            bt.agent_commands().remove::<Turn>();
+        leaf(|bb: &mut Blackboard<Fighter>| {
+            let tick = bb.shared.tick;
+            bb.journal.0.push(tick);
+            bb.agent_commands().remove::<Turn>();
             NodeResult::Success
         }),
     ))

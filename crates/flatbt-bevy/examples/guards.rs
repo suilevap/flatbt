@@ -48,8 +48,8 @@ impl BehaviorContext for Guard {
 
     /// A guard sticks with what it is doing until the alarm itself moves, which
     /// is the only thing here worth abandoning a reload for.
-    fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
-        if bt.shared.is_changed() {
+    fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
+        if bb.shared.is_changed() {
             EntryMode::Evaluate
         } else {
             EntryMode::Resume
@@ -64,36 +64,41 @@ struct Reload {
     rounds: u32,
 }
 
-impl BtAction<Bt<'_, '_, '_, '_, '_, Guard>> for Reload {
+impl BtAction<Blackboard<'_, '_, '_, '_, '_, Guard>> for Reload {
     /// Ticks elapsed so far. Kept between updates; dropped when the action ends.
     type State = u32;
 
-    fn start(&self, bt: &mut Bt<'_, '_, '_, '_, '_, Guard>, _: ()) -> Option<u32> {
-        println!("  {} starts reloading", bt.name.0);
+    fn start(&self, bb: &mut Blackboard<'_, '_, '_, '_, '_, Guard>, _: ()) -> Option<u32> {
+        println!("  {} starts reloading", bb.name.0);
         Some(0)
     }
 
-    fn is_in_progress(&self, elapsed: &u32, _: &Bt<'_, '_, '_, '_, '_, Guard>, _: ()) -> bool {
+    fn is_in_progress(
+        &self,
+        elapsed: &u32,
+        _: &Blackboard<'_, '_, '_, '_, '_, Guard>,
+        _: (),
+    ) -> bool {
         *elapsed < self.ticks
     }
 
-    fn tick(&self, elapsed: &mut u32, _: &mut Bt<'_, '_, '_, '_, '_, Guard>, _: ()) {
+    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<'_, '_, '_, '_, '_, Guard>, _: ()) {
         *elapsed += 1;
     }
 
-    fn complete(&self, _: &mut u32, bt: &mut Bt<'_, '_, '_, '_, '_, Guard>, _: ()) -> bool {
-        bt.ammo.0 = self.rounds;
-        println!("  {} reloaded", bt.name.0);
+    fn complete(&self, _: &mut u32, bb: &mut Blackboard<'_, '_, '_, '_, '_, Guard>, _: ()) -> bool {
+        bb.ammo.0 = self.rounds;
+        println!("  {} reloaded", bb.name.0);
         true
     }
 }
 
-fn alarm_raised(bt: &Bt<Guard>) -> bool {
-    bt.shared.raised
+fn alarm_raised(bb: &Blackboard<Guard>) -> bool {
+    bb.shared.raised
 }
 
-fn in_range(bt: &Bt<Guard>) -> bool {
-    (bt.post.0 - bt.shared.intruder).abs() <= 1.0
+fn in_range(bb: &Blackboard<Guard>) -> bool {
+    (bb.post.0 - bb.shared.intruder).abs() <= 1.0
 }
 
 /// A subtree is a plain function returning a node, so it composes into any tree
@@ -101,12 +106,12 @@ fn in_range(bt: &Bt<Guard>) -> bool {
 fn fire_at_intruder() -> impl BehaviorNode<Guard> {
     seq((
         check(in_range),
-        check(|bt: &Bt<Guard>| bt.ammo.0 > 0),
-        leaf(|bt: &mut Bt<Guard>| {
-            bt.ammo.0 -= 1;
-            let entity = bt.entity;
-            bt.commands.entity(entity).insert(Firing);
-            println!("  {} fires ({} left)", bt.name.0, bt.ammo.0);
+        check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+        leaf(|bb: &mut Blackboard<Guard>| {
+            bb.ammo.0 -= 1;
+            let entity = bb.entity;
+            bb.commands.entity(entity).insert(Firing);
+            println!("  {} fires ({} left)", bb.name.0, bb.ammo.0);
             NodeResult::Success
         }),
     ))
@@ -118,7 +123,7 @@ fn guard_tree() -> impl BehaviorNode<Guard> {
         seq((check(alarm_raised), fire_at_intruder())),
         // Out of ammo: reload, keeping progress across ticks.
         seq((
-            check(|bt: &Bt<Guard>| bt.ammo.0 == 0),
+            check(|bb: &Blackboard<Guard>| bb.ammo.0 == 0),
             action(Reload {
                 ticks: 2,
                 rounds: 2,
@@ -127,17 +132,17 @@ fn guard_tree() -> impl BehaviorNode<Guard> {
         // Alarm but out of range: close in.
         seq((
             check(alarm_raised),
-            leaf(|bt: &mut Bt<Guard>| {
-                let step = (bt.shared.intruder - bt.post.0).signum();
-                bt.post.0 += step;
-                println!("  {} advances to {}", bt.name.0, bt.post.0);
+            leaf(|bb: &mut Blackboard<Guard>| {
+                let step = (bb.shared.intruder - bb.post.0).signum();
+                bb.post.0 += step;
+                println!("  {} advances to {}", bb.name.0, bb.post.0);
                 NodeResult::Success
             }),
         )),
         // Otherwise walk the beat.
-        leaf(|bt: &mut Bt<Guard>| {
-            bt.post.0 += 1.0;
-            println!("  {} patrols to {}", bt.name.0, bt.post.0);
+        leaf(|bb: &mut Blackboard<Guard>| {
+            bb.post.0 += 1.0;
+            println!("  {} patrols to {}", bb.name.0, bb.post.0);
             NodeResult::Success
         }),
     ))

@@ -1,6 +1,6 @@
 //! Bevy ECS integration for FlatBT.
 //!
-//! Declare the world access one family of trees needs with [`BehaviorContext`],
+//! Declare what the trees' blackboard holds with [`BehaviorContext`],
 //! add [`FlatBtPlugin`] once, then give agents a [`Behavior`] naming the tree
 //! they run. Trees build and register themselves when their first agent appears.
 //!
@@ -31,14 +31,14 @@
 //! fn shoot() -> impl BehaviorNode<Guard> {
 //!     select((
 //!         seq((
-//!             check(|bt: &Bt<Guard>| bt.ammo.0 > 0),
-//!             leaf(|bt: &mut Bt<Guard>| {
-//!                 bt.ammo.0 -= 1;
+//!             check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+//!             leaf(|bb: &mut Blackboard<Guard>| {
+//!                 bb.ammo.0 -= 1;
 //!                 NodeResult::Success
 //!             }),
 //!         )),
-//!         leaf(|bt: &mut Bt<Guard>| {
-//!             bt.agent_commands().insert(Reloading);
+//!         leaf(|bb: &mut Blackboard<Guard>| {
+//!             bb.agent_commands().insert(Reloading);
 //!             NodeResult::Success
 //!         }),
 //!     ))
@@ -52,9 +52,10 @@
 //! app.update();
 //! ```
 //!
-//! Nodes receive [`Bt<C>`](Bt): the agent's own components (mutable, disjoint
-//! per entity), shared read-only world access, and [`Commands`] for everything
-//! else. That declaration is what lets Bevy schedule the tick against other
+//! Nodes receive [`Blackboard<C>`](Blackboard) — the agent's own components
+//! (mutable, disjoint per entity), shared read-only world access, and
+//! [`Commands`] for everything else. It is the struct a plain FlatBT tree would
+//! own, assembled from borrows because that is how an ECS hands data out. That declaration is what lets Bevy schedule the tick against other
 //! systems and lets [`BehaviorPlugin::parallel`] spread agents across threads.
 //!
 //! # What lives where
@@ -98,7 +99,7 @@ mod tree;
 
 pub mod prelude;
 
-pub use context::{AgentItem, BehaviorContext, Bt, ParamItem, evaluate_every};
+pub use context::{AgentItem, BehaviorContext, Blackboard, ParamItem, evaluate_every};
 pub use plugin::{BehaviorPlugin, BehaviorSystems, FlatBtPlugin};
 pub(crate) use tree::BehaviorTree;
 pub use tree::{Behavior, BehaviorNode, TreeBuilder};

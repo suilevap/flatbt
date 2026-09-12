@@ -8,7 +8,8 @@ use bevy_ecs::system::{ParallelCommands, StaticSystemParam, SystemParamItem};
 use bevy_ecs::world::DeferredWorld;
 
 use crate::{
-    AgentItem, Behavior, BehaviorContext, BehaviorTree, Bt, ParamItem, TreeBuilder, log_error,
+    AgentItem, Behavior, BehaviorContext, BehaviorTree, Blackboard, ParamItem, TreeBuilder,
+    log_error,
 };
 
 /// Builds and ticks every tree an agent asks for, with no registration per tree.
@@ -148,7 +149,7 @@ pub struct BehaviorSystems;
 /// # struct Guard { ammo: &'static mut Ammo }
 /// # impl BehaviorContext for Guard { type Agent = Self; type Param = (); }
 /// fn patrol() -> impl BehaviorNode<Guard> {
-///     check(|bt: &Bt<Guard>| bt.ammo.0 > 0)
+///     check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0)
 /// }
 ///
 /// App::new().add_plugins(BehaviorPlugin::for_tree(patrol));
@@ -185,7 +186,7 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorPlugin<C, F> {
     ///
     /// Agent access is disjoint per entity and shared access is read-only, so
     /// this needs no further declaration. Iteration order becomes unspecified
-    /// and [`Bt::commands`] are queued per worker thread.
+    /// and [`Blackboard::commands`] are queued per worker thread.
     pub fn parallel(mut self) -> Self {
         self.parallel = true;
         self
@@ -232,14 +233,14 @@ fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
     agent: AgentItem<'a, 'q, C>,
     commands: Commands<'c, 'c>,
 ) {
-    let mut bt = Bt {
+    let mut bb = Blackboard {
         entity,
         agent,
         shared,
         commands,
     };
-    let mode = C::entry_mode(&bt);
-    behavior.tick(tree, &mut bt, mode);
+    let mode = C::entry_mode(&bb);
+    behavior.tick(tree, &mut bb, mode);
 }
 
 /// Ticks every agent running the tree named by `F`, in query order.

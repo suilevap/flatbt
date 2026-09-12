@@ -6,9 +6,9 @@ use bevy_ecs::query::{IterQueryData, QueryData};
 use bevy_ecs::system::{ReadOnlySystemParam, SystemParamItem};
 use flatbt_core::EntryMode;
 
-/// Declares the world access one family of behavior trees needs.
+/// Declares what the [`Blackboard`] holds for one family of behavior trees.
 ///
-/// The implementing type is a marker: it names the context, and every
+/// The implementing type is a marker: it names the blackboard, and every
 /// [`Behavior<Self>`](crate::Behavior) on an entity is driven by the same system.
 /// Access is declared once here instead of per node, so Bevy can schedule the
 /// tick against other systems and iterate agents in parallel.
@@ -42,7 +42,7 @@ pub trait BehaviorContext: Send + Sync + 'static {
     /// Read-only world access shared by every agent: resources, lookup queries.
     ///
     /// Use `()` when the tree only touches its own entity. Mutations beyond the
-    /// agent's own components go through [`Bt::commands`], which defers them to
+    /// agent's own components go through [`Blackboard::commands`], which defers them to
     /// the end of the schedule step.
     type Param: ReadOnlySystemParam + 'static;
 
@@ -74,8 +74,8 @@ pub trait BehaviorContext: Send + Sync + 'static {
     ///     type Agent = Self;
     ///     type Param = Res<'static, Alarm>;
     ///
-    ///     fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
-    ///         if bt.shared.is_changed() {
+    ///     fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
+    ///         if bb.shared.is_changed() {
     ///             EntryMode::Evaluate
     ///         } else {
     ///             EntryMode::Resume
@@ -83,7 +83,7 @@ pub trait BehaviorContext: Send + Sync + 'static {
     ///     }
     /// }
     /// ```
-    fn entry_mode(_bt: &Bt<'_, '_, '_, '_, '_, Self>) -> EntryMode
+    fn entry_mode(_bt: &Blackboard<'_, '_, '_, '_, '_, Self>) -> EntryMode
     where
         Self: Sized,
     {
@@ -97,18 +97,21 @@ pub type AgentItem<'w, 's, C> = <<C as BehaviorContext>::Agent as QueryData>::It
 /// The shared view for a context, as nodes receive it.
 pub type ParamItem<'w, 's, C> = SystemParamItem<'w, 's, <C as BehaviorContext>::Param>;
 
-/// Context passed to every node of a [`Behavior<C>`](crate::Behavior).
+/// The blackboard every node of a [`Behavior<C>`](crate::Behavior) reads and
+/// writes: what [`BehaviorContext`] declared, for one agent, for one update.
 ///
-/// This is the `C` of [`flatbt_core::BtNode`] for Bevy trees. It borrows world
-/// data for the duration of one update, so node state can never retain it.
+/// This is the `C` of [`flatbt_core::BtNode`] for Bevy trees, the place a plain
+/// FlatBT tree would keep its own struct. Here it is assembled from borrows
+/// instead of owned, because that is how an ECS hands data out, which is also
+/// why node state can never retain it.
 ///
-/// [`Deref`] targets the agent view, so `bt.health` reaches the agent's
-/// component while `bt.entity`, `bt.shared`, and `bt.commands` stay available on
+/// [`Deref`] targets the agent view, so `bb.health` reaches the agent's
+/// component while `bb.entity`, `bb.shared`, and `bb.commands` stay available on
 /// the context itself.
 ///
 /// The lifetimes are an implementation detail of the tick system. Write
-/// `Bt<Guard>` and let them be inferred.
-pub struct Bt<'w, 's, 'q, 'a, 'c, C: BehaviorContext> {
+/// `Blackboard<Guard>` and let them be inferred.
+pub struct Blackboard<'w, 's, 'q, 'a, 'c, C: BehaviorContext> {
     /// The entity that owns the behavior.
     pub entity: Entity,
     /// Per-agent component access declared by [`BehaviorContext::Agent`].
@@ -119,14 +122,14 @@ pub struct Bt<'w, 's, 'q, 'a, 'c, C: BehaviorContext> {
     pub commands: Commands<'c, 'c>,
 }
 
-impl<C: BehaviorContext> Bt<'_, '_, '_, '_, '_, C> {
+impl<C: BehaviorContext> Blackboard<'_, '_, '_, '_, '_, C> {
     /// Commands targeting the agent entity.
     pub fn agent_commands(&mut self) -> EntityCommands<'_> {
         self.commands.entity(self.entity)
     }
 }
 
-impl<'q, 'a, C: BehaviorContext> Deref for Bt<'_, '_, 'q, 'a, '_, C> {
+impl<'q, 'a, C: BehaviorContext> Deref for Blackboard<'_, '_, 'q, 'a, '_, C> {
     type Target = AgentItem<'a, 'q, C>;
 
     fn deref(&self) -> &Self::Target {
@@ -134,7 +137,7 @@ impl<'q, 'a, C: BehaviorContext> Deref for Bt<'_, '_, 'q, 'a, '_, C> {
     }
 }
 
-impl<C: BehaviorContext> DerefMut for Bt<'_, '_, '_, '_, '_, C> {
+impl<C: BehaviorContext> DerefMut for Blackboard<'_, '_, '_, '_, '_, C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.agent
     }
@@ -164,12 +167,12 @@ impl<C: BehaviorContext> DerefMut for Bt<'_, '_, '_, '_, '_, C> {
 ///     type Agent = Self;
 ///     type Param = Res<'static, Clock>;
 ///
-///     fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+///     fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
 ///         evaluate_every(
 ///             Duration::from_millis(200),
-///             bt.shared.elapsed,
-///             bt.shared.delta,
-///             bt.entity,
+///             bb.shared.elapsed,
+///             bb.shared.delta,
+///             bb.entity,
 ///         )
 ///     }
 /// }

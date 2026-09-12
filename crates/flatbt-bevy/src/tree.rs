@@ -4,12 +4,12 @@ use bevy_ecs::prelude::*;
 use flatbt_core::{BtNode, EntryMode, NodeResult};
 
 use crate::plugin::request_registration;
-use crate::{BehaviorContext, Bt};
+use crate::{BehaviorContext, Blackboard};
 
 /// A tree that can drive agents of context `C`, with one state type.
 ///
-/// `Bt<C>` carries the update's borrows, so being a node for it means being one
-/// at every update: `for<'w, 's, 'q, 'a, 'c> BtNode<Bt<'w, 's, 'q, 'a, 'c, C>>`.
+/// `Blackboard<C>` carries the update's borrows, so being a node for it means being one
+/// at every update: `for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>>`.
 /// That much is only long to write. What this trait adds is `State = Self::Data`,
 /// which pins the invocation state to a *single* type across that whole family,
 /// and that cannot be written inline:
@@ -28,7 +28,7 @@ use crate::{BehaviorContext, Bt};
 /// Bevy resources and components must be `Sync`, so a tree and its inline state
 /// carry that requirement on top of FlatBT's own bounds.
 pub trait BehaviorNode<C: BehaviorContext>:
-    for<'w, 's, 'q, 'a, 'c> BtNode<Bt<'w, 's, 'q, 'a, 'c, C>, State = Self::Data>
+    for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>, State = Self::Data>
     + Send
     + Sync
     + 'static
@@ -40,7 +40,10 @@ pub trait BehaviorNode<C: BehaviorContext>:
 impl<C, N, S> BehaviorNode<C> for N
 where
     C: BehaviorContext,
-    N: for<'w, 's, 'q, 'a, 'c> BtNode<Bt<'w, 's, 'q, 'a, 'c, C>, State = S> + Send + Sync + 'static,
+    N: for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>, State = S>
+        + Send
+        + Sync
+        + 'static,
     S: Default + Send + Sync + 'static,
 {
     type Data = S;
@@ -64,8 +67,8 @@ where
 /// # struct Guard { ammo: &'static mut Ammo }
 /// # impl BehaviorContext for Guard { type Agent = Self; type Param = (); }
 /// fn advance(step: u32) -> impl BehaviorNode<Guard> {
-///     leaf(move |bt: &mut Bt<Guard>| {
-///         bt.ammo.0 += step;
+///     leaf(move |bb: &mut Blackboard<Guard>| {
+///         bb.ammo.0 += step;
 ///         NodeResult::Success
 ///     })
 /// }
@@ -148,9 +151,9 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
 /// # impl BehaviorContext for Guard { type Agent = Self; type Param = (); }
 /// fn shoot() -> impl BehaviorNode<Guard> {
 ///     seq((
-///         check(|bt: &Bt<Guard>| bt.ammo.0 > 0),
-///         leaf(|bt: &mut Bt<Guard>| {
-///             bt.ammo.0 -= 1;
+///         check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+///         leaf(|bb: &mut Blackboard<Guard>| {
+///             bb.ammo.0 -= 1;
 ///             NodeResult::Success
 ///         }),
 ///     ))
@@ -195,11 +198,11 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     ///
     /// The result is not reported anywhere: at the root it says only that this
     /// invocation ended, and the next tick starts a new one. A tree that has
-    /// something to say says it through `bt`.
+    /// something to say says it through `bb`.
     pub(crate) fn tick(
         &mut self,
         tree: &F::Tree,
-        bt: &mut Bt<'_, '_, '_, '_, '_, C>,
+        bb: &mut Blackboard<'_, '_, '_, '_, '_, C>,
         mode: EntryMode,
     ) {
         // A fresh invocation always enters as Evaluate, whatever the caller asks
@@ -212,7 +215,7 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         };
         let result = tree.update(
             self.state.get_or_insert_with(Default::default),
-            bt,
+            bb,
             (),
             mode,
         );

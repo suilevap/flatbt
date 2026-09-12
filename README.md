@@ -177,9 +177,9 @@ impl BehaviorContext for Guard {
 fn guard_tree() -> impl BehaviorNode<Guard> {
     select((
         seq((
-            check(|bt: &Bt<Guard>| bt.shared.raised && bt.ammo.0 > 0),
-            leaf(|bt: &mut Bt<Guard>| {
-                bt.ammo.0 -= 1;
+            check(|bb: &Blackboard<Guard>| bb.shared.raised && bb.ammo.0 > 0),
+            leaf(|bb: &mut Blackboard<Guard>| {
+                bb.ammo.0 -= 1;
                 NodeResult::Success
             }),
         )),
@@ -191,13 +191,14 @@ app.add_plugins(FlatBtPlugin::new());
 commands.spawn((Ammo(2), Post(0.0), Behavior::for_tree(guard_tree)));
 ```
 
-Nodes receive `Bt<C>`, which derefs to the agent view: `bt.ammo` reaches the
-agent's component, `bt.shared` the read-only world access, `bt.entity` and
-`bt.commands` everything else.
+Nodes receive `Blackboard<C>`, the struct a plain FlatBT tree would own, here
+assembled from borrows because that is how an ECS hands data out. It derefs to
+the agent view: `bb.ammo` reaches the agent's component, `bb.shared` the
+read-only world access, `bb.entity` and `bb.commands` everything else.
 
 | API | Behavior |
 | --- | --- |
-| `BehaviorContext` | Declares `Agent` (per-entity components), `Param` (shared, read-only) and `entry_mode` |
+| `BehaviorContext` | Declares what the blackboard holds: `Agent`, `Param`, `entry_mode` |
 | `FlatBtPlugin::new()` | Added once; trees register themselves from their first agent |
 | `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
@@ -258,8 +259,8 @@ impl BehaviorContext for Guard {
     type Agent = Self;
     type Param = Res<'static, Alarm>;
 
-    fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
-        if bt.shared.is_changed() { EntryMode::Evaluate } else { EntryMode::Resume }
+    fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
+        if bb.shared.is_changed() { EntryMode::Evaluate } else { EntryMode::Resume }
     }
 }
 ```
@@ -272,12 +273,12 @@ For a tree that should simply rethink periodically, `evaluate_every` answers on
 a period without putting the whole population on one frame:
 
 ```rust,ignore
-fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
     evaluate_every(
         Duration::from_millis(200),
-        bt.shared.elapsed(),
-        bt.shared.delta(),
-        bt.entity,
+        bb.shared.elapsed(),
+        bb.shared.delta(),
+        bb.entity,
     )
 }
 ```
@@ -289,7 +290,7 @@ longer than the period evaluates once, never twice.
 
 A tick's result is not reported anywhere. At the root it says only that this
 invocation ended, and the next tick starts another; a tree that has something to
-say to the game says it through `bt`, as a component or a command.
+say to the game says it through `bb`, as a component or a command.
 
 ### Turn based
 
@@ -306,7 +307,7 @@ struct Fighter {
 ```
 
 The game owns the order by moving `Turn`, and the tree hands it on when its turn
-ends (`bt.agent_commands().remove::<Turn>()`). Register the tick in whatever
+ends (`bb.agent_commands().remove::<Turn>()`). Register the tick in whatever
 schedule the turn runs in, with `in_schedule`, or gate it with a run condition.
 
 A turn spanning several ticks needs no extra state: the agent's invocation stays
@@ -330,12 +331,12 @@ Agent access must be disjoint per entity, and shared access is read-only, so
 and accepts the same trees: all agents of one tree tick concurrently. It needs
 `bevy_ecs`'s `multi_threaded` feature, which the full `bevy` crate enables;
 without it `.parallel()` falls back to iterating in order. Everything beyond the
-agent's own components is deferred through `bt.commands`.
+agent's own components is deferred through `bb.commands`.
 
 Two *different* trees over one context overlap only if their declared access
 allows it: Bevy schedules on declared component access, not on which entities
 match. Two trees whose `Agent` writes `&mut Health` serialize, even though no
-agent runs both. Make `Agent` read-only and route changes through `bt.commands`
+agent runs both. Make `Agent` read-only and route changes through `bb.commands`
 and they run concurrently — at the price of writes landing at the next sync
 point rather than immediately, so it is worth it for trees that mostly observe,
 not for hot per-agent state. Trees over different contexts always overlap, as
@@ -365,7 +366,7 @@ A custom node names the context in full: its lifetimes are Bevy's, from
 `QueryData::Item<'w, 's>` and `Commands<'w, 's>`, and cannot be collapsed.
 
 ```rust,ignore
-impl BtNode<Bt<'_, '_, '_, '_, '_, Guard>> for Reload { /* ... */ }
+impl BtNode<Blackboard<'_, '_, '_, '_, '_, Guard>> for Reload { /* ... */ }
 ```
 
 Tree state must be `Sync`, which Bevy requires of every component.
