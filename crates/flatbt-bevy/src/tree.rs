@@ -94,7 +94,7 @@ where
 /// [`BehaviorPlugin`](crate::BehaviorPlugin). Trees are immutable definitions,
 /// so they belong in a resource rather than copied into each agent.
 #[derive(Resource)]
-pub struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
+pub(crate) struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
     tree: F::Tree,
     // Load-bearing: it keeps `C` a direct field use. Reached only through the
     // `F::Tree` projection, `C` sends the monomorphization collector through
@@ -103,14 +103,14 @@ pub struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
 }
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
-    pub fn new(tree: F::Tree) -> Self {
+    pub(crate) fn new(tree: F::Tree) -> Self {
         Self {
             tree,
             context: PhantomData,
         }
     }
 
-    pub fn get(&self) -> &F::Tree {
+    pub(crate) fn get(&self) -> &F::Tree {
         &self.tree
     }
 }
@@ -119,8 +119,8 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
 ///
 /// Holds only what is per-agent: the state of a suspended invocation, sized
 /// exactly for that tree, and how to re-enter it. The tree itself lives once in
-/// [`BehaviorTree<C, F>`](BehaviorTree), and the builder is zero-sized when it
-/// is a plain function, so an agent costs its invocation state and two flags.
+/// a resource of its own, and the builder is zero-sized when it is a plain
+/// function, so an agent costs exactly its invocation state.
 ///
 /// Neither type parameter is written out. Both come from the builder, which
 /// names the tree here exactly as it does at registration:
@@ -179,17 +179,18 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         }
     }
 
-    /// Runs one update.
-    ///
-    /// `mode` is the caller's per-tick decision, not a stored setting. The tick
-    /// systems take it from
+    /// Runs one update. `mode` comes from
     /// [`BehaviorContext::entry_mode`](crate::BehaviorContext::entry_mode).
-    pub fn tick(
+    ///
+    /// The result is not reported anywhere: at the root it says only that this
+    /// invocation ended, and the next tick starts a new one. A tree that has
+    /// something to say says it through `bt`.
+    pub(crate) fn tick(
         &mut self,
         tree: &F::Tree,
         bt: &mut Bt<'_, '_, '_, '_, '_, C>,
         mode: EntryMode,
-    ) -> NodeResult {
+    ) {
         // A fresh invocation always enters as Evaluate, whatever the caller asks
         // for, and a terminal result drops invocation state. Same as FlatBT's
         // own root lifetime in `update`.
@@ -207,7 +208,6 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         if result != NodeResult::Running {
             self.state = None;
         }
-        result
     }
 
     pub(crate) fn builder(&self) -> &F {

@@ -223,9 +223,6 @@ type Agents<'w, 's, C, F> = Query<
     ),
 >;
 
-/// Every agent of this tree the tick is responsible for, matched or not.
-type Owners<'w, 's, C, F> = Query<'w, 's, (), With<Behavior<C, F>>>;
-
 /// One agent's update, shared by both tick systems.
 fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
     tree: &F::Tree,
@@ -242,23 +239,20 @@ fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
         commands,
     };
     let mode = C::entry_mode(&bt);
-    let _ = behavior.tick(tree, &mut bt, mode);
+    behavior.tick(tree, &mut bt, mode);
 }
 
 /// Ticks every agent running the tree named by `F`, in query order.
 ///
-/// Added by [`BehaviorPlugin`] and by self-registration. Add it directly to
-/// place the tick in a custom set or schedule; it needs [`BehaviorTree<C, F>`]
-/// in the world.
-pub fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
+/// Registered by [`BehaviorPlugin`] and by self-registration. Not public:
+/// `F` is a builder's own type, which no call site can name or infer, so
+/// choose the schedule and tick mode through the plugin instead.
+pub(crate) fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
     tree: Res<BehaviorTree<C, F>>,
     mut agents: Agents<C, F>,
-    all: Owners<C, F>,
     shared: StaticSystemParam<C::Param>,
     mut commands: Commands,
-    reported: Local<bool>,
 ) {
-    report_skipped::<C, F>(&all, || agents.iter().count(), reported);
     let (tree, shared) = (tree.get(), &*shared);
     for (entity, mut behavior, agent) in agents.iter_mut() {
         tick_agent(
@@ -274,18 +268,15 @@ pub fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
 
 /// Ticks every agent running the tree named by `F` across the task pool.
 ///
-/// Added by [`BehaviorPlugin::parallel`]. Iteration order is unspecified.
-pub fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
+/// Registered by [`BehaviorPlugin::parallel`]. Iteration order is unspecified.
+pub(crate) fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
     tree: Res<BehaviorTree<C, F>>,
     mut agents: Agents<C, F>,
-    all: Owners<C, F>,
     shared: StaticSystemParam<C::Param>,
     par_commands: ParallelCommands,
-    reported: Local<bool>,
 ) where
     for<'w, 's> SystemParamItem<'w, 's, C::Param>: Sync,
 {
-    report_skipped::<C, F>(&all, || agents.iter().count(), reported);
     let (tree, shared) = (tree.get(), &*shared);
     agents
         .par_iter_mut()
@@ -294,28 +285,4 @@ pub fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
                 tick_agent(tree, shared, entity, &mut behavior, agent, commands);
             });
         });
-}
-
-/// Reports entities that own a behavior but do not match the agent query, which
-/// is either a missing component or a deliberate gate. Debug builds only, and
-/// once per system, since either cause is a standing condition.
-fn report_skipped<C: BehaviorContext, F: TreeBuilder<C>>(
-    all: &Owners<C, F>,
-    ticked: impl FnOnce() -> usize,
-    mut reported: Local<bool>,
-) {
-    if cfg!(debug_assertions) && !*reported {
-        let (total, ticked) = (all.iter().count(), ticked());
-        if total > ticked {
-            *reported = true;
-            let missing = total - ticked;
-            log_error(format_args!(
-                "not ticking Behavior<{}, {}> on {missing} entities: they do not match its \
-                 BehaviorContext::Agent query. Expected if that query is your gate; \
-                 otherwise the entities are missing a component it asks for",
-                core::any::type_name::<C>(),
-                core::any::type_name::<F>(),
-            ));
-        }
-    }
 }

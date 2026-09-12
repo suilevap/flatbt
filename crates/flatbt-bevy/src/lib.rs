@@ -60,7 +60,7 @@
 //! # What lives where
 //!
 //! A tree is an immutable definition, so it is built once into
-//! [`BehaviorTree<C, N>`](BehaviorTree), a resource. [`Behavior<C, N>`](Behavior)
+//! a resource of its own. [`Behavior<C, F>`](Behavior)
 //! holds only what is per-agent: the saved state of a suspended invocation,
 //! sized exactly for that tree. Nothing is allocated, nothing is reference
 //! counted, and dispatch stays static.
@@ -99,10 +99,9 @@ mod tree;
 pub mod prelude;
 
 pub use context::{AgentItem, BehaviorContext, Bt, ParamItem, evaluate_every};
-pub use plugin::{
-    BehaviorPlugin, BehaviorSystems, FlatBtPlugin, tick_behaviors, tick_behaviors_parallel,
-};
-pub use tree::{Behavior, BehaviorNode, BehaviorTree, TreeBuilder};
+pub use plugin::{BehaviorPlugin, BehaviorSystems, FlatBtPlugin};
+pub(crate) use tree::BehaviorTree;
+pub use tree::{Behavior, BehaviorNode, TreeBuilder};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.
 pub(crate) fn log_error(message: impl core::fmt::Display) {
