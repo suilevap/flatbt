@@ -82,7 +82,8 @@
 //! Agents resume by default, the cheap path: decisions already taken stand.
 //! [`BehaviorContext::entry_mode`] decides per agent per tick when a tree should
 //! reconsider instead — on a timer, on a changed resource, on a perception
-//! component — reading the same world the tree declared. [`BehaviorPaused`]
+//! component — reading the same world the tree declared. [`evaluate_every`]
+//! answers it on a period without putting a whole population on one frame. [`BehaviorPaused`]
 //! stops an agent until it is removed, and a node can insert it through
 //! [`Bt::pause`].
 //!
@@ -96,7 +97,7 @@ mod tree;
 
 pub mod prelude;
 
-pub use context::{AgentItem, BehaviorContext, Bt, ParamItem};
+pub use context::{AgentItem, BehaviorContext, Bt, ParamItem, evaluate_every};
 pub use plugin::{
     BehaviorPlugin, BehaviorSystems, FlatBtPlugin, tick_behaviors, tick_behaviors_parallel,
 };

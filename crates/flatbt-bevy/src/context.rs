@@ -1,4 +1,5 @@
 use core::ops::{Deref, DerefMut};
+use core::time::Duration;
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::{IterQueryData, QueryData};
@@ -142,5 +143,63 @@ impl<'q, 'a, C: BehaviorContext> Deref for Bt<'_, '_, 'q, 'a, '_, C> {
 impl<C: BehaviorContext> DerefMut for Bt<'_, '_, '_, '_, '_, C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.agent
+    }
+}
+
+/// [`EntryMode::Evaluate`] on the one tick where this agent's slice of `period`
+/// elapses, [`EntryMode::Resume`] on every other.
+///
+/// A population that reconsiders on a timer would otherwise do it on the same
+/// frame and spike. Each agent's slot is derived from its [`Entity`], so the
+/// work spreads across the period and nothing is stored per agent. Pass the
+/// clock the context already reads:
+///
+/// ```
+/// # use core::time::Duration;
+/// # use bevy_ecs::prelude::*;
+/// # use bevy_ecs::query::QueryData;
+/// # use flatbt_bevy::prelude::*;
+/// # #[derive(Component)]
+/// # struct Ammo(u32);
+/// # #[derive(Resource)]
+/// # struct Clock { elapsed: Duration, delta: Duration }
+/// # #[derive(QueryData)]
+/// # #[query_data(mutable)]
+/// # struct Guard { ammo: &'static mut Ammo }
+/// impl BehaviorContext for Guard {
+///     type Agent = Self;
+///     type Param = Res<'static, Clock>;
+///
+///     fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+///         evaluate_every(
+///             Duration::from_millis(200),
+///             bt.shared.elapsed,
+///             bt.shared.delta,
+///             bt.entity,
+///         )
+///     }
+/// }
+/// ```
+///
+/// A tick longer than `period` still evaluates once, never twice.
+pub fn evaluate_every(
+    period: Duration,
+    elapsed: Duration,
+    delta: Duration,
+    entity: Entity,
+) -> EntryMode {
+    let period = period.as_nanos();
+    if period == 0 {
+        return EntryMode::Evaluate;
+    }
+    // A multiplicative hash, so entities spawned together -- consecutive
+    // indices -- land in different slots rather than sharing one.
+    let phase = (u128::from(entity.index_u32().wrapping_mul(2_654_435_761)) * period) >> 32;
+    let now = elapsed.as_nanos() + phase;
+    let previous = elapsed.saturating_sub(delta).as_nanos() + phase;
+    if now / period == previous / period {
+        EntryMode::Resume
+    } else {
+        EntryMode::Evaluate
     }
 }

@@ -10,5 +10,5 @@ pub use flatbt_core::{
 
 pub use crate::{
     Behavior, BehaviorContext, BehaviorNode, BehaviorPaused, BehaviorPlugin, BehaviorSystems,
-    BehaviorTree, Bt, FlatBtPlugin, TreeBuilder,
+    BehaviorTree, Bt, FlatBtPlugin, TreeBuilder, evaluate_every,
 };

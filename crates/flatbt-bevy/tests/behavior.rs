@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryData;
@@ -408,4 +410,73 @@ fn an_agent_with_no_plugin_at_all_is_reported() {
     app.update();
 
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
+}
+
+// --- periodic revalidation ---------------------------------------------------
+
+/// Ticks `count` frames of `delta` and reports, per frame, how many of
+/// `entities` were told to evaluate.
+fn evaluations_per_frame(
+    period: Duration,
+    delta: Duration,
+    frames: u32,
+    entities: &[Entity],
+) -> Vec<usize> {
+    (1..=frames)
+        .map(|frame| {
+            let elapsed = delta * frame;
+            entities
+                .iter()
+                .filter(|&&entity| {
+                    evaluate_every(period, elapsed, delta, entity) == EntryMode::Evaluate
+                })
+                .count()
+        })
+        .collect()
+}
+
+fn agents(count: u32) -> Vec<Entity> {
+    (0..count).filter_map(Entity::from_raw_u32).collect()
+}
+
+#[test]
+fn each_agent_evaluates_once_per_period() {
+    let period = Duration::from_millis(200);
+    let delta = Duration::from_millis(16);
+    // 10 periods at 16ms is 125 frames.
+    let per_agent: Vec<usize> = agents(64)
+        .iter()
+        .map(|&entity| evaluations_per_frame(period, delta, 125, &[entity]))
+        .map(|frames| frames.iter().sum())
+        .collect();
+
+    assert!(
+        per_agent.iter().all(|&n| (9..=11).contains(&n)),
+        "expected ~10 evaluations per agent over 10 periods, got {per_agent:?}",
+    );
+}
+
+#[test]
+fn a_population_does_not_evaluate_on_one_frame() {
+    let period = Duration::from_millis(200);
+    let delta = Duration::from_millis(16);
+    let entities = agents(64);
+    let busiest = evaluations_per_frame(period, delta, 125, &entities)
+        .into_iter()
+        .max()
+        .unwrap();
+
+    // Perfectly even would be 64 / 12.5 ≈ 5 per frame; aligned would be 64.
+    assert!(busiest <= 16, "one frame carried {busiest} of 64 agents");
+}
+
+#[test]
+fn a_frame_longer_than_the_period_evaluates_once() {
+    let entity = Entity::from_raw_u32(7).unwrap();
+    let period = Duration::from_millis(200);
+    let delta = Duration::from_secs(1);
+    assert_eq!(
+        evaluate_every(period, delta, delta, entity),
+        EntryMode::Evaluate
+    );
 }
