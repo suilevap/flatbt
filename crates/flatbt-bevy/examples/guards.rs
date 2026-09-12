@@ -86,21 +86,26 @@ fn in_range(bt: &Bt<Guard>) -> bool {
     (bt.post.0 - bt.shared.intruder).abs() <= 1.0
 }
 
+/// A subtree is a plain function returning a node, so it composes into any tree
+/// by being called. Values, not registrations.
+fn fire_at_intruder() -> impl BehaviorNode<Guard> {
+    seq((
+        check(in_range),
+        check(|bt: &Bt<Guard>| bt.ammo.0 > 0),
+        leaf(|bt: &mut Bt<Guard>| {
+            bt.ammo.0 -= 1;
+            let entity = bt.entity;
+            bt.commands.entity(entity).insert(Firing);
+            println!("  {} fires ({} left)", bt.name.0, bt.ammo.0);
+            NodeResult::Success
+        }),
+    ))
+}
+
 fn guard_tree() -> impl BehaviorNode<Guard> {
     select((
         // Shoot while the intruder is close and the magazine holds rounds.
-        seq((
-            check(alarm_raised),
-            check(in_range),
-            check(|bt: &Bt<Guard>| bt.ammo.0 > 0),
-            leaf(|bt: &mut Bt<Guard>| {
-                bt.ammo.0 -= 1;
-                let entity = bt.entity;
-                bt.commands.entity(entity).insert(Firing);
-                println!("  {} fires ({} left)", bt.name.0, bt.ammo.0);
-                NodeResult::Success
-            }),
-        )),
+        seq((check(alarm_raised), fire_at_intruder())),
         // Out of ammo: reload, keeping progress across ticks.
         seq((
             check(|bt: &Bt<Guard>| bt.ammo.0 == 0),

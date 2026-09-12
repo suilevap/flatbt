@@ -76,7 +76,14 @@
 //!
 //! Trees are written with FlatBT's own API. `seq`, `select`, `check`, `leaf`,
 //! `choose!`, `scope!`, `action` and custom [`BtNode`](flatbt_core::BtNode)s all
-//! take this context as written, with no Bevy-specific constructors.
+//! take this context as written, with no Bevy-specific constructors. A subtree
+//! is a function returning a node, so it composes into any tree by being called.
+//!
+//! Agents resume by default, the cheap path: decisions already taken stand.
+//! Insert [`BehaviorRevalidate`] to make the next tick reconsider — on a timer,
+//! on a perception event, when an order changes — and [`BehaviorPaused`] to stop
+//! an agent. Both are components, so a game system can aim them without naming
+//! `Behavior<C, F>`, and a node can insert them through `bt`.
 //!
 //! [`Commands`]: bevy_ecs::prelude::Commands
 
@@ -92,7 +99,9 @@ pub use context::{AgentItem, BehaviorContext, Bt, ParamItem};
 pub use plugin::{
     BehaviorPlugin, BehaviorSystems, FlatBtPlugin, tick_behaviors, tick_behaviors_parallel,
 };
-pub use tree::{Behavior, BehaviorNode, BehaviorPaused, BehaviorTree, TreeBuilder};
+pub use tree::{
+    Behavior, BehaviorNode, BehaviorPaused, BehaviorRevalidate, BehaviorTree, TreeBuilder,
+};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.
 pub(crate) fn log_error(message: impl core::fmt::Display) {

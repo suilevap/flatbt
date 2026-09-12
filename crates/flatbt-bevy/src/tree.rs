@@ -159,15 +159,14 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
 pub struct Behavior<C: BehaviorContext, F: TreeBuilder<C>> {
     state: Option<<F::Tree as BehaviorNode<C>>::Data>,
     builder: F,
-    mode: EntryMode,
     // See `BehaviorTree`: keeping `C` a direct field use, not a projection.
     context: PhantomData<fn() -> C>,
 }
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
-    /// Runs the tree named by `builder`, entered with [`EntryMode::Evaluate`]
-    /// and restarted after every terminal result. Insert
-    /// [`BehaviorPaused`] to stop it.
+    /// Runs the tree named by `builder`, restarted after every terminal result.
+    /// Insert [`BehaviorPaused`] to stop it, [`BehaviorRevalidate`] to make the
+    /// next tick reconsider its decisions.
     ///
     /// `builder` is not called here: it names the tree. The first agent to name
     /// a tree builds it, so no registration is needed beyond
@@ -176,29 +175,27 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         Self {
             state: None,
             builder,
-            mode: EntryMode::Evaluate,
             context: PhantomData,
         }
     }
 
-    /// Sets how running invocations are re-entered.
+    /// Runs one update.
     ///
-    /// [`EntryMode::Evaluate`] (the default) revalidates decisions from the root
-    /// every tick, so the tree reacts to world changes. [`EntryMode::Resume`]
-    /// follows the saved path and only revalidates when a node asks for it.
-    pub fn with_mode(mut self, mode: EntryMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// Runs one update. The tick systems call this; call it from a custom system.
-    pub fn tick(&mut self, tree: &F::Tree, bt: &mut Bt<'_, '_, '_, '_, '_, C>) -> NodeResult {
-        // The root lifetime FlatBT applies in `update`: a fresh invocation always
-        // enters as Evaluate, and a terminal result drops invocation state.
+    /// `mode` is the caller's per-tick decision, not a stored setting: the tick
+    /// systems resume unless the agent carries [`BehaviorRevalidate`].
+    pub fn tick(
+        &mut self,
+        tree: &F::Tree,
+        bt: &mut Bt<'_, '_, '_, '_, '_, C>,
+        mode: EntryMode,
+    ) -> NodeResult {
+        // A fresh invocation always enters as Evaluate, whatever the caller asks
+        // for, and a terminal result drops invocation state. Same as FlatBT's
+        // own root lifetime in `update`.
         let mode = if self.state.is_none() {
             EntryMode::Evaluate
         } else {
-            self.mode
+            mode
         };
         let result = tree.update(
             self.state.get_or_insert_with(Default::default),
@@ -220,10 +217,20 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
 impl<C: BehaviorContext, F: TreeBuilder<C>> core::fmt::Debug for Behavior<C, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Behavior")
-            .field("mode", &self.mode)
+            .field("running", &self.state.is_some())
             .finish_non_exhaustive()
     }
 }
+
+/// Makes the next tick re-enter with [`EntryMode::Evaluate`], then is consumed.
+///
+/// Trees resume by default, which is the cheap path: decisions already taken
+/// stand until something says otherwise. Revalidation is a tool the game aims —
+/// on a timer, on a perception event, when an order changes — rather than a
+/// per-agent setting, so it is a component any system can insert without naming
+/// `Behavior<C, F>`.
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct BehaviorRevalidate;
 
 /// Stops every behavior on an entity until it is removed.
 ///

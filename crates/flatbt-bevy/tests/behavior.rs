@@ -159,11 +159,7 @@ fn running_state_survives_across_ticks() {
     let mut app = app();
     let entity = app
         .world_mut()
-        .spawn((
-            Ammo(1),
-            Fired(0),
-            Behavior::for_tree(recharge_then_shoot).with_mode(EntryMode::Resume),
-        ))
+        .spawn((Ammo(1), Fired(0), Behavior::for_tree(recharge_then_shoot)))
         .id();
 
     for _ in 0..2 {
@@ -206,6 +202,50 @@ fn only_agent_state_lives_in_the_component() {
     // so the component is its invocation state and the entry mode.
     assert!(size_of_val(&Behavior::<Guard, _>::for_tree(recharge)) <= 16);
     assert!(size_of_val(&Behavior::<Guard, _>::for_tree(bulky)) >= size_of::<Trail>());
+}
+
+/// Suspends in the fallback branch, so a selector that rescans on Evaluate
+/// visibly differs from one that resumes.
+fn hold_or_fire() -> impl BehaviorNode<Guard> {
+    select((
+        seq((
+            check(|bt: &Bt<Guard>| bt.shared.0),
+            leaf(|bt: &mut Bt<Guard>| {
+                bt.fired.0 += 1;
+                NodeResult::Success
+            }),
+        )),
+        Recharge(10),
+    ))
+}
+
+#[test]
+fn revalidation_is_asked_for_and_spent_once() {
+    let mut app = app();
+    app.insert_resource(Alarm(false));
+    let entity = app
+        .world_mut()
+        .spawn((Ammo(1), Fired(0), Behavior::for_tree(hold_or_fire)))
+        .id();
+
+    // No alarm: the tree settles into the fallback and suspends there.
+    app.update();
+    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
+
+    // The alarm goes up, but resuming keeps the branch already chosen.
+    app.world_mut().resource_mut::<Alarm>().0 = true;
+    app.update();
+    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
+
+    // The game decides when that decision is stale.
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(BehaviorRevalidate);
+    app.update();
+    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(1)));
+
+    // The request is spent, not sticky.
+    assert!(app.world().get::<BehaviorRevalidate>(entity).is_none());
 }
 
 fn shoot_then_stop() -> impl BehaviorNode<Guard> {
