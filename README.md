@@ -202,6 +202,7 @@ agent's component, `bt.shared` the read-only world access, `bt.entity` and
 | `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
 | `BehaviorTree<C, F>` | Resource holding the one tree named by builder `F` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
+| `evaluate_every` | Periodic `entry_mode` answer, staggered across agents |
 | `BehaviorPaused` | Marker that stops an agent's behaviors; `bt.pause()` inserts it |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
@@ -268,6 +269,25 @@ impl BehaviorContext for Guard {
 It defaults to `Resume`, and a constant answer folds away. On `Evaluate` a
 `select` rescans its children from the first, while a `seq` continues its active
 child, so revalidation reconsiders choices rather than restarting work.
+
+For a tree that should simply rethink periodically, `evaluate_every` answers on
+a period without putting the whole population on one frame:
+
+```rust,ignore
+fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+    evaluate_every(
+        Duration::from_millis(200),
+        bt.shared.elapsed(),
+        bt.shared.delta(),
+        bt.entity,
+    )
+}
+```
+
+Each agent's slot within the period comes from its `Entity`, so nothing is
+stored and agents spawned together do not share a due frame: over 64 agents at
+16 ms ticks, the busiest frame carries 6 of them rather than all 64. A frame
+longer than the period evaluates once, never twice.
 
 `BehaviorPaused` stops an agent until it is removed; `bt.pause()` inserts it
 from inside a tree. That one is a component, not a field on `Behavior`, because

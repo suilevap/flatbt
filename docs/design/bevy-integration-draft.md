@@ -78,6 +78,19 @@ pay for reactivity it did not ask for, and a marker component asking for one
 context already declares, defaulting to `Resume` and folding away when it is
 constant.
 
+Periodic revalidation is the common case of that decision, and it needs no
+scheduler: `evaluate_every` derives each agent's slot within the period from its
+`Entity` and compares the period boundary against the last tick, so it is exact,
+stateless, and spread. Measured over 64 agents at 16 ms ticks, the busiest frame
+carries 6 rather than all 64.
+
+A scheduler would only be needed for the harder question, a *budget* -- at most
+N revalidations per frame, whoever is most overdue. That needs state shared
+across agents and mutated during the tick, which the read-only `Param` and
+`par_iter_mut` deliberately rule out, so it would have to be a separate pass
+that marks agents before the tick. Left open until something needs it;
+staggering removes the spike that motivates it.
+
 Stopping is different in kind: it has to outlive the tick, so `BehaviorPaused`
 is a component, and a query filter rather than a per-agent branch. It is not a
 field for the same reason a revalidation flag could not be one — nothing outside
@@ -219,6 +232,8 @@ gain here.
 - Mutable shared access for the serial tick, at the cost of one context type per
   tick mode.
 - Batch size control for the parallel tick.
+- A revalidation budget per frame, which staggering makes unnecessary for
+  smoothing but not for a hard ceiling.
 - Two trees of the same Rust type cannot both be registered, since the resource
   is keyed by type. Distinct builders normally produce distinct opaque types, so
   this only bites a builder parameterized at runtime.
