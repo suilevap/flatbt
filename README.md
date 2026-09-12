@@ -288,6 +288,29 @@ stored and agents spawned together do not share a due frame: over 64 agents at
 16 ms ticks, the busiest frame carries 6 of them rather than all 64. A frame
 longer than the period evaluates once, never twice.
 
+### Turn based
+
+Nothing here assumes a frame loop. The agent query is the gate, so a marker the
+game moves ticks exactly one agent:
+
+```rust,ignore
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Fighter {
+    _turn: &'static Turn,            // only the holder is ticked
+    journal: &'static mut Journal,
+}
+```
+
+The game owns the order by moving `Turn`, and the tree hands it on when its turn
+ends (`bt.agent_commands().remove::<Turn>()`). Register the tick in whatever
+schedule the turn runs in, with `in_schedule`, or gate it with a run condition.
+
+A turn spanning several ticks needs no extra state: the agent's invocation stays
+suspended while it is not its turn and resumes exactly where it left off, which
+is what FlatBT's saved state already is. Because the gate is a query, agents out
+of turn cost nothing at all — they are not even iterated.
+
 Stopping agents needs nothing from the crate. A run condition on
 `BehaviorSystems` halts every tree, including ones whose tick system was added
 by self-registration afterwards:

@@ -208,6 +208,21 @@ construct its use from Bevy, and it only ever saved an argument annotation that
   by every tree of a context, which would have serialized them beyond what the
   agent components already force.
 
+## Turn based
+
+The design does not assume a frame loop, and the parts fall out of what is
+already there. `C::Agent` is a query, so requiring a marker in it ticks exactly
+the agents that hold the marker, and the game moves it in whatever order it
+keeps; agents out of turn are not iterated. A turn spanning several ticks needs
+no extra state, because a suspended invocation is what FlatBT already stores:
+the agent resumes where it left off when its turn comes round. Handing the turn
+on is the tree's own last act, through `Commands`. When the tick runs is
+`in_schedule` or a run condition.
+
+The one consequence is that a deliberately gating agent query is
+indistinguishable from a forgotten component, so the debug diagnostic names both
+readings rather than asserting a mistake.
+
 ## What the integration still carries, and why
 
 Roughly 400 lines of code. Attribution, after moving every constructor fix into
