@@ -6,6 +6,13 @@ use flatbt_core::{BtNode, EntryMode, NodeResult};
 use crate::plugin::request_registration;
 use crate::{BehaviorContext, Blackboard};
 
+/// How a tick re-enters a suspended invocation, as a tree can override it.
+///
+/// Higher-ranked because a stored tree is ticked at every update, each with its
+/// own borrows: see [`BehaviorNode`].
+pub type EntryModeFn<C> =
+    for<'w, 's, 'q, 'a, 'c> fn(&Blackboard<'w, 's, 'q, 'a, 'c, C>) -> EntryMode;
+
 /// A tree that can drive agents of context `C`, with one state type.
 ///
 /// `Blackboard<C>` carries the update's borrows, so being a node for it means being one
@@ -110,6 +117,7 @@ where
 #[derive(Resource)]
 pub(crate) struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
     tree: F::Tree,
+    entry_mode: EntryModeFn<C>,
     // Load-bearing: it keeps `C` a direct field use. Reached only through the
     // `F::Tree` projection, `C` sends the monomorphization collector through
     // every blanket impl behind it and over the recursion limit.
@@ -117,15 +125,20 @@ pub(crate) struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
 }
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
-    pub(crate) fn new(tree: F::Tree) -> Self {
+    pub(crate) fn new(tree: F::Tree, entry_mode: Option<EntryModeFn<C>>) -> Self {
         Self {
             tree,
+            entry_mode: entry_mode.unwrap_or(C::entry_mode),
             context: PhantomData,
         }
     }
 
     pub(crate) fn get(&self) -> &F::Tree {
         &self.tree
+    }
+
+    pub(crate) fn entry_mode(&self) -> EntryModeFn<C> {
+        self.entry_mode
     }
 }
 
@@ -185,6 +198,13 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     /// `builder` is not called here: it names the tree. The first agent to name
     /// a tree builds it, so no registration is needed beyond
     /// [`FlatBtPlugin`](crate::FlatBtPlugin).
+    ///
+    /// Only the builder's *type* selects the tree. One tree is built per type
+    /// and shared, so a builder that captures configuration configures nothing:
+    /// whichever value builds first defines the tree for every agent of that
+    /// type, and the values the others carry are never called. Vary a tree by
+    /// writing a second builder function, not by capturing different values in
+    /// one closure.
     pub fn for_tree(builder: F) -> Self {
         Self {
             state: None,

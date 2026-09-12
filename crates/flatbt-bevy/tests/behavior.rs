@@ -230,6 +230,11 @@ fn hold_or_fire() -> impl BehaviorNode<Guard> {
     ))
 }
 
+/// A second name for the same tree, so two registrations can differ in pace.
+fn hold_or_fire_too() -> impl BehaviorNode<Guard> {
+    hold_or_fire()
+}
+
 #[test]
 fn the_context_decides_when_a_standing_decision_is_stale() {
     let mut app = app();
@@ -573,4 +578,41 @@ fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
         app.world().get::<Journal>(fighters[1]),
         Some(&Journal(vec![3, 4]))
     );
+}
+
+// --- per-tree revalidation policy --------------------------------------------
+
+fn always_evaluate(_: &Blackboard<Guard>) -> EntryMode {
+    EntryMode::Evaluate
+}
+
+fn never_evaluate(_: &Blackboard<Guard>) -> EntryMode {
+    EntryMode::Resume
+}
+
+#[test]
+fn trees_sharing_a_context_can_pace_revalidation_differently() {
+    let mut app = App::new();
+    app.insert_resource(Alarm(false)).add_plugins((
+        BehaviorPlugin::for_tree(hold_or_fire).entry_mode(always_evaluate),
+        BehaviorPlugin::for_tree(hold_or_fire_too).entry_mode(never_evaluate),
+    ));
+
+    let eager = app
+        .world_mut()
+        .spawn((Ammo(1), Fired(0), Behavior::for_tree(hold_or_fire)))
+        .id();
+    let patient = app
+        .world_mut()
+        .spawn((Ammo(1), Fired(0), Behavior::for_tree(hold_or_fire_too)))
+        .id();
+
+    // Both settle into the fallback and suspend there.
+    app.update();
+    app.world_mut().resource_mut::<Alarm>().0 = true;
+    app.update();
+
+    // Same context, same access, same tree shape: only the pace differs.
+    assert_eq!(app.world().get::<Fired>(eager), Some(&Fired(1)));
+    assert_eq!(app.world().get::<Fired>(patient), Some(&Fired(0)));
 }

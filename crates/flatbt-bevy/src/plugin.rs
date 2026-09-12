@@ -1,12 +1,17 @@
 use core::marker::PhantomData;
 
-use bevy_app::{App, Plugin, PreUpdate, Update};
+use bevy_platform::collections::HashSet;
+
+use core::any::TypeId;
+
+use bevy_app::{App, First, Plugin, Update};
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules};
 use bevy_ecs::system::{ParallelCommands, StaticSystemParam, SystemParamItem};
 use bevy_ecs::world::DeferredWorld;
 
+use crate::tree::EntryModeFn;
 use crate::{
     AgentItem, Behavior, BehaviorContext, BehaviorTree, Blackboard, ParamItem, TreeBuilder,
     log_error,
@@ -19,6 +24,13 @@ use crate::{
 /// An agent spawned before the tick schedule runs — in `Startup`, say — ticks on
 /// that same frame; one spawned from inside it starts on the next, after which
 /// its tree is registered and later agents tick immediately.
+///
+/// Registrations are applied from [`First`], because a schedule cannot be
+/// extended while it runs. Any stage of `Main` after it can hold the tick;
+/// [`First`] itself cannot, and is refused with a diagnostic. For a schedule
+/// that runs outside `Main`, or before it, register trees explicitly with
+/// [`BehaviorPlugin::for_tree`], which adds the system when the app is built
+/// and so has no ordering to satisfy.
 ///
 /// Add [`BehaviorPlugin::for_tree`] as well for any tree that needs its own
 /// schedule, ordering, run conditions, or the parallel tick; an explicitly
@@ -41,6 +53,8 @@ impl FlatBtPlugin {
     }
 
     /// Ticks self-registered trees in `schedule` instead of [`Update`].
+    ///
+    /// Must run after [`First`], where registrations are applied.
     pub fn in_schedule(mut self, schedule: impl ScheduleLabel) -> Self {
         self.schedule = schedule.intern();
         self
@@ -55,24 +69,41 @@ impl Default for FlatBtPlugin {
 
 impl Plugin for FlatBtPlugin {
     fn build(&self, app: &mut App) {
+        if self.schedule == REGISTRATION_SCHEDULE.intern() {
+            log_error(format_args!(
+                "FlatBtPlugin cannot tick in {:?}: that is where it applies registrations, and \
+                 a schedule cannot be extended while it runs. Register trees for it explicitly \
+                 with BehaviorPlugin::for_tree",
+                REGISTRATION_SCHEDULE,
+            ));
+            return;
+        }
         app.insert_resource(SelfRegistering {
             schedule: self.schedule,
             pending: Vec::new(),
+            claimed: HashSet::default(),
         })
         // A schedule cannot be extended while it runs, so registrations are
-        // applied from an earlier one.
+        // applied from the first one of the frame, which precedes every other
+        // stage of `Main` and so every schedule a tick can sensibly run in.
         .add_systems(
-            PreUpdate,
+            REGISTRATION_SCHEDULE,
             apply_registrations.run_if(|state: Res<SelfRegistering>| !state.pending.is_empty()),
         );
     }
 }
+
+/// Where self-registration is applied: the first stage of the frame, so every
+/// later stage of `Main` can hold the tick.
+const REGISTRATION_SCHEDULE: First = First;
 
 /// Trees whose tick system is registered but not yet added to a schedule.
 #[derive(Resource)]
 struct SelfRegistering {
     schedule: InternedScheduleLabel,
     pending: Vec<fn(&mut World)>,
+    /// Trees whose build has been claimed, so only the first agent builds.
+    claimed: HashSet<TypeId>,
 }
 
 fn apply_registrations(world: &mut World) {
@@ -101,11 +132,9 @@ pub(crate) fn request_registration<C: BehaviorContext, F: TreeBuilder<C>>(
     if world.get_resource::<BehaviorTree<C, F>>().is_some() {
         return;
     }
-    let Some(behavior) = world.get::<Behavior<C, F>>(context.entity) else {
-        return;
-    };
-    let tree = behavior.builder().build();
-    if world.get_resource::<SelfRegistering>().is_none() {
+    let Some(mut registering) = world.get_resource_mut::<SelfRegistering>() else {
+        // Report before building: without the plugin the tree would be
+        // discarded, and a builder may do real work or have side effects.
         log_error(format_args!(
             "no tree built for Behavior<{}, {}>: add FlatBtPlugin, or register this tree \
              with BehaviorPlugin::for_tree",
@@ -113,12 +142,22 @@ pub(crate) fn request_registration<C: BehaviorContext, F: TreeBuilder<C>>(
             core::any::type_name::<F>(),
         ));
         return;
+    };
+    // Claim the tree before building it. Several first agents can be spawned
+    // before the queued command runs, and each would otherwise build a tree
+    // that is then dropped.
+    if !registering
+        .claimed
+        .insert(TypeId::of::<BehaviorTree<C, F>>())
+    {
+        return;
     }
+    let Some(behavior) = world.get::<Behavior<C, F>>(context.entity) else {
+        return;
+    };
+    let tree = behavior.builder().build();
     world.commands().queue(move |world: &mut World| {
-        if world.contains_resource::<BehaviorTree<C, F>>() {
-            return;
-        }
-        world.insert_resource(BehaviorTree::<C, F>::new(tree));
+        world.insert_resource(BehaviorTree::<C, F>::new(tree, None));
         world
             .resource_mut::<SelfRegistering>()
             .pending
@@ -158,6 +197,7 @@ pub struct BehaviorPlugin<C: BehaviorContext, F: TreeBuilder<C>> {
     builder: F,
     schedule: InternedScheduleLabel,
     parallel: bool,
+    entry_mode: Option<EntryModeFn<C>>,
     context: PhantomData<fn() -> C>,
 }
 
@@ -169,6 +209,7 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorPlugin<C, F> {
             builder,
             schedule: Update.intern(),
             parallel: false,
+            entry_mode: None,
             context: PhantomData,
         }
     }
@@ -179,6 +220,16 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorPlugin<C, F> {
     /// [`FixedUpdate`]: bevy_app::FixedUpdate
     pub fn in_schedule(mut self, schedule: impl ScheduleLabel) -> Self {
         self.schedule = schedule.intern();
+        self
+    }
+
+    /// Overrides [`BehaviorContext::entry_mode`] for this tree alone.
+    ///
+    /// The context answers for a family of trees that share its access. Trees
+    /// that share access but not pace -- a combat tree that rethinks often, a
+    /// scripted one that never does -- set their own here.
+    pub fn entry_mode(mut self, entry_mode: EntryModeFn<C>) -> Self {
+        self.entry_mode = Some(entry_mode);
         self
     }
 
@@ -198,7 +249,10 @@ where
     for<'w, 's> SystemParamItem<'w, 's, C::Param>: Sync,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(BehaviorTree::<C, F>::new(self.builder.build()));
+        app.insert_resource(BehaviorTree::<C, F>::new(
+            self.builder.build(),
+            self.entry_mode,
+        ));
         if self.parallel {
             app.add_systems(
                 self.schedule,
@@ -226,6 +280,7 @@ type Agents<'w, 's, C, F> = Query<
 
 /// One agent's update, shared by both tick systems.
 fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
+    entry_mode: EntryModeFn<C>,
     tree: &F::Tree,
     shared: &'a ParamItem<'w, 's, C>,
     entity: Entity,
@@ -239,7 +294,7 @@ fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
         shared,
         commands,
     };
-    let mode = C::entry_mode(&bb);
+    let mode = entry_mode(&bb);
     behavior.tick(tree, &mut bb, mode);
 }
 
@@ -254,9 +309,11 @@ pub(crate) fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
     shared: StaticSystemParam<C::Param>,
     mut commands: Commands,
 ) {
-    let (tree, shared) = (tree.get(), &*shared);
+    let (entry_mode, shared) = (tree.entry_mode(), &*shared);
+    let tree = tree.get();
     for (entity, mut behavior, agent) in agents.iter_mut() {
         tick_agent(
+            entry_mode,
             tree,
             shared,
             entity,
@@ -278,12 +335,21 @@ pub(crate) fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
 ) where
     for<'w, 's> SystemParamItem<'w, 's, C::Param>: Sync,
 {
-    let (tree, shared) = (tree.get(), &*shared);
+    let (entry_mode, shared) = (tree.entry_mode(), &*shared);
+    let tree = tree.get();
     agents
         .par_iter_mut()
         .for_each(|(entity, mut behavior, agent)| {
             par_commands.command_scope(|commands| {
-                tick_agent(tree, shared, entity, &mut behavior, agent, commands);
+                tick_agent(
+                    entry_mode,
+                    tree,
+                    shared,
+                    entity,
+                    &mut behavior,
+                    agent,
+                    commands,
+                );
             });
         });
 }

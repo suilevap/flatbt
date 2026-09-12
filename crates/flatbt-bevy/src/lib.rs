@@ -102,7 +102,7 @@ pub mod prelude;
 pub use context::{AgentItem, BehaviorContext, Blackboard, ParamItem, evaluate_every};
 pub use plugin::{BehaviorPlugin, BehaviorSystems, FlatBtPlugin};
 pub(crate) use tree::BehaviorTree;
-pub use tree::{Behavior, BehaviorNode, TreeBuilder};
+pub use tree::{Behavior, BehaviorNode, EntryModeFn, TreeBuilder};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.
 pub(crate) fn log_error(message: impl core::fmt::Display) {
