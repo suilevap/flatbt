@@ -203,7 +203,6 @@ agent's component, `bt.shared` the read-only world access, `bt.entity` and
 | `BehaviorTree<C, F>` | Resource holding the one tree named by builder `F` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
 | `evaluate_every` | Periodic `entry_mode` answer, staggered across agents |
-| `BehaviorPaused` | Marker that stops an agent's behaviors; `bt.pause()` inserts it |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
 ### What lives where
@@ -289,11 +288,16 @@ stored and agents spawned together do not share a due frame: over 64 agents at
 16 ms ticks, the busiest frame carries 6 of them rather than all 64. A frame
 longer than the period evaluates once, never twice.
 
-`BehaviorPaused` stops an agent until it is removed; `bt.pause()` inserts it
-from inside a tree. That one is a component, not a field on `Behavior`, because
-it has to outlive the tick and because nothing outside can name
-`Behavior<C, F>` to set a field — the tree's own nodes included, which see only
-`Bt<C>`.
+Stopping agents needs nothing from the crate. A run condition on
+`BehaviorSystems` halts every tree, including ones whose tick system was added
+by self-registration afterwards:
+
+```rust,ignore
+app.configure_sets(Update, BehaviorSystems.run_if(not(paused)));
+```
+
+Halting one agent, or one tree, is what a behavior tree is already for: put the
+condition at the root and let the tree fail fast.
 
 Agent access must be disjoint per entity, and shared access is read-only, so
 `.parallel()` spreads agents across the task pool with no further declaration

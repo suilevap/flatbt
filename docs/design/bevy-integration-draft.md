@@ -91,12 +91,8 @@ across agents and mutated during the tick, which the read-only `Param` and
 that marks agents before the tick. Left open until something needs it;
 staggering removes the spike that motivates it.
 
-Stopping is different in kind: it has to outlive the tick, so `BehaviorPaused`
-is a component, and a query filter rather than a per-agent branch. It is not a
-field for the same reason a revalidation flag could not be one — nothing outside
-can name `Behavior<C, F>` to set it, the tree's own nodes included, which see
-only `Bt<C>`. Nothing is stored to be looked at either: observation is the
-tree's own business, through `Bt<C>` and `Commands`. Nothing is erased,
+Nothing is stored to be looked at either: observation is the tree's own
+business, through `Bt<C>` and `Commands`. Nothing is erased,
 allocated, copied per agent, or reference counted.
 
 Identity is the builder `F`, not the tree it returns. `TreeBuilder<C>` is
@@ -198,6 +194,13 @@ construct its use from Bevy, and it only ever saved an argument annotation that
   per agent duplicates its node configuration and an `Arc` adds a reference count
   and an indirection for something that never changes. A resource says what is
   true: one tree, many agents.
+- **A `BehaviorPaused` component** with a `Bt::pause` helper, filtered out of the
+  tick. Rejected once it was clear the crate adds nothing: a run condition on
+  `BehaviorSystems` already halts every tree, self-registered ticks included,
+  and halting one agent is a guard at the root of its tree, which is what a
+  behavior tree is for. Archetype-level skipping of a paused subset is the only
+  thing lost; if it is ever wanted, it belongs as a `Filter` associated type on
+  the context, not as a component the crate owns.
 - **A `BehaviorStatus<C>` component** carrying the last result, so systems could
   observe agents whose tree type they cannot name. Rejected: the user's code is
   the tree's nodes, which already read and write the agent through `Bt<C>` and
