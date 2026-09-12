@@ -197,12 +197,11 @@ agent's component, `bt.shared` the read-only world access, `bt.entity` and
 
 | API | Behavior |
 | --- | --- |
-| `BehaviorContext` | Declares `Agent` (per-entity components) and `Param` (shared, read-only) |
+| `BehaviorContext` | Declares `Agent` (per-entity components), `Param` (shared, read-only) and `entry_mode` |
 | `FlatBtPlugin::new()` | Added once; trees register themselves from their first agent |
 | `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
 | `BehaviorTree<C, F>` | Resource holding the one tree named by builder `F` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
-| `BehaviorRevalidate` | Marker asking the next tick to reconsider; spent on use |
 | `BehaviorPaused` | Marker that stops an agent's behaviors; `bt.pause()` inserts it |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
@@ -252,19 +251,29 @@ at the agent.
 
 A tick resumes: a suspended invocation continues down the path it chose, and a
 finished one starts fresh, which always enters as `Evaluate`. Reconsidering a
-standing decision is something the game aims, not a per-agent setting, so it is
-a component:
+standing decision costs work, so when it happens is the context's call, decided
+per agent per tick from the world it already declared:
 
 ```rust,ignore
-// On a timer, a perception event, a changed order.
-commands.entity(agent).insert(BehaviorRevalidate);
+impl BehaviorContext for Guard {
+    type Agent = Self;
+    type Param = Res<'static, Alarm>;
+
+    fn entry_mode(bt: &Bt<Guard>) -> EntryMode {
+        if bt.shared.is_changed() { EntryMode::Evaluate } else { EntryMode::Resume }
+    }
+}
 ```
 
-The next tick re-enters with `EntryMode::Evaluate` and the request is spent.
-`BehaviorPaused` likewise stops an agent until it is removed, and `bt.pause()`
-inserts it from inside a tree. Both are components rather than fields on
-`Behavior` because nothing outside can name `Behavior<C, F>` to set a field —
-including the tree's own nodes, which see only `Bt<C>`.
+It defaults to `Resume`, and a constant answer folds away. On `Evaluate` a
+`select` rescans its children from the first, while a `seq` continues its active
+child, so revalidation reconsiders choices rather than restarting work.
+
+`BehaviorPaused` stops an agent until it is removed; `bt.pause()` inserts it
+from inside a tree. That one is a component, not a field on `Behavior`, because
+it has to outlive the tick and because nothing outside can name
+`Behavior<C, F>` to set a field — the tree's own nodes included, which see only
+`Bt<C>`.
 
 Agent access must be disjoint per entity, and shared access is read-only, so
 `.parallel()` spreads agents across the task pool with no further declaration

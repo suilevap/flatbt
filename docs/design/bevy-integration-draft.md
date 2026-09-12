@@ -70,14 +70,20 @@ invocation, sized exactly for that tree. Everything else about a tick is decided
 by the tick, not stored per agent.
 
 Entry mode is the case worth spelling out. It is not a setting: resuming is the
-cheap path, and evaluating from the root is a tool a game aims at a moment —
-a timer, a perception event, a changed order. Storing a default per agent would
-make every tree pay for reactivity it did not ask for, so the tick resumes and
-`BehaviorRevalidate` requests one `Evaluate`, which the tick spends. Stopping is
-`BehaviorPaused`, the same shape. Both are components rather than fields because
-nothing outside can name `Behavior<C, F>` to set a field — including the tree's
-own nodes, which see only `Bt<C>`. Nothing is stored to be looked at either:
-observation is the tree's own business, through `Bt<C>` and `Commands`. Nothing is erased,
+cheap path, and evaluating from the root is a tool aimed at a moment — a timer,
+a perception event, a changed order. A per-agent default would make every tree
+pay for reactivity it did not ask for, and a marker component asking for one
+`Evaluate` would cost two commands per request. So it is
+`BehaviorContext::entry_mode`, answered per agent per tick from the access the
+context already declares, defaulting to `Resume` and folding away when it is
+constant.
+
+Stopping is different in kind: it has to outlive the tick, so `BehaviorPaused`
+is a component, and a query filter rather than a per-agent branch. It is not a
+field for the same reason a revalidation flag could not be one — nothing outside
+can name `Behavior<C, F>` to set it, the tree's own nodes included, which see
+only `Bt<C>`. Nothing is stored to be looked at either: observation is the
+tree's own business, through `Bt<C>` and `Commands`. Nothing is erased,
 allocated, copied per agent, or reference counted.
 
 Identity is the builder `F`, not the tree it returns. `TreeBuilder<C>` is
