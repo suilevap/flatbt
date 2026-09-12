@@ -111,8 +111,7 @@ fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
     }
 
     let tree = scope! {
-        context: Vec<u32>;
-        let value: u32 = |_| 42;
+        let value: u32 = |_: &mut Vec<u32>| 42;
         sequence {
             choose!(|trace: &Vec<u32>| match trace.is_empty() {
                 true => Observe,

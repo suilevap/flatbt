@@ -99,8 +99,7 @@ and revalidation. Nodes receive references to explicitly named fields.
 use flatbt::prelude::*;
 
 let tree = scope! {
-    context: World;
-    let walk_pos: Vector2 = |bb| bb.next_patrol_pos;
+    let walk_pos: Vector2 = |bb: &mut World| bb.next_patrol_pos;
     let door_pos: Vector2 = get_visible_door_pos;
     sequence {
         LookAt.with(door_pos);
@@ -110,7 +109,8 @@ let tree = scope! {
 };
 ```
 
-Initializers are `Fn(&mut World) -> T`. `LookAt` receives `&Vector2`; `Walk`
+Initializers are `Fn(&mut World) -> T`, with the argument annotated. `LookAt`
+receives `&Vector2`; `Walk`
 implements `BtAction<World, &Vector2>`. Use `select { ... }`
 for fallback. Nested controls share locals; nested scopes own separate locals.
 
@@ -146,6 +146,246 @@ State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
 `BtCancel` and use `CancelOnDrop::from(handle)`. Disarm in `complete` after handling
 the outcome. Drop has no context argument; the handle must own cancellation access.
 See the [external action example](examples/external_action.rs).
+
+## Bevy
+
+Enable the `bevy` feature. Declare the world access one family of trees needs,
+add one plugin, then give agents a behavior naming the tree they run. Trees
+build and register themselves when their first agent appears.
+
+```toml
+flatbt = { path = "../FlatBT", features = ["bevy"] }
+```
+
+```rust,ignore
+use bevy::prelude::*;
+use bevy::ecs::query::QueryData;
+use flatbt::bevy::prelude::*;
+
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Guard {
+    ammo: &'static mut Ammo,
+    post: &'static mut Post,
+}
+
+impl BehaviorContext for Guard {
+    type Agent = Self;                  // the agent's own components
+    type Param = Res<'static, Alarm>;   // shared, read-only
+}
+
+fn guard_tree() -> impl BehaviorNode<Guard> {
+    select((
+        seq((
+            check(|bb: &Blackboard<Guard>| bb.shared.raised && bb.ammo.0 > 0),
+            leaf(|bb: &mut Blackboard<Guard>| {
+                bb.ammo.0 -= 1;
+                NodeResult::Success
+            }),
+        )),
+        leaf(patrol),
+    ))
+}
+
+app.add_plugins(FlatBtPlugin::new());
+commands.spawn((Ammo(2), Post(0.0), Behavior::for_tree(guard_tree)));
+```
+
+Nodes receive `Blackboard<C>`, the struct a plain FlatBT tree would own, here
+assembled from borrows because that is how an ECS hands data out. It derefs to
+the agent view: `bb.ammo` reaches the agent's component, `bb.shared` the
+read-only world access, `bb.entity` and `bb.commands` everything else.
+
+| API | Behavior |
+| --- | --- |
+| `BehaviorContext` | Declares what the blackboard holds: `Agent`, `Param`, `entry_mode` |
+| `FlatBtPlugin::new()` | Added once; trees register themselves from their first agent |
+| `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
+| `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
+| `evaluate_every` | Periodic `entry_mode` answer, staggered across agents |
+| `BehaviorSystems` | Set containing every tick, for ordering game systems |
+
+### What lives where
+
+A tree is an immutable definition, so it is built once into a resource. The
+component holds only what is per-agent: the saved state of a suspended
+invocation, sized exactly for that tree. Nothing is allocated, nothing is
+reference counted, and dispatch stays static.
+
+The builder function is the tree's name. It appears once at registration, where
+it is called, and once per agent, where it only fixes the type; neither type
+parameter is ever written out, and `impl BehaviorNode<C>` names a subtree the
+same way. Identity is the builder rather than the tree type, so two builders may
+return the same tree type with different node configuration and stay separate:
+
+```rust,ignore
+fn calm() -> impl BehaviorNode<Guard> { guard(1.0) }
+fn angry() -> impl BehaviorNode<Guard> { guard(3.0) }
+```
+
+Spell the builder the same way at both sites. `shoot` and `shoot as fn() -> _`
+are different names for the same tree; the second is writable, so
+`Behavior<Guard, fn() -> _>` can appear in a query. A mismatch, or a missing
+registration, is reported when the component is added rather than left as an
+agent that never ticks.
+
+Only the builder's *type* selects the tree. One tree is built per type and
+shared, so a closure that captures configuration configures nothing: whichever
+value builds first defines the tree for everyone of that type. Vary a tree with
+a second builder function, not with captured values.
+
+### Registration
+
+`FlatBtPlugin` is the only required line. The first agent naming a tree builds it
+and registers its tick, so adding a tree is writing a builder and spawning an
+agent. An agent spawned before the tick schedule runs — in `Startup`, say — ticks
+that same frame; one spawned from inside the tick schedule starts on the next,
+because a schedule cannot be extended while it runs. Later agents of a registered
+tree tick immediately.
+
+Registrations are applied from `First`, so any later stage of `Main` can hold the
+tick — `PreUpdate`, `FixedUpdate`, `Update`, `PostUpdate`, `Last`. `First` itself
+cannot, and is refused with a diagnostic; register trees for it explicitly.
+
+`BehaviorPlugin::for_tree(builder)` registers a tree ahead of its agents, for one
+that needs its own schedule, ordering, run conditions, `.parallel()`, or a pace
+of its own via `.entry_mode(..)` — trees that share a context's access but not
+its revalidation policy. It adds its system when the app is built, so it also
+serves any schedule self-registration cannot reach. An explicitly registered tree
+is left alone by self-registration.
+
+An agent whose tree was never built ticks under no system and matches no query,
+so nothing else could report it. It is reported by name when the component is
+added, which also covers a builder spelled one way at registration and another
+at the agent.
+
+### Ticking
+
+A tick resumes: a suspended invocation continues down the path it chose, and a
+finished one starts fresh, which always enters as `Evaluate`. Reconsidering a
+standing decision costs work, so when it happens is the context's call, decided
+per agent per tick from the world it already declared:
+
+```rust,ignore
+impl BehaviorContext for Guard {
+    type Agent = Self;
+    type Param = Res<'static, Alarm>;
+
+    fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
+        if bb.shared.is_changed() { EntryMode::Evaluate } else { EntryMode::Resume }
+    }
+}
+```
+
+It defaults to `Resume`, and a constant answer folds away. On `Evaluate` a
+`select` rescans its children from the first, while a `seq` continues its active
+child, so revalidation reconsiders choices rather than restarting work.
+
+For a tree that should simply rethink periodically, `evaluate_every` answers on
+a period without putting the whole population on one frame:
+
+```rust,ignore
+fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
+    evaluate_every(
+        Duration::from_millis(200),
+        bb.shared.elapsed(),
+        bb.shared.delta(),
+        bb.entity,
+    )
+}
+```
+
+Each agent's slot within the period comes from its `Entity`, so nothing is
+stored and agents spawned together do not share a due frame: over 64 agents at
+16 ms ticks, the busiest frame carries 6 of them rather than all 64. A frame
+longer than the period evaluates once, never twice.
+
+A tick's result is not reported anywhere. At the root it says only that this
+invocation ended, and the next tick starts another; a tree that has something to
+say to the game says it through `bb`, as a component or a command.
+
+### Turn based
+
+Nothing here assumes a frame loop. The agent query is the gate, so a marker the
+game moves ticks exactly one agent:
+
+```rust,ignore
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct Fighter {
+    _turn: &'static Turn,            // only the holder is ticked
+    journal: &'static mut Journal,
+}
+```
+
+The game owns the order by moving `Turn`, and the tree hands it on when its turn
+ends (`bb.agent_commands().remove::<Turn>()`). Register the tick in whatever
+schedule the turn runs in, with `in_schedule`, or gate it with a run condition.
+
+A turn spanning several ticks needs no extra state: the agent's invocation stays
+suspended while it is not its turn and resumes exactly where it left off, which
+is what FlatBT's saved state already is. Because the gate is a query, agents out
+of turn cost nothing at all — they are not even iterated.
+
+Stopping agents needs nothing from the crate. A run condition on
+`BehaviorSystems` halts every tree, including ones whose tick system was added
+by self-registration afterwards:
+
+```rust,ignore
+app.configure_sets(Update, BehaviorSystems.run_if(not(paused)));
+```
+
+Halting one agent, or one tree, is what a behavior tree is already for: put the
+condition at the root and let the tree fail fast.
+
+Agent access must be disjoint per entity, and shared access is read-only, so
+`.parallel()` spreads agents across the task pool with no further declaration
+and accepts the same trees: all agents of one tree tick concurrently. It needs
+`bevy_ecs`'s `multi_threaded` feature, which the full `bevy` crate enables;
+without it `.parallel()` falls back to iterating in order. Everything beyond the
+agent's own components is deferred through `bb.commands`.
+
+Two *different* trees over one context overlap only if their declared access
+allows it: Bevy schedules on declared component access, not on which entities
+match. Two trees whose `Agent` writes `&mut Health` serialize, even though no
+agent runs both. Make `Agent` read-only and route changes through `bb.commands`
+and they run concurrently — at the price of writes landing at the next sync
+point rather than immediately, so it is worth it for trees that mostly observe,
+not for hot per-agent state. Trees over different contexts always overlap, as
+does a tick with any unrelated system.
+
+### Authoring
+
+Trees are written with FlatBT's own API, with no Bevy-specific constructors:
+`seq`, `select`, `check`, `leaf`, `choose!`, `scope!`, `action` and custom
+`BtNode`s all take a Bevy context as written. A subtree is a function returning
+a node, so it composes into any tree by being called:
+
+```rust,ignore
+fn fire_at_intruder() -> impl BehaviorNode<Guard> { /* ... */ }
+
+fn guard_tree() -> impl BehaviorNode<Guard> {
+    select((seq((check(alarm_raised), fire_at_intruder())), leaf(patrol)))
+}
+```
+
+Only the root is named by a builder, and only because the component type is
+derived from it. FlatBT's constructors check their
+callable where the tree runs rather than where it is built, which is what keeps
+an inline closure usable at any update.
+
+A custom node names the context in full: its lifetimes are Bevy's, from
+`QueryData::Item<'w, 's>` and `Commands<'w, 's>`, and cannot be collapsed.
+
+```rust,ignore
+impl BtNode<Blackboard<'_, '_, '_, '_, '_, Guard>> for Reload { /* ... */ }
+```
+
+Tree state must be `Sync`, which Bevy requires of every component.
+
+```sh
+cargo run -p flatbt-bevy --example guards
+```
 
 ## Custom nodes
 
@@ -210,6 +450,7 @@ flatbt = { path = "../FlatBT", default-features = false, features = ["choose", "
 | `choose` | `choose!`, `ChooseNode`, `Choose` |
 | `scope` | `flatbt::scope`: local storage, bindings, `scope!` |
 | `action` | `BtAction`, `action`, cancellation helpers |
+| `bevy` | `flatbt::bevy`: Bevy ECS context, agent component, tick plugin |
 
 Features are independent. Cargo combines features enabled by all consumers.
 Core APIs are always available. Direct dependencies are also supported:
@@ -219,7 +460,10 @@ Core APIs are always available. Direct dependencies are also supported:
 flatbt-core = { path = "../FlatBT/crates/flatbt-core" }
 flatbt-nodes = { path = "../FlatBT/crates/flatbt-nodes", features = ["choose", "action"] }
 flatbt-scope = { path = "../FlatBT/crates/flatbt-scope" }
+flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
 ```
+
+`flatbt-bevy` targets Bevy 0.19 and requires Rust 1.95.
 
 ### Tuple limits
 
