@@ -200,7 +200,6 @@ agent's component, `bt.shared` the read-only world access, `bt.entity` and
 | `BehaviorContext` | Declares `Agent` (per-entity components), `Param` (shared, read-only) and `entry_mode` |
 | `FlatBtPlugin::new()` | Added once; trees register themselves from their first agent |
 | `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
-| `BehaviorTree<C, F>` | Resource holding the one tree named by builder `F` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
 | `evaluate_every` | Periodic `entry_mode` answer, staggered across agents |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
@@ -287,6 +286,10 @@ Each agent's slot within the period comes from its `Entity`, so nothing is
 stored and agents spawned together do not share a due frame: over 64 agents at
 16 ms ticks, the busiest frame carries 6 of them rather than all 64. A frame
 longer than the period evaluates once, never twice.
+
+A tick's result is not reported anywhere. At the root it says only that this
+invocation ended, and the next tick starts another; a tree that has something to
+say to the game says it through `bt`, as a component or a command.
 
 ### Turn based
 

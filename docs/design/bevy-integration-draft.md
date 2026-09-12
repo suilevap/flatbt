@@ -194,6 +194,16 @@ construct its use from Bevy, and it only ever saved an argument annotation that
   per agent duplicates its node configuration and an `Arc` adds a reference count
   and an indirection for something that never changes. A resource says what is
   true: one tree, many agents.
+- **A debug report of agents that own a behavior but do not match the agent
+  query.** Rejected once that query became a documented gate: the report cannot
+  tell a deliberate gate from a forgotten component, so it fires on every
+  turn-based or filtered setup. The unambiguous mistake, a tree that was never
+  built, is still reported by `Behavior`'s `on_add` hook.
+- **Public tick systems and a public `Behavior::tick`**, as an escape hatch for a
+  custom driver. Rejected as fiction: `tick_behaviors::<C, F>` cannot be written
+  at a call site, because `F` is a builder's own type and nothing there infers
+  it. Schedule, ordering, run conditions and the parallel tick are all reachable
+  through the plugins, so the hatch only widened the surface.
 - **A `BehaviorPaused` component** with a `Bt::pause` helper, filtered out of the
   tick. Rejected once it was clear the crate adds nothing: a run condition on
   `BehaviorSystems` already halts every tree, self-registered ticks included,
@@ -220,8 +230,8 @@ on is the tree's own last act, through `Commands`. When the tick runs is
 `in_schedule` or a run condition.
 
 The one consequence is that a deliberately gating agent query is
-indistinguishable from a forgotten component, so the debug diagnostic names both
-readings rather than asserting a mistake.
+indistinguishable from a forgotten component, which is why there is no
+diagnostic for it.
 
 ## What the integration still carries, and why
 
