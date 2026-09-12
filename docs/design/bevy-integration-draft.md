@@ -122,11 +122,24 @@ writing the component type in a query.
 
 Per-tree systems would mean a registration line per tree, so trees register
 themselves instead. `Behavior`'s `on_add` hook builds the tree and queues its
-tick system, and `FlatBtPlugin` — one line, once — adds the `PreUpdate` system
-that applies those queued registrations. The indirection is forced: a schedule is
-removed from `Schedules` while it runs, so a system added to the running schedule
-is discarded. Applying from an earlier schedule always lands, at the cost of one
-frame before the first agent of a new tree ticks. `BehaviorPlugin::for_tree`
+tick system, and `FlatBtPlugin` — one line, once — adds the system that applies
+those queued registrations. The indirection is forced: a schedule is removed from
+`Schedules` while it runs, so a system added to the running schedule is
+discarded. Applying from an earlier schedule always lands, at the cost of one
+frame before the first agent of a new tree ticks.
+
+That earlier schedule is `First`, the first stage of `Main`, so every later stage
+can hold the tick. `PreUpdate` was tried first and is wrong: a tick there is in
+the same schedule as the registration, which then never lands, and the agent
+never ticks at all. `First` itself has the same problem and is refused at build
+time rather than left to fail silently; explicit registration, which adds its
+system when the app is built, serves that case and any schedule outside `Main`.
+
+The hook claims a tree before building it, keyed by type. Several first agents
+can be spawned before the queued command runs, and each would otherwise build a
+tree that is immediately dropped -- harmless for a plain function, not for a
+builder that does work. It also checks for the plugin before building, so a
+missing registration costs nothing and runs no side effects. `BehaviorPlugin::for_tree`
 remains for a tree that needs its own schedule, ordering, run conditions or the
 parallel tick, and self-registration leaves such a tree alone.
 
@@ -266,6 +279,9 @@ gain here.
 - Mutable shared access for the serial tick, at the cost of one context type per
   tick mode.
 - Batch size control for the parallel tick.
+- Whether `entry_mode` wants to vary per agent as well as per tree. It is on the
+  context as a family default and on `BehaviorPlugin` per tree; per agent would
+  mean storing a pointer in every `Behavior`.
 - A revalidation budget per frame, which staggering makes unnecessary for
   smoothing but not for a hard ceiling.
 - Two trees of the same Rust type cannot both be registered, since the resource

@@ -229,6 +229,11 @@ are different names for the same tree; the second is writable, so
 registration, is reported when the component is added rather than left as an
 agent that never ticks.
 
+Only the builder's *type* selects the tree. One tree is built per type and
+shared, so a closure that captures configuration configures nothing: whichever
+value builds first defines the tree for everyone of that type. Vary a tree with
+a second builder function, not with captured values.
+
 ### Registration
 
 `FlatBtPlugin` is the only required line. The first agent naming a tree builds it
@@ -238,9 +243,16 @@ that same frame; one spawned from inside the tick schedule starts on the next,
 because a schedule cannot be extended while it runs. Later agents of a registered
 tree tick immediately.
 
+Registrations are applied from `First`, so any later stage of `Main` can hold the
+tick — `PreUpdate`, `FixedUpdate`, `Update`, `PostUpdate`, `Last`. `First` itself
+cannot, and is refused with a diagnostic; register trees for it explicitly.
+
 `BehaviorPlugin::for_tree(builder)` registers a tree ahead of its agents, for one
-that needs its own schedule, ordering, run conditions, or `.parallel()`. An
-explicitly registered tree is left alone by self-registration.
+that needs its own schedule, ordering, run conditions, `.parallel()`, or a pace
+of its own via `.entry_mode(..)` — trees that share a context's access but not
+its revalidation policy. It adds its system when the app is built, so it also
+serves any schedule self-registration cannot reach. An explicitly registered tree
+is left alone by self-registration.
 
 An agent whose tree was never built ticks under no system and matches no query,
 so nothing else could report it. It is reported by name when the component is
