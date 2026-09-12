@@ -66,12 +66,18 @@ goes through `Commands`.
 The split follows what is shared and what is not. A tree is an immutable
 definition serving many agents, so `BehaviorTree<C, F>` is a resource holding the
 one built tree. `Behavior<C, F>` is the component and holds only the saved state of a suspended
-invocation, sized exactly for that tree, plus the entry mode. Stopping is the
-`BehaviorPaused` component rather than a flag, which is what lets a node stop
-its own agent — it reaches the agent through `Bt<C>`, which cannot name
-`Behavior<C, F>` — and lets ordinary systems query and lift it. Nothing is
-stored to be looked at: observation is the tree's own business, through `Bt<C>`
-and `Commands`. Nothing is erased,
+invocation, sized exactly for that tree. Everything else about a tick is decided
+by the tick, not stored per agent.
+
+Entry mode is the case worth spelling out. It is not a setting: resuming is the
+cheap path, and evaluating from the root is a tool a game aims at a moment —
+a timer, a perception event, a changed order. Storing a default per agent would
+make every tree pay for reactivity it did not ask for, so the tick resumes and
+`BehaviorRevalidate` requests one `Evaluate`, which the tick spends. Stopping is
+`BehaviorPaused`, the same shape. Both are components rather than fields because
+nothing outside can name `Behavior<C, F>` to set a field — including the tree's
+own nodes, which see only `Bt<C>`. Nothing is stored to be looked at either:
+observation is the tree's own business, through `Bt<C>` and `Commands`. Nothing is erased,
 allocated, copied per agent, or reference counted.
 
 Identity is the builder `F`, not the tree it returns. `TreeBuilder<C>` is

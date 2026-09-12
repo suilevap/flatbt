@@ -202,6 +202,7 @@ agent's component, `bt.shared` the read-only world access, `bt.entity` and
 | `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
 | `BehaviorTree<C, F>` | Resource holding the one tree named by builder `F` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
+| `BehaviorRevalidate` | Marker asking the next tick to reconsider; spent on use |
 | `BehaviorPaused` | Marker that stops an agent's behaviors; `bt.pause()` inserts it |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
@@ -249,14 +250,21 @@ at the agent.
 
 ### Ticking
 
-Trees enter with `EntryMode::Evaluate` and start a new invocation after a
-terminal result. `Behavior::for_tree(t).with_mode(EntryMode::Resume)` follows the
-saved path instead.
+A tick resumes: a suspended invocation continues down the path it chose, and a
+finished one starts fresh, which always enters as `Evaluate`. Reconsidering a
+standing decision is something the game aims, not a per-agent setting, so it is
+a component:
 
-`bt.pause()` stops every behavior on the agent by inserting `BehaviorPaused`;
-removing it resumes. It is a component rather than a flag on `Behavior` because
-a node reaches the agent through `Bt<C>`, which does not name the behavior
-component, and because ordinary systems can then query and lift it.
+```rust,ignore
+// On a timer, a perception event, a changed order.
+commands.entity(agent).insert(BehaviorRevalidate);
+```
+
+The next tick re-enters with `EntryMode::Evaluate` and the request is spent.
+`BehaviorPaused` likewise stops an agent until it is removed, and `bt.pause()`
+inserts it from inside a tree. Both are components rather than fields on
+`Behavior` because nothing outside can name `Behavior<C, F>` to set a field —
+including the tree's own nodes, which see only `Bt<C>`.
 
 Agent access must be disjoint per entity, and shared access is read-only, so
 `.parallel()` spreads agents across the task pool with no further declaration
@@ -278,7 +286,19 @@ does a tick with any unrelated system.
 
 Trees are written with FlatBT's own API, with no Bevy-specific constructors:
 `seq`, `select`, `check`, `leaf`, `choose!`, `scope!`, `action` and custom
-`BtNode`s all take a Bevy context as written. FlatBT's constructors check their
+`BtNode`s all take a Bevy context as written. A subtree is a function returning
+a node, so it composes into any tree by being called:
+
+```rust,ignore
+fn fire_at_intruder() -> impl BehaviorNode<Guard> { /* ... */ }
+
+fn guard_tree() -> impl BehaviorNode<Guard> {
+    select((seq((check(alarm_raised), fire_at_intruder())), leaf(patrol)))
+}
+```
+
+Only the root is named by a builder, and only because the component type is
+derived from it. FlatBT's constructors check their
 callable where the tree runs rather than where it is built, which is what keeps
 an inline closure usable at any update.
 
