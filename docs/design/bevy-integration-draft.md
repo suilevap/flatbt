@@ -274,6 +274,56 @@ and does not pay: Bevy's context genuinely needs five lifetimes, so it could not
 be expressed as `View<'a>`, and core would grow a second context concept for no
 gain here.
 
+## What a real game would settle
+
+This design was written without a consumer, and it shows: each review round
+removed something that had looked necessary -- a status component, an erased
+tree, a pause component, a public tick, two policy flags. That pattern is the
+finding. The requirements below came from the first look at a real game, and
+they do not point at polish.
+
+### Live borrows are the choice everything else follows from
+
+`Blackboard<C>` holds the update's borrows. Five lifetimes, the higher-ranked
+bound, `BehaviorNode`, and the constructor changes in core are all downstream of
+that one decision, and so is the ceiling on what the integration can do:
+
+- **Running a tree off the frame thread** is impossible. A node holding live
+  borrows cannot outlive the system run. Suspending *between* ticks already
+  works, which spreads a tree over frames, but the decision itself always runs
+  inside the tick.
+- **An action that wants an arbitrary query** can only have what the context
+  declared upfront. The declaration is what buys scheduling and `par_iter_mut`,
+  so this is a trade, not an oversight -- but it is a trade the author cannot
+  opt out of per action.
+
+The alternative is a **snapshot context**: an owned struct the game fills from
+the ECS before the tick, and drains as intents afterwards. It reverses every
+consequence above. `C` becomes a plain struct with no lifetimes, so the
+quantifier, `BehaviorNode` and the core constructor changes are all unnecessary
+and `leaf`/`check` keep their bounds. A tree can then run on a task, over
+several frames, or on another thread, because it borrows nothing. An action that
+needs world data submits a request and reads the answer from the next snapshot,
+which is what `BtAction`'s lifecycle is already shaped for. A turn is a snapshot.
+
+What it costs is copying data in and out, and acting on data one tick stale.
+
+### Tree storage
+
+One resource per `(context, builder)` pair, with `TreeBuilder` as the identity,
+is what typed state forces: the component must know the state's size, so it must
+know the tree's type. A single resource holding trees in named fields -- the
+shape that reads simplest -- needs the root erased, which an earlier round
+removed on purpose. The two preferences are in tension and only a consumer can
+say which matters more.
+
+### Registration
+
+Self-registration is the largest and least obvious part of the crate, and it
+exists to save one line per tree. It also carried the one blocking bug found in
+review. If a game finds explicit registration unobjectionable, that machinery
+should go.
+
 ## Open questions
 
 - Mutable shared access for the serial tick, at the cost of one context type per
