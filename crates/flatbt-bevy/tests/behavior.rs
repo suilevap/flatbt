@@ -50,17 +50,17 @@ fn shoot() -> impl BehaviorNode<Guard> {
     ))
 }
 
-/// The usual setup: one plugin, no registration per tree.
-fn app() -> App {
+/// One registration per tree; both type parameters come from the builder.
+fn app<F: TreeBuilder<Guard>>(builder: F) -> App {
     let mut app = App::new();
     app.insert_resource(Alarm(true))
-        .add_plugins(FlatBtPlugin::new());
+        .add_plugins(BehaviorPlugin::for_tree(builder));
     app
 }
 
 #[test]
 fn ticks_agent_components_until_the_guard_fails() {
-    let mut app = app();
+    let mut app = app(shoot);
     let entity = app
         .world_mut()
         .spawn((Ammo(2), Fired(0), Behavior::for_tree(shoot)))
@@ -76,7 +76,7 @@ fn ticks_agent_components_until_the_guard_fails() {
 
 #[test]
 fn shared_access_gates_the_tree() {
-    let mut app = app();
+    let mut app = app(shoot);
     app.insert_resource(Alarm(false));
     let entity = app
         .world_mut()
@@ -127,7 +127,7 @@ fn reload_when_dry() -> impl BehaviorNode<Guard> {
 
 #[test]
 fn nodes_defer_world_edits_through_commands() {
-    let mut app = app();
+    let mut app = app(reload_when_dry);
     let entity = app
         .world_mut()
         .spawn((Ammo(0), Fired(0), Behavior::for_tree(reload_when_dry)))
@@ -167,7 +167,7 @@ fn recharge_then_shoot() -> impl BehaviorNode<Guard> {
 
 #[test]
 fn running_state_survives_across_ticks() {
-    let mut app = app();
+    let mut app = app(recharge_then_shoot);
     let entity = app
         .world_mut()
         .spawn((Ammo(1), Fired(0), Behavior::for_tree(recharge_then_shoot)))
@@ -237,7 +237,7 @@ fn hold_or_fire_too() -> impl BehaviorNode<Guard> {
 
 #[test]
 fn the_context_decides_when_a_standing_decision_is_stale() {
-    let mut app = app();
+    let mut app = app(hold_or_fire);
     app.insert_resource(Alarm(false));
     let entity = app
         .world_mut()
@@ -263,7 +263,7 @@ struct Halted(bool);
 
 #[test]
 fn a_run_condition_on_the_set_gates_self_registered_ticks() {
-    let mut app = app();
+    let mut app = app(shoot);
     app.insert_resource(Halted(false)).configure_sets(
         Update,
         BehaviorSystems.run_if(|halted: Res<Halted>| !halted.0),
@@ -327,7 +327,7 @@ fn builders_sharing_a_tree_type_stay_separate() {
 
 #[test]
 fn entities_missing_agent_components_are_skipped() {
-    let mut app = app();
+    let mut app = app(shoot);
     let partial = app
         .world_mut()
         .spawn((Ammo(1), Behavior::for_tree(shoot)))
@@ -352,55 +352,32 @@ fn recharge() -> Recharge {
 }
 
 #[test]
-fn a_tree_registers_itself_when_its_first_agent_appears() {
-    let mut app = app();
-    let entity = app
+fn two_trees_over_one_context_each_get_their_own_tick() {
+    let mut app = App::new();
+    app.insert_resource(Alarm(true)).add_plugins((
+        BehaviorPlugin::for_tree(shoot),
+        BehaviorPlugin::for_tree(reload_when_dry),
+    ));
+
+    let shooter = app
         .world_mut()
         .spawn((Ammo(2), Fired(0), Behavior::for_tree(shoot)))
         .id();
-
-    // Spawned before the tick schedule runs, so the first frame already ticks it.
-    app.update();
-    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(1)));
-
-    // A second tree needs no registration of its own either.
-    let other = app
+    let reloader = app
         .world_mut()
         .spawn((Ammo(0), Fired(0), Behavior::for_tree(reload_when_dry)))
         .id();
-    app.update();
-    assert!(app.world().get::<Reloading>(other).is_some());
-}
 
-fn spawn_a_guard(mut commands: Commands, mut done: Local<bool>) {
-    if !*done {
-        *done = true;
-        commands.spawn((Ammo(2), Fired(0), Behavior::for_tree(shoot)));
-    }
+    app.update();
+
+    assert_eq!(app.world().get::<Fired>(shooter), Some(&Fired(1)));
+    assert!(app.world().get::<Reloading>(reloader).is_some());
 }
 
 #[test]
-fn an_agent_spawned_mid_tick_starts_on_the_next_frame() {
-    let mut app = app();
-    app.add_systems(Update, spawn_a_guard);
-
-    // The tick schedule cannot be extended while it runs, so the first agent of
-    // a new tree waits a frame. Later agents of that tree tick immediately.
-    app.update();
-    let fired = |app: &mut App| {
-        let world = app.world_mut();
-        world.query::<&Fired>().single(world).unwrap().0
-    };
-    assert_eq!(fired(&mut app), 0);
-
-    app.update();
-    assert_eq!(fired(&mut app), 1);
-}
-
-#[test]
-fn an_agent_with_no_plugin_at_all_is_reported() {
-    // Neither plugin: nothing would tick this agent, and no tick system queries
-    // its component type, so the hook is the only thing that can say so.
+fn an_agent_whose_tree_was_never_registered_is_reported() {
+    // No registration: no tick system queries this component type, so the agent
+    // would sit there silently. The hook is the only thing that can say so.
     let mut app = App::new();
     app.insert_resource(Alarm(true));
     let entity = app
@@ -550,7 +527,7 @@ struct Order(Vec<Entity>);
 fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
     let mut app = App::new();
     app.init_resource::<Clock>()
-        .add_plugins(FlatBtPlugin::new())
+        .add_plugins(BehaviorPlugin::for_tree(take_turn))
         .add_systems(Update, advance_clock.before(BehaviorSystems))
         .add_systems(Update, pass_the_turn.after(BehaviorSystems));
 

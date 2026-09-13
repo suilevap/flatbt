@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 use bevy_ecs::prelude::*;
 use flatbt_core::{BtNode, EntryMode, NodeResult};
 
-use crate::plugin::request_registration;
+use crate::plugin::warn_unregistered;
 use crate::{BehaviorContext, Blackboard};
 
 /// How a tick re-enters a suspended invocation, as a tree can override it.
@@ -182,12 +182,15 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
 /// out, name the builder as a function pointer:
 /// `Behavior::for_tree(shoot as fn() -> _)`.
 #[derive(Component)]
-#[component(on_add = request_registration::<C, F>)]
+#[component(on_add = warn_unregistered::<C, F>)]
 pub struct Behavior<C: BehaviorContext, F: TreeBuilder<C>> {
     state: Option<<F::Tree as BehaviorNode<C>>::Data>,
-    builder: F,
-    // See `BehaviorTree`: keeping `C` a direct field use, not a projection.
-    context: PhantomData<fn() -> C>,
+    // Only the builder's type is needed; the value it was named by is not kept,
+    // so it cannot be mistaken for per-agent configuration. Load-bearing beyond
+    // that: it keeps `C` and `F` direct field uses. Reached only through the
+    // `F::Tree` projection, `C` sends the monomorphization collector through
+    // every blanket impl behind it and over the recursion limit.
+    builder: PhantomData<fn() -> (C, F)>,
 }
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
@@ -195,21 +198,19 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     /// Whether a suspended invocation resumes or reconsiders is
     /// [`BehaviorContext::entry_mode`](crate::BehaviorContext::entry_mode).
     ///
-    /// `builder` is not called here: it names the tree. The first agent to name
-    /// a tree builds it, so no registration is needed beyond
-    /// [`FlatBtPlugin`](crate::FlatBtPlugin).
+    /// `builder` is not called here: it names the tree, which
+    /// [`BehaviorPlugin::for_tree`](crate::BehaviorPlugin::for_tree) built when
+    /// the app was built.
     ///
-    /// Only the builder's *type* selects the tree. One tree is built per type
-    /// and shared, so a builder that captures configuration configures nothing:
-    /// whichever value builds first defines the tree for every agent of that
-    /// type, and the values the others carry are never called. Vary a tree by
-    /// writing a second builder function, not by capturing different values in
-    /// one closure.
-    pub fn for_tree(builder: F) -> Self {
+    /// Only the builder's *type* selects the tree, and the value is not kept:
+    /// the tree was built once at registration. A builder that captures
+    /// configuration therefore configures nothing here. Vary a tree by writing a
+    /// second builder function, not by capturing different values in one
+    /// closure.
+    pub fn for_tree(_builder: F) -> Self {
         Self {
             state: None,
-            builder,
-            context: PhantomData,
+            builder: PhantomData,
         }
     }
 
@@ -242,10 +243,6 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         if result != NodeResult::Running {
             self.state = None;
         }
-    }
-
-    pub(crate) fn builder(&self) -> &F {
-        &self.builder
     }
 }
 

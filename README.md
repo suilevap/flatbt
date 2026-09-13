@@ -187,7 +187,7 @@ fn guard_tree() -> impl BehaviorNode<Guard> {
     ))
 }
 
-app.add_plugins(FlatBtPlugin::new());
+app.add_plugins(BehaviorPlugin::for_tree(guard_tree));
 commands.spawn((Ammo(2), Post(0.0), Behavior::for_tree(guard_tree)));
 ```
 
@@ -199,8 +199,7 @@ read-only world access, `bb.entity` and `bb.commands` everything else.
 | API | Behavior |
 | --- | --- |
 | `BehaviorContext` | Declares what the blackboard holds: `Agent`, `Param`, `entry_mode` |
-| `FlatBtPlugin::new()` | Added once; trees register themselves from their first agent |
-| `BehaviorPlugin::for_tree(builder)` | Registers one tree ahead of time; `.in_schedule(..)`, `.parallel()` |
+| `BehaviorPlugin::for_tree(builder)` | Builds one tree and adds its tick; `.in_schedule(..)`, `.parallel()`, `.entry_mode(..)` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
 | `evaluate_every` | Periodic `entry_mode` answer, staggered across agents |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
@@ -229,35 +228,22 @@ are different names for the same tree; the second is writable, so
 registration, is reported when the component is added rather than left as an
 agent that never ticks.
 
-Only the builder's *type* selects the tree. One tree is built per type and
-shared, so a closure that captures configuration configures nothing: whichever
-value builds first defines the tree for everyone of that type. Vary a tree with
-a second builder function, not with captured values.
+Only the builder's *type* selects the tree, and `Behavior` does not keep the
+value: the tree was built once at registration. A closure that captures
+configuration therefore configures nothing at the agent. Vary a tree with a
+second builder function, not with captured values.
 
 ### Registration
 
-`FlatBtPlugin` is the only required line. The first agent naming a tree builds it
-and registers its tick, so adding a tree is writing a builder and spawning an
-agent. An agent spawned before the tick schedule runs — in `Startup`, say — ticks
-that same frame; one spawned from inside the tick schedule starts on the next,
-because a schedule cannot be extended while it runs. Later agents of a registered
-tree tick immediately.
+`BehaviorPlugin::for_tree(builder)` builds the tree and adds its tick when the
+app is built, so the tick is in place before any agent exists and any schedule
+will do — `First` through `Last`, `FixedUpdate`, or one the game runs itself.
+It also carries that tree's ordering, run conditions, `.parallel()` and its own
+`.entry_mode(..)`, for trees that share a context's access but not its pace.
 
-Registrations are applied from `First`, so any later stage of `Main` can hold the
-tick — `PreUpdate`, `FixedUpdate`, `Update`, `PostUpdate`, `Last`. `First` itself
-cannot, and is refused with a diagnostic; register trees for it explicitly.
-
-`BehaviorPlugin::for_tree(builder)` registers a tree ahead of its agents, for one
-that needs its own schedule, ordering, run conditions, `.parallel()`, or a pace
-of its own via `.entry_mode(..)` — trees that share a context's access but not
-its revalidation policy. It adds its system when the app is built, so it also
-serves any schedule self-registration cannot reach. An explicitly registered tree
-is left alone by self-registration.
-
-An agent whose tree was never built ticks under no system and matches no query,
-so nothing else could report it. It is reported by name when the component is
-added, which also covers a builder spelled one way at registration and another
-at the agent.
+One line per tree is the cost. An agent whose tree was never registered ticks
+under no system and matches no query, so nothing else could report it; it is
+reported by name when the component is added.
 
 ### Ticking
 

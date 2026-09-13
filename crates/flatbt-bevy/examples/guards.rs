@@ -162,8 +162,8 @@ fn main() {
         raised: false,
         intruder: 4.0,
     })
-    // One plugin; the tree builds and registers itself with its first agent.
-    .add_plugins(FlatBtPlugin::new())
+    // One registration per tree; both type parameters come from the builder.
+    .add_plugins(BehaviorPlugin::for_tree(guard_tree))
     .add_systems(Update, clear_firing.after(BehaviorSystems));
 
     // One tree, many agents: each carries only its own invocation state.

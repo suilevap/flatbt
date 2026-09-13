@@ -120,28 +120,19 @@ queries, which is invisible on its own, so `Behavior`'s `on_add` hook checks tha
 registration too. The function-pointer spelling is also the escape hatch for
 writing the component type in a query.
 
-Per-tree systems would mean a registration line per tree, so trees register
-themselves instead. `Behavior`'s `on_add` hook builds the tree and queues its
-tick system, and `FlatBtPlugin` — one line, once — adds the system that applies
-those queued registrations. The indirection is forced: a schedule is removed from
-`Schedules` while it runs, so a system added to the running schedule is
-discarded. Applying from an earlier schedule always lands, at the cost of one
-frame before the first agent of a new tree ticks.
+`BehaviorPlugin::for_tree(builder)` builds the tree and adds its tick when the
+app is built. One line per tree, and no ordering to satisfy: the system exists
+before any agent does, so any schedule holds it, including one the game runs
+itself.
 
-That earlier schedule is `First`, the first stage of `Main`, so every later stage
-can hold the tick. `PreUpdate` was tried first and is wrong: a tick there is in
-the same schedule as the registration, which then never lands, and the agent
-never ticks at all. `First` itself has the same problem and is refused at build
-time rather than left to fail silently; explicit registration, which adds its
-system when the app is built, serves that case and any schedule outside `Main`.
-
-The hook claims a tree before building it, keyed by type. Several first agents
-can be spawned before the queued command runs, and each would otherwise build a
-tree that is immediately dropped -- harmless for a plain function, not for a
-builder that does work. It also checks for the plugin before building, so a
-missing registration costs nothing and runs no side effects. `BehaviorPlugin::for_tree`
-remains for a tree that needs its own schedule, ordering, run conditions or the
-parallel tick, and self-registration leaves such a tree alone.
+Self-registration was tried and removed. `Behavior`'s `on_add` hook built the
+tree and queued its tick system, and a plugin applied those registrations from
+an earlier schedule, because a schedule cannot be extended while it runs. It
+saved one line per tree and cost the largest and least obvious part of the
+crate, a build that could run several times before its command landed, and a
+blocking bug: a tick in the same schedule as the registration never landed at
+all. The hook survives as a diagnostic only, since nothing else can see an agent
+whose tree was never registered.
 
 Per-tree systems do not by themselves make trees of one context run concurrently.
 Bevy schedules on declared component access rather than on which entities match,

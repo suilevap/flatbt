@@ -1,8 +1,8 @@
 //! Bevy ECS integration for FlatBT.
 //!
-//! Declare what the trees' blackboard holds with [`BehaviorContext`],
-//! add [`FlatBtPlugin`] once, then give agents a [`Behavior`] naming the tree
-//! they run. Trees build and register themselves when their first agent appears.
+//! Declare what the trees' blackboard holds with [`BehaviorContext`], register
+//! each tree with [`BehaviorPlugin`], then give agents a [`Behavior`] naming the
+//! tree they run.
 //!
 //! ```
 //! use bevy_app::prelude::*;
@@ -44,9 +44,9 @@
 //!     ))
 //! }
 //!
-//! // 3. One plugin, then agents. No registration per tree.
+//! // 3. Build the tree once, then spawn agents that run it.
 //! let mut app = App::new();
-//! app.add_plugins(FlatBtPlugin::new());
+//! app.add_plugins(BehaviorPlugin::for_tree(shoot));
 //! app.world_mut().spawn((Ammo(1), Behavior::for_tree(shoot)));
 //!
 //! app.update();
@@ -71,9 +71,11 @@
 //! tree type, so two builders returning the same tree type with different node
 //! configuration stay separate.
 //!
-//! [`BehaviorPlugin::for_tree`] registers a tree ahead of its agents, for one
-//! that needs its own schedule, ordering, run conditions, or
-//! [`parallel`](BehaviorPlugin::parallel) ticking.
+//! [`BehaviorPlugin`] builds the tree when the app is built, so the tick is in
+//! place before any agent exists and any schedule will do -- including one the
+//! game runs itself. It also carries the tree's schedule, ordering, run
+//! conditions, [`parallel`](BehaviorPlugin::parallel) ticking and its own
+//! [`entry_mode`](BehaviorPlugin::entry_mode).
 //!
 //! Trees are written with FlatBT's own API. `seq`, `select`, `check`, `leaf`,
 //! `choose!`, `scope!`, `action` and custom [`BtNode`](flatbt_core::BtNode)s all
@@ -100,7 +102,7 @@ mod tree;
 pub mod prelude;
 
 pub use context::{AgentItem, BehaviorContext, Blackboard, ParamItem, evaluate_every};
-pub use plugin::{BehaviorPlugin, BehaviorSystems, FlatBtPlugin};
+pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub(crate) use tree::BehaviorTree;
 pub use tree::{Behavior, BehaviorNode, EntryModeFn, TreeBuilder};
 
