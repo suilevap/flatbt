@@ -1,11 +1,13 @@
 use core::marker::PhantomData;
+use std::sync::Mutex;
 
 use bevy_app::{App, Plugin, Update};
+use bevy_ecs::entity::{Entities, EntityAllocator};
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
-use bevy_ecs::system::{ParallelCommands, StaticSystemParam, SystemParamItem};
-use bevy_ecs::world::DeferredWorld;
+use bevy_ecs::system::{StaticSystemParam, SystemParamItem};
+use bevy_ecs::world::{CommandQueue, DeferredWorld};
 
 use crate::tree::EntryModeFn;
 use crate::{
@@ -113,7 +115,8 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorPlugin<C, F> {
     ///
     /// Agent access is disjoint per entity and shared access is read-only, so
     /// this needs no further declaration. Iteration order becomes unspecified
-    /// and [`Blackboard::commands`] are queued per worker thread.
+    /// and [`Blackboard::commands`] are queued per batch, applied in batch
+    /// completion order once every agent has ticked.
     pub fn parallel(mut self) -> Self {
         self.parallel = true;
         self
@@ -200,6 +203,29 @@ pub(crate) fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
     }
 }
 
+/// One command queue per batch of agents, handed back when the batch ends.
+///
+/// [`ParallelCommands`] takes a thread-local borrow per call, which at one call
+/// per agent costs more than the tick it guards. A batch is the natural unit:
+/// `for_each_init` builds one of these per batch and drops it at the end, so
+/// the queue reaches the sink exactly once however the pool splits the work.
+///
+/// [`ParallelCommands`]: bevy_ecs::system::ParallelCommands
+struct Batch<'a> {
+    queue: CommandQueue,
+    sink: &'a Mutex<Vec<CommandQueue>>,
+}
+
+impl Drop for Batch<'_> {
+    fn drop(&mut self) {
+        if !self.queue.is_empty()
+            && let Ok(mut sink) = self.sink.lock()
+        {
+            sink.push(core::mem::take(&mut self.queue));
+        }
+    }
+}
+
 /// Ticks every agent running the tree named by `F` across the task pool.
 ///
 /// Registered by [`BehaviorPlugin::parallel`]. Iteration order is unspecified.
@@ -207,25 +233,33 @@ pub(crate) fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
     tree: Res<BehaviorTree<C, F>>,
     mut agents: Agents<C, F>,
     shared: StaticSystemParam<C::Param>,
-    par_commands: ParallelCommands,
+    entities: &Entities,
+    allocator: &EntityAllocator,
+    mut commands: Commands,
 ) where
     for<'w, 's> SystemParamItem<'w, 's, C::Param>: Sync,
 {
     let (entry_mode, shared) = (tree.entry_mode(), &*shared);
     let tree = tree.get();
-    agents
-        .par_iter_mut()
-        .for_each(|(entity, mut behavior, agent)| {
-            par_commands.command_scope(|commands| {
-                tick_agent(
-                    entry_mode,
-                    tree,
-                    shared,
-                    entity,
-                    &mut behavior,
-                    agent,
-                    commands,
-                );
-            });
-        });
+    let sink = Mutex::new(Vec::new());
+    agents.par_iter_mut().for_each_init(
+        || Batch {
+            queue: CommandQueue::default(),
+            sink: &sink,
+        },
+        |batch, (entity, mut behavior, agent)| {
+            tick_agent(
+                entry_mode,
+                tree,
+                shared,
+                entity,
+                &mut behavior,
+                agent,
+                Commands::new_from_entities(&mut batch.queue, allocator, entities),
+            );
+        },
+    );
+    for queue in sink.into_inner().into_iter().flatten() {
+        commands.append(&mut { queue });
+    }
 }
