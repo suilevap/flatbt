@@ -625,6 +625,121 @@ fn trees_sharing_a_context_can_pace_revalidation_differently() {
     assert_eq!(app.world().get::<Fired>(patient), Some(&Fired(0)));
 }
 
+// --- ask --------------------------------------------------------------------
+
+/// The request a tree inserts, and the answer a system writes back.
+#[derive(Component, Clone)]
+struct WantsSupply;
+
+#[derive(Component)]
+struct Supplied(u32);
+
+struct Runner {
+    ammo: u32,
+    supply: Option<u32>,
+}
+
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct RunnerAccess {
+    ammo: &'static mut Ammo,
+    supply: Option<&'static Supplied>,
+}
+
+impl BehaviorContext for Runner {
+    type Agent = RunnerAccess;
+    type Param = ();
+    type Snapshot = Self;
+    // Entry mode is deliberately the default: a tree that asks must recover
+    // without anyone telling it to reconsider.
+
+    fn read(_: Entity, agent: &RunnerAccessItem, _: &()) -> Runner {
+        Runner {
+            ammo: agent.ammo.0,
+            supply: agent.supply.map(|s| s.0),
+        }
+    }
+
+    fn write(runner: &Runner, agent: &mut RunnerAccessItem) {
+        agent.ammo.set_if_neq(Ammo(runner.ammo));
+    }
+}
+
+fn fetch_supply() -> impl BehaviorNode<Runner> {
+    seq((
+        ask(WantsSupply, |bb: &Blackboard<Runner>| bb.supply.is_some()),
+        leaf(|bb: &mut Blackboard<Runner>| {
+            bb.ammo += bb.supply.unwrap_or(0);
+            NodeResult::Success
+        }),
+    ))
+}
+
+/// Answers on the tick after the request, counting how often it was asked.
+fn answer_supply(
+    asking: Query<Entity, With<WantsSupply>>,
+    mut asked: ResMut<Asked>,
+    mut commands: Commands,
+) {
+    for entity in asking.iter() {
+        asked.0 += 1;
+        commands
+            .entity(entity)
+            .remove::<WantsSupply>()
+            .insert(Supplied(3));
+    }
+}
+
+#[derive(Resource, Default)]
+struct Asked(u32);
+
+#[test]
+fn ask_requests_once_and_continues_when_the_answer_arrives() {
+    let mut app = App::new();
+    app.init_resource::<Asked>()
+        .add_plugins(BehaviorPlugin::for_tree(fetch_supply))
+        .add_systems(Update, answer_supply.after(BehaviorSystems));
+    let agent = app
+        .world_mut()
+        .spawn((Ammo(0), Behavior::for_tree(fetch_supply)));
+    let agent = agent.id();
+
+    // Asked on the first tick, answered after it, used on the second.
+    app.update();
+    assert_eq!(app.world().resource::<Asked>().0, 1);
+    assert_eq!(app.world().get::<Ammo>(agent), Some(&Ammo(0)));
+
+    app.update();
+    assert_eq!(app.world().get::<Ammo>(agent), Some(&Ammo(3)));
+
+    // The answer still stands, so nothing is asked again however long it runs.
+    for _ in 0..8 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<Asked>().0, 1);
+    assert_eq!(app.world().get::<Ammo>(agent), Some(&Ammo(27)));
+}
+
+#[test]
+fn ask_asks_again_once_the_answer_is_withdrawn() {
+    let mut app = App::new();
+    app.init_resource::<Asked>()
+        .add_plugins(BehaviorPlugin::for_tree(fetch_supply))
+        .add_systems(Update, answer_supply.after(BehaviorSystems));
+    let agent = app
+        .world_mut()
+        .spawn((Ammo(0), Behavior::for_tree(fetch_supply)))
+        .id();
+
+    app.update();
+    app.update();
+    assert_eq!(app.world().resource::<Asked>().0, 1);
+
+    app.world_mut().entity_mut(agent).remove::<Supplied>();
+    app.update();
+    assert_eq!(app.world().resource::<Asked>().0, 2);
+}
+
 // --- a failed resume ---------------------------------------------------------
 
 #[derive(Component, Debug, PartialEq)]

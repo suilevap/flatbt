@@ -177,6 +177,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "action")]
+mod ask;
 mod context;
 mod plugin;
 mod stagger;
@@ -184,6 +186,8 @@ mod tree;
 
 pub mod prelude;
 
+#[cfg(feature = "action")]
+pub use ask::{Ask, ask};
 pub use context::{AgentItem, BehaviorContext, Blackboard, EntityCommandQueue, ParamItem};
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub use stagger::evaluate_every;

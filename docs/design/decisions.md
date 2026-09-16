@@ -173,6 +173,52 @@ The snapshot field is private for it, with `snapshot()`, `into_snapshot()` and
 snapshot by value from the tick cost 1.5 ms per 100k agents, so the tick reads
 it in place.
 
+## 2026-09-16 — `ask` fills scope locals
+
+A tree cannot run an arbitrary query -- the context declares its access up front
+-- so reaching past it means asking: insert a request component, let an ordinary
+system answer into another, and read the answer back once `read` has gathered
+it. That was 25 lines of hand-written `BtAction` per question, and getting it
+wrong was cheap: a leaf returning `Running` is re-entered on every resume, so a
+leaf that asks asks again every frame and moves the entity between archetypes
+twice a tick.
+
+`ask` is that, once. `start` runs one insert per invocation and nothing at all
+when the answer already stands; `is_in_progress` is the waiting; `complete`
+hands the answer on.
+
+A second `BtAction` impl, over `&mut Option<T>` instead of `()`, fills a
+`scope!` output slot in `complete`. The scope DSL already had the other half --
+`let name: T;` reserves a slot, `.with(out name)` binds it -- and `Compute` is
+just a node writing one, so nothing stopped an action from writing one too. The
+predicate returns `Option<T>` in that shape and `bool` in the bare one, so which
+impl applies follows from the closure: no second constructor, no extra type
+parameter.
+
+Consumers then take a value rather than an `Option`, and the local dies with the
+invocation, so re-entering the branch asks again rather than acting on an answer
+chosen for an older situation.
+
+It needs the action catalog, so it sits behind a default-on `action` feature --
+the only thing in the crate that needs it.
+
+**A node can write a Bevy message.** `Blackboard::write_message` is the channel
+for "this happened" -- a shot fired, a target lost -- where a marker component
+is the wrong shape: a marker has to be cleared by someone, and inserting and
+removing one moves the entity between archetypes twice a tick, which at a large
+population costs more than everything the tree did. The `guards` example used a
+marker and now does not.
+
+**`evaluate_every` moved to its own module.** It is a policy, not machinery:
+`entry_mode` returns a mode and this returns a mode, so a game that wants a
+different one writes it and never mentions this. Keeping it in `context.rs`
+suggested otherwise.
+
+**The unregistered-agent warning is debug only.** It is a development
+convenience, not a guarantee -- a component means nothing without a system, here
+as anywhere in Bevy -- so the `on_add` hook, and the resource that bounds its
+noise, are behind `debug_assertions` and cost a release build nothing.
+
 ## 2026-09-17 — Reconsidering is the default; resuming is the optimisation
 
 `BehaviorContext::entry_mode` defaulted to `EntryMode::Resume` on the argument

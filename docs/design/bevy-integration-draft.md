@@ -283,6 +283,7 @@ after moving every constructor fix into core and the blackboard to a snapshot:
 | `BehaviorTree` resource, `Behavior` component, `TreeBuilder` | Bevy resources and components are `'static`, and the state type has to be nameable without naming the tree. |
 | Plugins, tick systems | Bevy scheduling. |
 | `BehaviorNode<C>` | FlatBT: `Behavior` needs the invocation state as one named type, and `State: Bound` leaves a projection while `State = T` needs a nameable `T`, which a composed tree's state is not. An associated type is the only equality target left, so it takes a trait — and in return position that trait also names a subtree without naming its type. |
+| `ask` | The declared access is what buys scheduling and `par_iter_mut`, so reaching past it has to be deferred through the world. |
 
 Only `BehaviorNode` is FlatBT's shape, and with the snapshot it is a plain bound
 rather than a higher-ranked one. The `AgentAction` wrapper written to hide the
@@ -321,8 +322,10 @@ per tick cost a fifth of the whole tick, because dropping a `CommandQueue` walks
 its buffer whether or not anything is in it.
 
 What remains true: an action still cannot run an arbitrary query. The declared
-access is what buys scheduling and `par_iter_mut`, so reaching past it has to go
-through the world — a request a system answers, read back on a later tick.
+access is what buys scheduling and `par_iter_mut`, so `ask` stays the way to
+reach past it, and it is the right split — the snapshot carries what almost
+every tree needs or what is free to gather, and `ask` pays for what only one
+subtree wants.
 
 What is unlocked but not built: the three steps are separable, so the tick could
 run on a task or over several frames. Today all three run in one system.
@@ -352,6 +355,8 @@ Closed since the arena:
   `rethink` there rather than carrying the clock into every node.
 - **Whether the blackboard should be borrows or a snapshot.** Snapshot, at no
   measurable cost.
+- **Whether `ask` and `scope!` compose.** They do, and `ask` writes the answer
+  into the local rather than leaving it on the blackboard.
 - **`write` running every tick.** It does not any more. `Blackboard` sets a flag
   in `DerefMut`, so a tree that only read is never written back and never marks
   its agent changed — Bevy's own bargain, where taking `&mut` counts whether or
