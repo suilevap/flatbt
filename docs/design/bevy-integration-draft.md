@@ -239,31 +239,22 @@ diagnostic for it.
 
 ## What the integration still carries, and why
 
-Roughly 400 lines of code. Attribution, after moving every constructor fix into
-core:
+Roughly 1100 lines including docs and examples; about 400 of code. Attribution,
+after moving every constructor fix into core and the blackboard to a snapshot:
 
 | Piece | Forced by |
 | --- | --- |
-| `BehaviorContext`, `Blackboard` | Declaring ECS access and building a per-agent view. This is the integration. |
-| `Blackboard`'s five lifetimes | Bevy: `QueryData::Item<'w, 's>` and `Commands<'w, 's>`. `QueryData::shrink` moves `'w` only, so `'s` cannot be collapsed. |
+| `BehaviorContext`, `Blackboard` | Declaring ECS access, and gathering a per-agent view from it. This is the integration. |
+| `read` / `write` | The snapshot. Their cost is two functions per context; what they buy is that nothing below them knows the ECS exists. |
 | `BehaviorTree` resource, `Behavior` component, `TreeBuilder` | Bevy resources and components are `'static`, and the state type has to be nameable without naming the tree. |
-| Plugins, tick systems, self-registration | Bevy scheduling. |
-| `BehaviorNode<C>` | FlatBT: `BtNode<C>` takes the context as a plain type parameter, so a borrowed context needs `for<'w, 's, 'q, 'a, 'c>` at every use — and one state type across that family, which only an associated type can pin. |
+| Plugins, tick systems | Bevy scheduling. |
+| `BehaviorNode<C>` | FlatBT: `Behavior` needs the invocation state as one named type, and `State: Bound` leaves a projection while `State = T` needs a nameable `T`, which a composed tree's state is not. An associated type is the only equality target left, so it takes a trait — and in return position that trait also names a subtree without naming its type. |
+| `ask` | The declared access is what buys scheduling and `par_iter_mut`, so reaching past it has to be deferred through the world. |
 
-Only the last is FlatBT's shape. Its length is incidental; what it carries is
-not. The quantifier `for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<..., C>>` could be written
-at each use, but `Behavior` also needs the invocation state to be one type across
-that whole family. `State: Bound` leaves a separate projection per instantiation,
-and `State = T` pins it only to a type that can be named, which a composed tree's
-state is not. An associated type is the only equality target left, so it takes a
-trait — and in return position that trait also names a subtree without naming its
-type.
-
-A context trait with a GAT (`type View<'a>`) would reduce that quantifier to one
-lifetime and let core's constructors carry real bounds again. It was considered
-and does not pay: Bevy's context genuinely needs five lifetimes, so it could not
-be expressed as `View<'a>`, and core would grow a second context concept for no
-gain here.
+Only `BehaviorNode` is FlatBT's shape, and with the snapshot it is a plain bound
+rather than a higher-ranked one. The `AgentAction` wrapper written to hide the
+old five lifetimes was deleted the day after it was added; a GAT-based context
+trait, considered for the same reason, is likewise unnecessary now.
 
 ## What a real game would settle
 
@@ -323,14 +314,43 @@ should go.
 
 ## Open questions
 
-- Mutable shared access for the serial tick, at the cost of one context type per
-  tick mode.
-- Batch size control for the parallel tick.
-- Whether `entry_mode` wants to vary per agent as well as per tree. It is on the
-  context as a family default and on `BehaviorPlugin` per tree; per agent would
-  mean storing a pointer in every `Behavior`.
-- A revalidation budget per frame, which staggering makes unnecessary for
-  smoothing but not for a hard ceiling.
-- Two trees of the same Rust type cannot both be registered, since the resource
-  is keyed by type. Distinct builders normally produce distinct opaque types, so
-  this only bites a builder parameterized at runtime.
+Closed since the arena:
+
+- **Whether `entry_mode` wants to vary per agent.** It does, and it is free:
+  `read` runs per agent, so the answer can be a field. The arena decides
+  `rethink` there rather than carrying the clock into every node.
+- **Whether the blackboard should be borrows or a snapshot.** Snapshot, at no
+  measurable cost. See above.
+- **Whether `ask` and `scope!` compose.** They do, and `ask` writes the answer
+  into the local rather than leaving it on the blackboard.
+
+Still open:
+
+- **Running the tick off the frame thread.** Gather, run and write back are
+  separable and the snapshot borrows nothing, so it is no longer forbidden —
+  but all three still run in one system. Nothing has asked for it yet.
+- **A `Running` branch below a failed resume holds priority down for good.**
+  `Behavior::tick` re-enters with `Evaluate` when a resumed update *fails*, but a
+  fallback that succeeds or runs hides the failure from it. Only `entry_mode`
+  recovers that shape. Fixing it properly means `Resume` meaning two things
+  inside `select`, which was tried and reverted.
+- **Mutable shared access.** `Param` is read-only, because the parallel tick
+  needs it to be. A serial tick could allow more, at the cost of a second
+  context flavour.
+- **Batch size control for the parallel tick.** Bevy's default is one batch per
+  thread; a tree whose cost varies a lot per agent would want to say otherwise.
+- **A revalidation budget per frame.** Staggering smooths the load but sets no
+  ceiling.
+- **`write` runs every tick**, so a context that assigns unconditionally dirties
+  change detection for the whole population. `set_if_neq` is the answer and the
+  docs say so, but nothing enforces it.
+- **A forgotten `BehaviorPlugin` is a runtime warning, not a compile error.**
+  The tree name is written twice — once at registration, once per agent — and
+  only the component hook catches a mismatch.
+- **Two trees of the same Rust type cannot both be registered**, since the
+  resource is keyed by the builder type. Distinct builder functions normally
+  have distinct opaque types, so this only bites a builder parameterized at
+  runtime — which `Behavior::for_tree` already documents as not configuring
+  anything.
+- **The windowed arena has never been run.** It builds; this container has no
+  display.

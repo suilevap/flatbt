@@ -28,7 +28,7 @@ pub struct Ask<B, P> {
 ///
 /// Succeeds the moment the answer is there, so the node after it can use it.
 ///
-/// Bound to an output slot with `.with(out name)` inside [`scope!`], `ask`
+/// Bound to an output slot with `.with(out name)` inside `scope!`, `ask`
 /// writes the answer into that local instead of leaving it on the blackboard --
 /// which is where the ECS and the scope meet. The question is answered by an
 /// ordinary system writing an ordinary component; the answer arrives as an

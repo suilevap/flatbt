@@ -69,7 +69,7 @@
 //! [`BehaviorContext::read`] gathered, plus what the tree may defer to the
 //! world. It owns its data, so it has no lifetimes, a node signature names
 //! nothing but `Blackboard<Guard>`, and a tree can be exercised without a
-//! [`World`]. [`Agent`](BehaviorContext::Agent) and
+//! [`World`](bevy_ecs::world::World). [`Agent`](BehaviorContext::Agent) and
 //! [`Param`](BehaviorContext::Param) declare the access `read` and `write` use,
 //! which is what lets Bevy schedule the tick against other systems and lets
 //! [`BehaviorPlugin::parallel`] spread agents across threads.

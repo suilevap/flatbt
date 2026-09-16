@@ -121,8 +121,8 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorPlugin<C, F> {
     ///
     /// Agent access is disjoint per entity and shared access is read-only, so
     /// this needs no further declaration. Iteration order becomes unspecified
-    /// and [`Blackboard::commands`] are queued per batch, applied in batch
-    /// completion order once every agent has ticked.
+    /// and what nodes defer through [`Blackboard::queue`] is collected per
+    /// batch, applied in batch completion order once every agent has ticked.
     pub fn parallel(mut self) -> Self {
         self.parallel = true;
         self

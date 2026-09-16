@@ -99,9 +99,8 @@ where
 
 /// The one tree named by `F`, built once and shared by every agent running it.
 ///
-/// Inserted by [`FlatBtPlugin`](crate::FlatBtPlugin) or
-/// [`BehaviorPlugin`](crate::BehaviorPlugin). Trees are immutable definitions,
-/// so they belong in a resource rather than copied into each agent.
+/// Inserted by [`BehaviorPlugin`](crate::BehaviorPlugin). Trees are immutable
+/// definitions, so they belong in a resource rather than copied into each agent.
 #[derive(Resource)]
 pub(crate) struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
     tree: F::Tree,
