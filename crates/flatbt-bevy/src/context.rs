@@ -4,86 +4,113 @@ use core::time::Duration;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::{IterQueryData, QueryData};
 use bevy_ecs::system::{ReadOnlySystemParam, SystemParamItem};
+use bevy_ecs::world::CommandQueue;
 use flatbt_core::EntryMode;
 
-/// Declares what the [`Blackboard`] holds for one family of behavior trees.
+/// The agent view a context reads from and writes back to.
+pub type AgentItem<'w, 's, C> = <<C as BehaviorContext>::Agent as QueryData>::Item<'w, 's>;
+
+/// The shared view a context reads from.
+pub type ParamItem<'w, 's, C> = SystemParamItem<'w, 's, <C as BehaviorContext>::Param>;
+
+/// Declares what one family of behavior trees sees, and how it is gathered.
 ///
-/// The implementing type is a marker: it names the blackboard, and every
-/// [`Behavior<Self>`](crate::Behavior) on an entity is driven by the same system.
-/// Access is declared once here instead of per node, so Bevy can schedule the
-/// tick against other systems and iterate agents in parallel.
+/// The tree does not touch the ECS. It reads and writes [`Snapshot`], a plain
+/// struct this trait fills before the tick and writes back after it. That is
+/// what keeps a tree a value rather than a borrow: no lifetimes in any node
+/// signature, nothing tying an invocation to the update that started it, and a
+/// tree that can be exercised in a unit test with no [`World`] at all.
+///
+/// [`Agent`] and [`Param`] declare the access [`read`] and [`write`] may use.
+/// Bevy schedules the tick against other systems from that declaration, and
+/// [`IterQueryData`] keeps agent access disjoint between entities, which is what
+/// makes [`BehaviorPlugin::parallel`] safe.
+///
+/// [`Snapshot`]: BehaviorContext::Snapshot
+/// [`Agent`]: BehaviorContext::Agent
+/// [`Param`]: BehaviorContext::Param
+/// [`read`]: BehaviorContext::read
+/// [`write`]: BehaviorContext::write
+/// [`BehaviorPlugin::parallel`]: crate::BehaviorPlugin::parallel
 ///
 /// ```
 /// # use bevy_ecs::prelude::*;
 /// # use bevy_ecs::query::QueryData;
-/// # use flatbt_bevy::BehaviorContext;
-/// #[derive(Component)]
+/// # use flatbt_bevy::prelude::*;
+/// #[derive(Component, PartialEq)]
 /// struct Ammo(u32);
 ///
+/// /// What the tree sees. Plain data, no borrows.
+/// struct Guard {
+///     ammo: u32,
+/// }
+///
+/// /// What `read` and `write` may touch.
 /// #[derive(QueryData)]
 /// #[query_data(mutable)]
-/// struct Guard {
+/// struct GuardAccess {
 ///     ammo: &'static mut Ammo,
 /// }
 ///
 /// impl BehaviorContext for Guard {
-///     type Agent = Self;
+///     type Agent = GuardAccess;
 ///     type Param = ();
+///     type Snapshot = Self;
+///
+///     fn read(_: Entity, agent: &GuardAccessItem, _: &()) -> Guard {
+///         Guard { ammo: agent.ammo.0 }
+///     }
+///
+///     fn write(guard: &Guard, agent: &mut GuardAccessItem) {
+///         agent.ammo.set_if_neq(Ammo(guard.ammo));
+///     }
 /// }
 /// ```
 pub trait BehaviorContext: Send + Sync + 'static {
-    /// Per-agent component access, fetched from the entity that owns the behavior.
-    ///
-    /// [`IterQueryData`] restricts this to access that is disjoint between
-    /// entities, which is what makes mutable agent state safe to tick in parallel.
-    /// An entity whose components do not match is skipped.
+    /// Per-agent component access, fetched from the entity that owns the
+    /// behavior. An entity whose components do not match is skipped.
     type Agent: IterQueryData + 'static;
 
     /// Read-only world access shared by every agent: resources, lookup queries.
-    ///
-    /// Use `()` when the tree only touches its own entity. Mutations beyond the
-    /// agent's own components go through [`Blackboard::commands`], which defers them to
-    /// the end of the schedule step.
+    /// Use `()` when nothing beyond the agent is needed.
     type Param: ReadOnlySystemParam + 'static;
+
+    /// What the tree reads and writes: a plain struct, carrying whatever the
+    /// tree needs, including copies of shared values worth taking per agent.
+    type Snapshot: Send + Sync + 'static;
+
+    /// Gathers the snapshot before the tick.
+    ///
+    /// Everything the tree needs has to be decided here, which is also the
+    /// cheapest place to decide it: work done once per agent per tick beats the
+    /// same work done in several nodes, and anything derived costs less to carry
+    /// than what it was derived from.
+    fn read(
+        entity: Entity,
+        agent: &AgentItem<'_, '_, Self>,
+        shared: &ParamItem<'_, '_, Self>,
+    ) -> Self::Snapshot;
+
+    /// Writes the snapshot back after the tick.
+    ///
+    /// Called every tick, so assign through [`Mut::set_if_neq`] or an explicit
+    /// comparison where spurious change detection would cost something.
+    ///
+    /// [`Mut::set_if_neq`]: bevy_ecs::change_detection::DetectChangesMut::set_if_neq
+    fn write(snapshot: &Self::Snapshot, agent: &mut AgentItem<'_, '_, Self>);
 
     /// Decides, per agent per tick, whether a suspended invocation continues or
     /// reconsiders from the root.
     ///
     /// Resuming is the cheap path and the default: a decision already taken
-    /// stands. [`EntryMode::Evaluate`] re-runs the choices above the active node,
-    /// which is what makes a tree react. Deciding here rather than storing a mode
-    /// per agent means the answer comes from the world the tree already declared
-    /// — a timer, a changed resource, a perception component — and costs nothing
-    /// when it is a constant.
+    /// stands, and an invocation that ends reconsiders on its own because the
+    /// next one starts fresh. This is for abandoning a branch that has not
+    /// ended -- a walk that takes a hundred frames while the reason for it
+    /// expires. Deciding here rather than storing a mode per agent means the
+    /// answer comes from the snapshot the tree already has.
     ///
-    /// A fresh invocation always enters as [`EntryMode::Evaluate`], whatever this
-    /// returns.
-    ///
-    /// ```
-    /// # use bevy_ecs::prelude::*;
-    /// # use bevy_ecs::query::QueryData;
-    /// # use flatbt_bevy::prelude::*;
-    /// # #[derive(Component)]
-    /// # struct Ammo(u32);
-    /// # #[derive(Resource)]
-    /// # struct Alarm(bool);
-    /// # #[derive(QueryData)]
-    /// # #[query_data(mutable)]
-    /// # struct Guard { ammo: &'static mut Ammo }
-    /// impl BehaviorContext for Guard {
-    ///     type Agent = Self;
-    ///     type Param = Res<'static, Alarm>;
-    ///
-    ///     fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
-    ///         if bb.shared.is_changed() {
-    ///             EntryMode::Evaluate
-    ///         } else {
-    ///             EntryMode::Resume
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    fn entry_mode(_bt: &Blackboard<'_, '_, '_, '_, '_, Self>) -> EntryMode
+    /// A fresh invocation always enters as [`EntryMode::Evaluate`].
+    fn entry_mode(_bb: &Blackboard<Self>) -> EntryMode
     where
         Self: Sized,
     {
@@ -91,53 +118,107 @@ pub trait BehaviorContext: Send + Sync + 'static {
     }
 }
 
-/// The agent view for a context, as nodes receive it.
-pub type AgentItem<'w, 's, C> = <<C as BehaviorContext>::Agent as QueryData>::Item<'w, 's>;
-
-/// The shared view for a context, as nodes receive it.
-pub type ParamItem<'w, 's, C> = SystemParamItem<'w, 's, <C as BehaviorContext>::Param>;
-
-/// The blackboard every node of a [`Behavior<C>`](crate::Behavior) reads and
-/// writes: what [`BehaviorContext`] declared, for one agent, for one update.
+/// What every node of a [`Behavior<C>`](crate::Behavior) reads and writes: one
+/// agent's snapshot, for one update, plus what it may defer to the world.
 ///
-/// This is the `C` of [`flatbt_core::BtNode`] for Bevy trees, the place a plain
-/// FlatBT tree would keep its own struct. Here it is assembled from borrows
-/// instead of owned, because that is how an ECS hands data out, which is also
-/// why node state can never retain it.
+/// This is the `C` of [`flatbt_core::BtNode`] for Bevy trees. It owns its data,
+/// so it has no lifetimes: nodes name it as `Blackboard<Guard>`, and an action
+/// implements `BtAction<Blackboard<Guard>>` without spelling anything else.
 ///
-/// [`Deref`] targets the agent view, so `bb.health` reaches the agent's
-/// component while `bb.entity`, `bb.shared`, and `bb.commands` stay available on
-/// the context itself.
-///
-/// The lifetimes are an implementation detail of the tick system. Write
-/// `Blackboard<Guard>` and let them be inferred.
-pub struct Blackboard<'w, 's, 'q, 'a, 'c, C: BehaviorContext> {
+/// [`Deref`] targets the snapshot, so `bb.ammo` reaches it while `bb.entity`
+/// stays on the blackboard itself.
+pub struct Blackboard<C: BehaviorContext> {
     /// The entity that owns the behavior.
     pub entity: Entity,
-    /// Per-agent component access declared by [`BehaviorContext::Agent`].
-    pub agent: AgentItem<'a, 'q, C>,
-    /// Shared read-only access declared by [`BehaviorContext::Param`].
-    pub shared: &'a ParamItem<'w, 's, C>,
-    /// Deferred world mutation. Applied after the tick system finishes.
-    pub commands: Commands<'c, 'c>,
+    /// What [`BehaviorContext::read`] gathered for this update.
+    pub agent: C::Snapshot,
+    /// Absent until a node defers something. Most agents never do, and an empty
+    /// queue is not free: dropping one walks its buffer, which at one per agent
+    /// per tick cost a fifth of the whole tick.
+    queue: Option<CommandQueue>,
 }
 
-impl<C: BehaviorContext> Blackboard<'_, '_, '_, '_, '_, C> {
+impl<C: BehaviorContext> Blackboard<C> {
+    /// A blackboard over `snapshot`, as the tick system builds one.
+    pub fn new(entity: Entity, snapshot: C::Snapshot) -> Self {
+        Self {
+            entity,
+            agent: snapshot,
+            queue: None,
+        }
+    }
+
+    /// Defers a world edit beyond what the snapshot can carry: spawning,
+    /// despawning, or touching another entity. Applied after the tick system.
+    ///
+    /// Edits to the agent's own components belong in the snapshot, which
+    /// [`BehaviorContext::write`] puts back without going through the world.
+    pub fn queue(&mut self, command: impl Command<Out = ()>) {
+        self.queue.get_or_insert_default().push(command);
+    }
+
     /// Commands targeting the agent entity.
-    pub fn agent_commands(&mut self) -> EntityCommands<'_> {
-        self.commands.entity(self.entity)
+    pub fn agent_commands(&mut self) -> EntityCommandQueue<'_> {
+        EntityCommandQueue {
+            entity: self.entity,
+            queue: self.queue.get_or_insert_default(),
+        }
+    }
+
+    /// Hands the deferred edits to the caller, if there were any.
+    pub(crate) fn take_queue(&mut self) -> Option<CommandQueue> {
+        self.queue.take()
     }
 }
 
-impl<'q, 'a, C: BehaviorContext> Deref for Blackboard<'_, '_, 'q, 'a, '_, C> {
-    type Target = AgentItem<'a, 'q, C>;
+/// Deferred edits aimed at one entity. Returned by
+/// [`Blackboard::agent_commands`].
+pub struct EntityCommandQueue<'a> {
+    entity: Entity,
+    queue: &'a mut CommandQueue,
+}
+
+impl EntityCommandQueue<'_> {
+    /// Inserts a bundle on the entity.
+    pub fn insert(&mut self, bundle: impl Bundle) -> &mut Self {
+        let entity = self.entity;
+        self.queue.push(move |world: &mut World| {
+            if let Ok(mut entity) = world.get_entity_mut(entity) {
+                entity.insert(bundle);
+            }
+        });
+        self
+    }
+
+    /// Removes a bundle from the entity.
+    pub fn remove<B: Bundle>(&mut self) -> &mut Self {
+        let entity = self.entity;
+        self.queue.push(move |world: &mut World| {
+            if let Ok(mut entity) = world.get_entity_mut(entity) {
+                entity.remove::<B>();
+            }
+        });
+        self
+    }
+
+    /// Despawns the entity.
+    pub fn despawn(&mut self) {
+        let entity = self.entity;
+        self.queue.push(move |world: &mut World| {
+            world.despawn(entity);
+        });
+    }
+}
+
+impl<C: BehaviorContext> Deref for Blackboard<C> {
+    type Target = C::Snapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.agent
     }
 }
 
-impl<C: BehaviorContext> DerefMut for Blackboard<'_, '_, '_, '_, '_, C> {
+impl<C: BehaviorContext> DerefMut for Blackboard<C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.agent
     }
@@ -149,34 +230,7 @@ impl<C: BehaviorContext> DerefMut for Blackboard<'_, '_, '_, '_, '_, C> {
 /// A population that reconsiders on a timer would otherwise do it on the same
 /// frame and spike. Each agent's slot is derived from its [`Entity`], so the
 /// work spreads across the period and nothing is stored per agent. Pass the
-/// clock the context already reads:
-///
-/// ```
-/// # use core::time::Duration;
-/// # use bevy_ecs::prelude::*;
-/// # use bevy_ecs::query::QueryData;
-/// # use flatbt_bevy::prelude::*;
-/// # #[derive(Component)]
-/// # struct Ammo(u32);
-/// # #[derive(Resource)]
-/// # struct Clock { elapsed: Duration, delta: Duration }
-/// # #[derive(QueryData)]
-/// # #[query_data(mutable)]
-/// # struct Guard { ammo: &'static mut Ammo }
-/// impl BehaviorContext for Guard {
-///     type Agent = Self;
-///     type Param = Res<'static, Clock>;
-///
-///     fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
-///         evaluate_every(
-///             Duration::from_millis(200),
-///             bb.shared.elapsed,
-///             bb.shared.delta,
-///             bb.entity,
-///         )
-///     }
-/// }
-/// ```
+/// clock the snapshot already carries.
 ///
 /// A tick longer than `period` still evaluates once, never twice.
 pub fn evaluate_every(
@@ -200,8 +254,7 @@ pub fn evaluate_every(
     // The slot boundary falls inside this tick exactly when the offset clock
     // has less than a tick left of its current period. One remainder rather
     // than the two divisions the quotients would take: this runs once per agent
-    // per tick, and at that rate a 128-bit division costs more than the tree it
-    // is guarding.
+    // per tick, and a constant period folds it into a multiply.
     if nanos(elapsed).saturating_add(phase) % period < delta {
         EntryMode::Evaluate
     } else {

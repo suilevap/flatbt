@@ -137,3 +137,26 @@ than its effects repeated.
 Found by `games/arena`, where the symptom was an agent that never reconsidered.
 Tests: `selector_rescans_priority_when_its_resumed_branch_fails` and
 `a_failed_continuation_is_not_rerun_by_the_rescan` in `tests/resume.rs`.
+
+## 2026-09-16 — The Bevy blackboard is a snapshot
+
+`Blackboard<C>` held the update's borrows: five lifetimes, a higher-ranked bound
+on every tree, `BehaviorNode` carrying an associated-type equality across that
+family, and bounds removed from `check`, `leaf` and `compute` in core so
+closures could be inferred against it. It also fixed a ceiling: a node holding
+live borrows cannot outlive the system run.
+
+It now holds a plain struct. `BehaviorContext` gained `Snapshot`, `read` and
+`write`; the tick is gather, run, write back. `Blackboard<C>` has no lifetimes,
+`BehaviorNode` is an ordinary bound, `BtAction<Blackboard<C>>` is writable
+directly (the `AgentAction` wrapper added for the old signature is deleted), and
+node parameters work again, so `scope!` composes. A tree is a value that takes a
+value: `games/arena/tests/trees.rs` runs the game's real trees with no `World`.
+
+Cost, measured in `games/arena` at 100k agents: 4.1 ms serial and 1.9 ms
+parallel against 4.2 / 1.9 borrowed — once the per-agent `CommandQueue` was made
+lazy. An owned empty one per agent per tick was a fifth of the whole tick:
+dropping a `CommandQueue` walks its buffer whether or not anything is in it.
+
+`read` takes the entity, so anything derived is decided once per agent per tick
+rather than in each node that wants it.

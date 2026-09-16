@@ -273,31 +273,37 @@ tree, a pause component, a public tick, two policy flags. That pattern is the
 finding. The requirements below came from the first look at a real game, and
 they do not point at polish.
 
-### Live borrows are the choice everything else follows from
+### Live borrows were the choice everything else followed from — and are gone
 
-`Blackboard<C>` holds the update's borrows. Five lifetimes, the higher-ranked
-bound, `BehaviorNode`, and the constructor changes in core are all downstream of
-that one decision, and so is the ceiling on what the integration can do:
+`Blackboard<C>` used to hold the update's borrows. Five lifetimes, the
+higher-ranked bound, the shape of `BehaviorNode`, and the constructor changes in
+core were all downstream of that one decision, and so was the ceiling on what
+the integration could do: a node holding live borrows cannot outlive the system
+run, so a tree could never leave the frame thread.
 
-- **Running a tree off the frame thread** is impossible. A node holding live
-  borrows cannot outlive the system run. Suspending *between* ticks already
-  works, which spreads a tree over frames, but the decision itself always runs
-  inside the tick.
-- **An action that wants an arbitrary query** can only have what the context
-  declared upfront. The declaration is what buys scheduling and `par_iter_mut`,
-  so this is a trade, not an oversight -- but it is a trade the author cannot
-  opt out of per action.
+It now holds a **snapshot**: `BehaviorContext::read` gathers a plain struct
+before the tick and `write` puts it back after. Every consequence reversed.
+`Blackboard<C>` has no lifetimes, so a node signature names nothing but
+`Blackboard<Guard>` and an action implements `BtAction<Blackboard<Guard>>`
+directly. `BehaviorNode` collapsed to an ordinary bound with one associated
+type. The `AgentAction` wrapper added to hide the lifetimes was deleted the same
+day. `params` work again, so `scope!` composes. And a tree is a value that takes
+a value, which `games/arena/tests/trees.rs` exercises with no `World` at all.
 
-The alternative is a **snapshot context**: an owned struct the game fills from
-the ECS before the tick, and drains as intents afterwards. It reverses every
-consequence above. `C` becomes a plain struct with no lifetimes, so the
-quantifier, `BehaviorNode` and the core constructor changes are all unnecessary
-and `leaf`/`check` keep their bounds. A tree can then run on a task, over
-several frames, or on another thread, because it borrows nothing. An action that
-needs world data submits a request and reads the answer from the next snapshot,
-which is what `BtAction`'s lifecycle is already shaped for. A turn is a snapshot.
+It cost nothing measurable. At 100 000 agents the arena ticks in 4.1 ms serial
+and 1.9 ms parallel, against 4.2 / 1.9 for the borrowed version -- but only
+after the per-agent `CommandQueue` was made lazy. Owning an empty one per agent
+per tick cost a fifth of the whole tick, because dropping a `CommandQueue` walks
+its buffer whether or not anything is in it.
 
-What it costs is copying data in and out, and acting on data one tick stale.
+What remains true: an action still cannot run an arbitrary query. The declared
+access is what buys scheduling and `par_iter_mut`, so `ask` stays the way to
+reach past it, and it is the right split — the snapshot carries what almost
+every tree needs or what is free to gather, and `ask` pays for what only one
+subtree wants.
+
+What is unlocked but not built: the three steps are separable, so the tick could
+run on a task or over several frames. Today all three run in one system.
 
 ### Tree storage
 

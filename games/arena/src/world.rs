@@ -6,13 +6,13 @@ use bevy::prelude::*;
 
 pub const ARENA: f32 = 900.0;
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, PartialEq)]
 pub struct Health(pub f32);
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, PartialEq)]
 pub struct Ammo(pub u32);
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, PartialEq)]
 pub struct Speed(pub f32);
 
 /// Static geometry a coward can hide behind.
@@ -24,7 +24,7 @@ pub struct Cover;
 pub struct WantsCover;
 
 /// The answer. Absent until the request is served.
-#[derive(Component, Debug)]
+#[derive(Component, Debug, PartialEq)]
 pub struct CoverTarget(pub Vec2);
 
 #[derive(Component)]

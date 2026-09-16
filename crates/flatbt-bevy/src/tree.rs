@@ -7,38 +7,22 @@ use crate::plugin::warn_unregistered;
 use crate::{BehaviorContext, Blackboard};
 
 /// How a tick re-enters a suspended invocation, as a tree can override it.
-///
-/// Higher-ranked because a stored tree is ticked at every update, each with its
-/// own borrows: see [`BehaviorNode`].
-pub type EntryModeFn<C> =
-    for<'w, 's, 'q, 'a, 'c> fn(&Blackboard<'w, 's, 'q, 'a, 'c, C>) -> EntryMode;
+pub type EntryModeFn<C> = fn(&Blackboard<C>) -> EntryMode;
 
 /// A tree that can drive agents of context `C`, with one state type.
 ///
-/// `Blackboard<C>` carries the update's borrows, so being a node for it means being one
-/// at every update: `for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>>`.
-/// That much is only long to write. What this trait adds is `State = Self::Data`,
-/// which pins the invocation state to a *single* type across that whole family,
-/// and that cannot be written inline:
-///
-/// - `BtNode<..., State: Default + Send + Sync>` is a bound, not an equality, so
-///   the state stays a separate projection per instantiation and
-///   [`Behavior`] has no size to reserve.
-/// - `BtNode<..., State = u32>` does pin it, but only to a type that can be
-///   named. A composed tree's state is nested control state over closures, which
-///   cannot be.
-///
-/// An associated type is the only equality target left, so it takes a trait. In
-/// return position it then names a subtree without naming its type:
-/// `fn patrol() -> impl BehaviorNode<Guard>`.
+/// What this adds over `BtNode<Blackboard<C>>` is `State = Self::Data`, which
+/// pins the invocation state to a single named type so [`Behavior`] has a size
+/// to reserve. A bound would leave it a projection; an equality to a written-out
+/// type cannot be spelled, because a composed tree's state is nested control
+/// state over closures. An associated type is the only equality target left, so
+/// it takes a trait -- and in return position it then names a subtree without
+/// naming its type: `fn patrol() -> impl BehaviorNode<Guard>`.
 ///
 /// Bevy resources and components must be `Sync`, so a tree and its inline state
 /// carry that requirement on top of FlatBT's own bounds.
 pub trait BehaviorNode<C: BehaviorContext>:
-    for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>, State = Self::Data>
-    + Send
-    + Sync
-    + 'static
+    BtNode<Blackboard<C>, State = Self::Data> + Send + Sync + 'static
 {
     /// Inline invocation state for the whole tree.
     type Data: Default + Send + Sync + 'static;
@@ -47,10 +31,7 @@ pub trait BehaviorNode<C: BehaviorContext>:
 impl<C, N, S> BehaviorNode<C> for N
 where
     C: BehaviorContext,
-    N: for<'w, 's, 'q, 'a, 'c> BtNode<Blackboard<'w, 's, 'q, 'a, 'c, C>, State = S>
-        + Send
-        + Sync
-        + 'static,
+    N: BtNode<Blackboard<C>, State = S> + Send + Sync + 'static,
     S: Default + Send + Sync + 'static,
 {
     type Data = S;
@@ -67,15 +48,22 @@ where
 /// # use bevy_ecs::prelude::*;
 /// # use bevy_ecs::query::QueryData;
 /// # use flatbt_bevy::prelude::*;
-/// # #[derive(Component)]
+/// # #[derive(Component, PartialEq)]
 /// # struct Ammo(u32);
 /// # #[derive(QueryData)]
 /// # #[query_data(mutable)]
-/// # struct Guard { ammo: &'static mut Ammo }
-/// # impl BehaviorContext for Guard { type Agent = Self; type Param = (); }
+/// # struct GuardAccess { ammo: &'static mut Ammo }
+/// # struct Guard { ammo: u32 }
+/// # impl BehaviorContext for Guard {
+/// #     type Agent = GuardAccess;
+/// #     type Param = ();
+/// #     type Snapshot = Self;
+/// #     fn read(_: Entity, a: &GuardAccessItem, _: &()) -> Guard { Guard { ammo: a.ammo.0 } }
+/// #     fn write(g: &Guard, a: &mut GuardAccessItem) { a.ammo.set_if_neq(Ammo(g.ammo)); }
+/// # }
 /// fn advance(step: u32) -> impl BehaviorNode<Guard> {
 ///     leaf(move |bb: &mut Blackboard<Guard>| {
-///         bb.ammo.0 += step;
+///         bb.ammo += step;
 ///         NodeResult::Success
 ///     })
 /// }
@@ -156,17 +144,24 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
 /// # use bevy_ecs::prelude::*;
 /// # use bevy_ecs::query::QueryData;
 /// # use flatbt_bevy::prelude::*;
-/// # #[derive(Component)]
+/// # #[derive(Component, PartialEq)]
 /// # struct Ammo(u32);
 /// # #[derive(QueryData)]
 /// # #[query_data(mutable)]
-/// # struct Guard { ammo: &'static mut Ammo }
-/// # impl BehaviorContext for Guard { type Agent = Self; type Param = (); }
+/// # struct GuardAccess { ammo: &'static mut Ammo }
+/// # struct Guard { ammo: u32 }
+/// # impl BehaviorContext for Guard {
+/// #     type Agent = GuardAccess;
+/// #     type Param = ();
+/// #     type Snapshot = Self;
+/// #     fn read(_: Entity, a: &GuardAccessItem, _: &()) -> Guard { Guard { ammo: a.ammo.0 } }
+/// #     fn write(g: &Guard, a: &mut GuardAccessItem) { a.ammo.set_if_neq(Ammo(g.ammo)); }
+/// # }
 /// fn shoot() -> impl BehaviorNode<Guard> {
 ///     seq((
-///         check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+///         check(|bb: &Blackboard<Guard>| bb.ammo > 0),
 ///         leaf(|bb: &mut Blackboard<Guard>| {
-///             bb.ammo.0 -= 1;
+///             bb.ammo -= 1;
 ///             NodeResult::Success
 ///         }),
 ///     ))
@@ -220,12 +215,7 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     /// The result is not reported anywhere: at the root it says only that this
     /// invocation ended, and the next tick starts a new one. A tree that has
     /// something to say says it through `bb`.
-    pub(crate) fn tick(
-        &mut self,
-        tree: &F::Tree,
-        bb: &mut Blackboard<'_, '_, '_, '_, '_, C>,
-        mode: EntryMode,
-    ) {
+    pub(crate) fn tick(&mut self, tree: &F::Tree, bb: &mut Blackboard<C>, mode: EntryMode) {
         // A fresh invocation always enters as Evaluate, whatever the caller asks
         // for, and a terminal result drops invocation state. Same as FlatBT's
         // own root lifetime in `update`.

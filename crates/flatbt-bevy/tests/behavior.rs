@@ -17,20 +17,43 @@ struct Reloading;
 #[derive(Resource)]
 struct Alarm(bool);
 
+/// What the guard trees see: plain data, gathered once per tick.
+struct Guard {
+    ammo: u32,
+    fired: u32,
+    alarm: bool,
+    alarm_changed: bool,
+}
+
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct Guard {
+struct GuardAccess {
     ammo: &'static mut Ammo,
     fired: &'static mut Fired,
 }
 
 impl BehaviorContext for Guard {
-    type Agent = Self;
+    type Agent = GuardAccess;
     type Param = Res<'static, Alarm>;
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &GuardAccessItem, alarm: &Res<Alarm>) -> Guard {
+        Guard {
+            ammo: agent.ammo.0,
+            fired: agent.fired.0,
+            alarm: alarm.0,
+            alarm_changed: alarm.is_changed(),
+        }
+    }
+
+    fn write(guard: &Guard, agent: &mut GuardAccessItem) {
+        agent.ammo.set_if_neq(Ammo(guard.ammo));
+        agent.fired.set_if_neq(Fired(guard.fired));
+    }
 
     /// Standing decisions hold until the alarm itself changes.
     fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
-        if bb.shared.is_changed() {
+        if bb.alarm_changed {
             EntryMode::Evaluate
         } else {
             EntryMode::Resume
@@ -40,11 +63,11 @@ impl BehaviorContext for Guard {
 
 fn shoot() -> impl BehaviorNode<Guard> {
     seq((
-        check(|bb: &Blackboard<Guard>| bb.shared.0),
-        check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+        check(|bb: &Blackboard<Guard>| bb.alarm),
+        check(|bb: &Blackboard<Guard>| bb.ammo > 0),
         leaf(|bb: &mut Blackboard<Guard>| {
-            bb.ammo.0 -= 1;
-            bb.fired.0 += 1;
+            bb.ammo -= 1;
+            bb.fired += 1;
             NodeResult::Success
         }),
     ))
@@ -142,16 +165,10 @@ fn nodes_defer_world_edits_through_commands() {
 /// A named node type, so `Behavior<Guard, Recharge>` can be written out.
 struct Recharge(u32);
 
-impl<C: BehaviorContext> BtNode<Blackboard<'_, '_, '_, '_, '_, C>> for Recharge {
+impl<C: BehaviorContext> BtNode<Blackboard<C>> for Recharge {
     type State = u32;
 
-    fn update(
-        &self,
-        elapsed: &mut u32,
-        _: &mut Blackboard<'_, '_, '_, '_, '_, C>,
-        _: (),
-        _: EntryMode,
-    ) -> NodeResult {
+    fn update(&self, elapsed: &mut u32, _: &mut Blackboard<C>, _: (), _: EntryMode) -> NodeResult {
         *elapsed += 1;
         if *elapsed >= self.0 {
             NodeResult::Success
@@ -193,16 +210,10 @@ impl Default for Trail {
     }
 }
 
-impl<C: BehaviorContext> BtNode<Blackboard<'_, '_, '_, '_, '_, C>> for Bulky {
+impl<C: BehaviorContext> BtNode<Blackboard<C>> for Bulky {
     type State = Trail;
 
-    fn update(
-        &self,
-        _: &mut Trail,
-        _: &mut Blackboard<'_, '_, '_, '_, '_, C>,
-        _: (),
-        _: EntryMode,
-    ) -> NodeResult {
+    fn update(&self, _: &mut Trail, _: &mut Blackboard<C>, _: (), _: EntryMode) -> NodeResult {
         NodeResult::Success
     }
 }
@@ -220,9 +231,9 @@ fn only_agent_state_lives_in_the_component() {
 fn hold_or_fire() -> impl BehaviorNode<Guard> {
     select((
         seq((
-            check(|bb: &Blackboard<Guard>| bb.shared.0),
+            check(|bb: &Blackboard<Guard>| bb.alarm),
             leaf(|bb: &mut Blackboard<Guard>| {
-                bb.fired.0 += 1;
+                bb.fired += 1;
                 NodeResult::Success
             }),
         )),
@@ -288,7 +299,7 @@ fn a_run_condition_on_the_set_gates_self_registered_ticks() {
 
 fn advance(step: u32) -> impl BehaviorNode<Guard> {
     leaf(move |bb: &mut Blackboard<Guard>| {
-        bb.fired.0 += step;
+        bb.fired += step;
         NodeResult::Success
     })
 }
@@ -473,30 +484,49 @@ struct Clock {
     tick: u32,
 }
 
+struct Fighter {
+    journal: Vec<u32>,
+    tick: u32,
+}
+
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct Fighter {
+struct FighterAccess {
     _turn: &'static Turn,
     journal: &'static mut Journal,
 }
 
 impl BehaviorContext for Fighter {
-    type Agent = Self;
+    type Agent = FighterAccess;
     type Param = Res<'static, Clock>;
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &FighterAccessItem, clock: &Res<Clock>) -> Fighter {
+        Fighter {
+            journal: agent.journal.0.clone(),
+            tick: clock.tick,
+        }
+    }
+
+    fn write(fighter: &Fighter, agent: &mut FighterAccessItem) {
+        if agent.journal.0 != fighter.journal {
+            agent.journal.0.clone_from(&fighter.journal);
+        }
+    }
 }
 
 /// A turn that spans more than one tick: act, wait, act, then hand the turn on.
 fn take_turn() -> impl BehaviorNode<Fighter> {
     seq((
         leaf(|bb: &mut Blackboard<Fighter>| {
-            let tick = bb.shared.tick;
-            bb.journal.0.push(tick);
+            let tick = bb.tick;
+            bb.journal.push(tick);
             NodeResult::Success
         }),
         Recharge(2),
         leaf(|bb: &mut Blackboard<Fighter>| {
-            let tick = bb.shared.tick;
-            bb.journal.0.push(tick);
+            let tick = bb.tick;
+            bb.journal.push(tick);
             bb.agent_commands().remove::<Turn>();
             NodeResult::Success
         }),
@@ -603,25 +633,42 @@ struct WantsSupply;
 #[derive(Component)]
 struct Supplied(u32);
 
+struct Runner {
+    ammo: u32,
+    supply: Option<u32>,
+}
+
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct Runner {
+struct RunnerAccess {
     ammo: &'static mut Ammo,
     supply: Option<&'static Supplied>,
 }
 
 impl BehaviorContext for Runner {
-    type Agent = Self;
+    type Agent = RunnerAccess;
     type Param = ();
-    // Deliberately the default: a tree that asks must recover without anyone
-    // telling it to reconsider.
+    type Snapshot = Self;
+    // Entry mode is deliberately the default: a tree that asks must recover
+    // without anyone telling it to reconsider.
+
+    fn read(_: Entity, agent: &RunnerAccessItem, _: &()) -> Runner {
+        Runner {
+            ammo: agent.ammo.0,
+            supply: agent.supply.map(|s| s.0),
+        }
+    }
+
+    fn write(runner: &Runner, agent: &mut RunnerAccessItem) {
+        agent.ammo.set_if_neq(Ammo(runner.ammo));
+    }
 }
 
 fn fetch_supply() -> impl BehaviorNode<Runner> {
     seq((
         ask(WantsSupply, |bb: &Blackboard<Runner>| bb.supply.is_some()),
         leaf(|bb: &mut Blackboard<Runner>| {
-            bb.ammo.0 += bb.supply.map_or(0, |s| s.0);
+            bb.ammo += bb.supply.unwrap_or(0);
             NodeResult::Success
         }),
     ))

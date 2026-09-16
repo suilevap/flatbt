@@ -13,6 +13,7 @@ cargo run --release --bin arena          # windowed, 20k enemies, [ and ] change
 cargo run --release --bin arena -- 100000
 cargo run --release --bin bench          # headless, serial vs parallel
 cargo run --release --bin scaling        # a control: what this machine's task pool can do
+cargo test --release                     # the trees, with no Bevy app
 ```
 
 It is its own workspace, so the repository's checks never build Bevy's renderer.
@@ -34,19 +35,28 @@ a 4-core Xeon at 2.8 GHz:
 
 | agents  | serial  | `.parallel()` | speedup |
 | ------- | ------- | ------------- | ------- |
-| 10 000  | 0.55 ms | 0.47 ms       | 1.18x   |
-| 50 000  | 2.09 ms | 1.14 ms       | 1.84x   |
-| 100 000 | 4.20 ms | 1.89 ms       | 2.23x   |
-| 200 000 | 8.34 ms | 3.72 ms       | 2.24x   |
-| 400 000 | 17.1 ms | 6.57 ms       | 2.60x   |
+| 10 000  | 0.52 ms | 0.49 ms       | 1.07x   |
+| 50 000  | 2.16 ms | 1.12 ms       | 1.93x   |
+| 100 000 | 4.12 ms | 1.88 ms       | 2.20x   |
+| 200 000 | 8.41 ms | 3.65 ms       | 2.30x   |
+| 400 000 | 16.6 ms | 7.03 ms       | 2.37x   |
 
-About 42 ns per agent per tick serially, of which roughly 1 ns is the
+About 41 ns per agent per tick serially, of which roughly 1 ns is the
 revalidation guard deciding whether this agent reconsiders at all, and about
 8 ns is `select` rescanning priority after a resumed branch fails. Below
 ~5 000 agents the task pool costs more than it saves and `.parallel()` is a
 loss, which is why it is opt-in rather than the default.
 
 ## What building it changed
+
+**The blackboard is a snapshot, not a pile of borrows.** `BehaviorContext`
+gathers a plain struct before the tick and writes it back after. Nothing in a
+tree, node or action signature carries a lifetime any more, node parameters work
+again, and `tests/trees.rs` runs these very trees with no Bevy app at all. It
+measured the same as the borrowed version -- but only after the per-agent
+`CommandQueue` was made lazy: owning an empty one per agent per tick cost a
+fifth of the whole tick, because dropping a `CommandQueue` walks its buffer
+whether or not anything is in it.
 
 **`select` rescans priority when its resumed branch fails.** A resumed branch
 that fails leaves the selector choosing among children it never consulted, so
@@ -59,15 +69,6 @@ which was already right for them. It costs about 8 ns per agent per tick here.
 **`ask` is now a node the integration ships.** Asking the world something the
 context never declared was 25 lines of hand-written `BtAction` per question.
 It is one line: `ask(WantsCover, |bb| bb.cover.is_some())`.
-
-**Actions no longer name the blackboard's lifetimes.** `BtAction` is generic
-over its context, so implementing it for a blackboard meant writing
-`Blackboard<'_, '_, '_, '_, '_, Fighter>` in the impl header and in every
-method -- five lifetimes that are an artefact of assembling the blackboard from
-borrows and that no action ever mentions. `AgentAction` fixes the context, so
-its methods elide them like any ordinary function, and `act` turns one into a
-node. The game now spells that signature zero times; the whole integration
-spells it once, in the bridge impl.
 
 **`evaluate_every` no longer divides 128-bit integers.** It ran two of them per
 agent per tick, which on a real tree cost more than the tree: 57 ns per agent

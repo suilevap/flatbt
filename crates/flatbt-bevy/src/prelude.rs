@@ -9,7 +9,7 @@ pub use flatbt_core::{
 };
 
 #[cfg(feature = "action")]
-pub use crate::{AgentAction, act, ask};
+pub use crate::ask;
 pub use crate::{
     Behavior, BehaviorContext, BehaviorNode, BehaviorPlugin, BehaviorSystems, Blackboard,
     TreeBuilder, evaluate_every,

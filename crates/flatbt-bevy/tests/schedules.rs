@@ -9,20 +9,35 @@ use flatbt_bevy::prelude::*;
 #[derive(Component, Debug, PartialEq)]
 struct Fired(u32);
 
+struct Agent {
+    fired: u32,
+}
+
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct Agent {
+struct AgentAccess {
     fired: &'static mut Fired,
 }
 
 impl BehaviorContext for Agent {
-    type Agent = Self;
+    type Agent = AgentAccess;
     type Param = ();
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &AgentAccessItem, _: &()) -> Agent {
+        Agent {
+            fired: agent.fired.0,
+        }
+    }
+
+    fn write(agent: &Agent, access: &mut AgentAccessItem) {
+        access.fired.set_if_neq(Fired(agent.fired));
+    }
 }
 
 fn fire() -> impl BehaviorNode<Agent> {
     leaf(|bb: &mut Blackboard<Agent>| {
-        bb.fired.0 += 1;
+        bb.fired += 1;
         NodeResult::Success
     })
 }

@@ -9,66 +9,109 @@ use core::time::Duration;
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
-use flatbt::prelude::choose;
+use flatbt::prelude::{BtAction, action, choose};
 
 use crate::world::{Ammo, Arena, CoverTarget, Health, Speed, WantsCover};
 
-/// What every enemy tree may touch. Declared once, for all three.
-#[derive(QueryData)]
-#[query_data(mutable)]
+/// What every enemy tree sees. Plain data: the tree never touches the ECS, so
+/// nothing in a node signature carries a lifetime, and any of this can be
+/// exercised in a unit test with no `World`.
+///
+/// One snapshot serves all three trees. Shared values worth having per agent --
+/// the player's position -- are copied in here rather than borrowed, so they
+/// cost eight bytes instead of a lifetime parameter.
 pub struct Fighter {
-    pub transform: &'static mut Transform,
-    pub health: &'static mut Health,
-    pub ammo: &'static mut Ammo,
-    pub speed: &'static Speed,
+    pub position: Vec2,
+    pub health: f32,
+    pub ammo: u32,
+    pub speed: f32,
     /// Filled by `resolve_cover_requests`, a tick after a tree asks.
-    pub cover: Option<&'static CoverTarget>,
+    pub cover: Option<Vec2>,
+    pub player: Vec2,
+    /// Whether this agent's turn to reconsider falls in this tick. Decided in
+    /// `read`, where it costs one bool instead of carrying two `Duration`s.
+    pub rethink: bool,
 }
 
-/// How often a fighter is allowed to change its mind.
+/// The access `read` and `write` may use. Declared once, for all three trees.
+#[derive(QueryData)]
+#[query_data(mutable)]
+pub struct FighterAccess {
+    transform: &'static mut Transform,
+    health: &'static mut Health,
+    ammo: &'static mut Ammo,
+    speed: &'static Speed,
+    cover: Option<&'static CoverTarget>,
+}
+
+/// How often a fighter is allowed to abandon what it is doing.
 ///
-/// Not a detail: a tree that only ever resumes never leaves the branch it is
-/// in, so `select` never rescans and `choose!` never re-picks. Every reactive
-/// tree here -- the coward switching between fighting and hiding, `take_cover`
-/// noticing that its request was answered -- depends on this. `evaluate_every`
-/// staggers the agents so the whole population does not reconsider on one frame.
+/// A tree reconsiders on its own whenever an invocation ends, so this is not
+/// what makes it reactive. It is for the branch that does *not* end: walking to
+/// cover takes a hundred frames, and a coward healed halfway there should turn
+/// around. `evaluate_every` staggers the agents so the whole population does
+/// not reconsider on one frame.
 const RETHINK: Duration = Duration::from_millis(100);
 
 impl BehaviorContext for Fighter {
-    type Agent = Self;
+    type Agent = FighterAccess;
     type Param = Res<'static, Arena>;
+    type Snapshot = Self;
+
+    fn read(entity: Entity, agent: &FighterAccessItem, arena: &Res<Arena>) -> Fighter {
+        Fighter {
+            position: agent.transform.translation.truncate(),
+            health: agent.health.0,
+            ammo: agent.ammo.0,
+            speed: agent.speed.0,
+            cover: agent.cover.map(|c| c.0),
+            player: arena.player,
+            rethink: evaluate_every(RETHINK, arena.elapsed, arena.delta, entity)
+                == EntryMode::Evaluate,
+        }
+    }
+
+    fn write(fighter: &Fighter, agent: &mut FighterAccessItem) {
+        // Written through `set_if_neq` so an agent that stood still does not
+        // dirty its transform and drag the rest of the engine along with it.
+        let moved = fighter.position.extend(agent.transform.translation.z);
+        if agent.transform.translation != moved {
+            agent.transform.translation = moved;
+        }
+        agent.health.set_if_neq(Health(fighter.health));
+        agent.ammo.set_if_neq(Ammo(fighter.ammo));
+    }
 
     fn entry_mode(bb: &Blackboard<Fighter>) -> EntryMode {
-        evaluate_every(RETHINK, bb.shared.elapsed, bb.shared.delta, bb.entity)
+        if bb.rethink {
+            EntryMode::Evaluate
+        } else {
+            EntryMode::Resume
+        }
     }
 }
 
 // --- shared pieces -----------------------------------------------------------
 
-fn position(bb: &Blackboard<Fighter>) -> Vec2 {
-    bb.transform.translation.truncate()
-}
-
 fn range_to_player(bb: &Blackboard<Fighter>) -> f32 {
-    position(bb).distance(bb.shared.player)
+    bb.position.distance(bb.player)
 }
 
 fn step_towards(bb: &mut Blackboard<Fighter>, target: Vec2) {
-    let from = position(bb);
-    let step = (target - from).normalize_or_zero() * bb.speed.0;
-    bb.transform.translation += step.extend(0.0);
+    let step = (target - bb.position).normalize_or_zero() * bb.speed;
+    bb.position += step;
 }
 
 fn hurt(bb: &Blackboard<Fighter>) -> bool {
-    bb.health.0 < 40.0
+    bb.health < 40.0
 }
 
 fn has_ammo(bb: &Blackboard<Fighter>) -> bool {
-    bb.ammo.0 > 0
+    bb.ammo > 0
 }
 
 fn shoot(bb: &mut Blackboard<Fighter>) -> NodeResult {
-    bb.ammo.0 -= 1;
+    bb.ammo -= 1;
     NodeResult::Success
 }
 
@@ -78,24 +121,24 @@ struct Reload {
     rounds: u32,
 }
 
-impl AgentAction<Fighter> for Reload {
+impl BtAction<Blackboard<Fighter>> for Reload {
     /// Ticks elapsed so far. Kept between updates; dropped when it ends.
     type State = u32;
 
-    fn start(&self, _: &mut Blackboard<Fighter>) -> Option<u32> {
+    fn start(&self, _: &mut Blackboard<Fighter>, _: ()) -> Option<u32> {
         Some(0)
     }
 
-    fn is_in_progress(&self, elapsed: &u32, _: &Blackboard<Fighter>) -> bool {
+    fn is_in_progress(&self, elapsed: &u32, _: &Blackboard<Fighter>, _: ()) -> bool {
         *elapsed < self.ticks
     }
 
-    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<Fighter>) {
+    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<Fighter>, _: ()) {
         *elapsed += 1;
     }
 
-    fn complete(&self, _: &mut u32, bb: &mut Blackboard<Fighter>) -> bool {
-        bb.ammo.0 = self.rounds;
+    fn complete(&self, _: &mut u32, bb: &mut Blackboard<Fighter>, _: ()) -> bool {
+        bb.ammo = self.rounds;
         true
     }
 }
@@ -103,7 +146,7 @@ impl AgentAction<Fighter> for Reload {
 fn reload() -> impl BehaviorNode<Fighter> {
     seq((
         check(|bb: &Blackboard<Fighter>| !has_ammo(bb)),
-        act(Reload {
+        action(Reload {
             ticks: 30,
             rounds: 6,
         }),
@@ -119,10 +162,10 @@ fn take_cover() -> impl BehaviorNode<Fighter> {
     seq((
         ask(WantsCover, |bb: &Blackboard<Fighter>| bb.cover.is_some()),
         leaf(|bb: &mut Blackboard<Fighter>| {
-            let Some(spot) = bb.cover.map(|c| c.0) else {
+            let Some(spot) = bb.cover else {
                 return NodeResult::Failure;
             };
-            if position(bb).distance(spot) < 8.0 {
+            if bb.position.distance(spot) < 8.0 {
                 return NodeResult::Success;
             }
             step_towards(bb, spot);
@@ -139,12 +182,12 @@ pub fn chaser() -> impl BehaviorNode<Fighter> {
         seq((
             check(|bb: &Blackboard<Fighter>| range_to_player(bb) < 24.0),
             leaf(|bb: &mut Blackboard<Fighter>| {
-                bb.health.0 -= 0.05;
+                bb.health -= 0.05;
                 NodeResult::Success
             }),
         )),
         leaf(|bb: &mut Blackboard<Fighter>| {
-            let player = bb.shared.player;
+            let player = bb.player;
             step_towards(bb, player);
             NodeResult::Success
         }),
@@ -158,7 +201,7 @@ pub fn sniper() -> impl BehaviorNode<Fighter> {
         seq((
             check(|bb: &Blackboard<Fighter>| range_to_player(bb) < 180.0),
             leaf(|bb: &mut Blackboard<Fighter>| {
-                let away = position(bb) * 2.0 - bb.shared.player;
+                let away = bb.position * 2.0 - bb.player;
                 step_towards(bb, away);
                 NodeResult::Success
             }),
@@ -169,7 +212,7 @@ pub fn sniper() -> impl BehaviorNode<Fighter> {
             leaf(shoot),
         )),
         leaf(|bb: &mut Blackboard<Fighter>| {
-            let player = bb.shared.player;
+            let player = bb.player;
             step_towards(bb, player);
             NodeResult::Success
         }),

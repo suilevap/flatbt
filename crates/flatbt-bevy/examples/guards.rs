@@ -14,10 +14,10 @@ use bevy_ecs::query::QueryData;
 use flatbt_bevy::prelude::*;
 use flatbt_nodes::{BtAction, action};
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, PartialEq)]
 struct Post(f32);
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, PartialEq)]
 struct Ammo(u32);
 
 #[derive(Component, Debug)]
@@ -33,23 +33,50 @@ struct Alarm {
     intruder: f32,
 }
 
-/// Everything the guard trees may touch. Declared once, not per node.
+/// What the guard trees see. Plain data: the tree never touches the ECS.
+struct Guard {
+    name: &'static str,
+    post: f32,
+    ammo: u32,
+    alarm: bool,
+    intruder: f32,
+    alarm_changed: bool,
+}
+
+/// The access `read` and `write` may use. Declared once, not per node.
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct Guard {
+struct GuardAccess {
     name: &'static Name,
     post: &'static mut Post,
     ammo: &'static mut Ammo,
 }
 
 impl BehaviorContext for Guard {
-    type Agent = Self;
+    type Agent = GuardAccess;
     type Param = Res<'static, Alarm>;
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &GuardAccessItem, alarm: &Res<Alarm>) -> Guard {
+        Guard {
+            name: agent.name.0,
+            post: agent.post.0,
+            ammo: agent.ammo.0,
+            alarm: alarm.raised,
+            intruder: alarm.intruder,
+            alarm_changed: alarm.is_changed(),
+        }
+    }
+
+    fn write(guard: &Guard, agent: &mut GuardAccessItem) {
+        agent.post.set_if_neq(Post(guard.post));
+        agent.ammo.set_if_neq(Ammo(guard.ammo));
+    }
 
     /// A guard sticks with what it is doing until the alarm itself moves, which
     /// is the only thing here worth abandoning a reload for.
     fn entry_mode(bb: &Blackboard<Guard>) -> EntryMode {
-        if bb.shared.is_changed() {
+        if bb.alarm_changed {
             EntryMode::Evaluate
         } else {
             EntryMode::Resume
@@ -64,41 +91,36 @@ struct Reload {
     rounds: u32,
 }
 
-impl BtAction<Blackboard<'_, '_, '_, '_, '_, Guard>> for Reload {
+impl BtAction<Blackboard<Guard>> for Reload {
     /// Ticks elapsed so far. Kept between updates; dropped when the action ends.
     type State = u32;
 
-    fn start(&self, bb: &mut Blackboard<'_, '_, '_, '_, '_, Guard>, _: ()) -> Option<u32> {
-        println!("  {} starts reloading", bb.name.0);
+    fn start(&self, bb: &mut Blackboard<Guard>, _: ()) -> Option<u32> {
+        println!("  {} starts reloading", bb.name);
         Some(0)
     }
 
-    fn is_in_progress(
-        &self,
-        elapsed: &u32,
-        _: &Blackboard<'_, '_, '_, '_, '_, Guard>,
-        _: (),
-    ) -> bool {
+    fn is_in_progress(&self, elapsed: &u32, _: &Blackboard<Guard>, _: ()) -> bool {
         *elapsed < self.ticks
     }
 
-    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<'_, '_, '_, '_, '_, Guard>, _: ()) {
+    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<Guard>, _: ()) {
         *elapsed += 1;
     }
 
-    fn complete(&self, _: &mut u32, bb: &mut Blackboard<'_, '_, '_, '_, '_, Guard>, _: ()) -> bool {
-        bb.ammo.0 = self.rounds;
-        println!("  {} reloaded", bb.name.0);
+    fn complete(&self, _: &mut u32, bb: &mut Blackboard<Guard>, _: ()) -> bool {
+        bb.ammo = self.rounds;
+        println!("  {} reloaded", bb.name);
         true
     }
 }
 
 fn alarm_raised(bb: &Blackboard<Guard>) -> bool {
-    bb.shared.raised
+    bb.alarm
 }
 
 fn in_range(bb: &Blackboard<Guard>) -> bool {
-    (bb.post.0 - bb.shared.intruder).abs() <= 1.0
+    (bb.post - bb.intruder).abs() <= 1.0
 }
 
 /// A subtree is a plain function returning a node, so it composes into any tree
@@ -106,12 +128,11 @@ fn in_range(bb: &Blackboard<Guard>) -> bool {
 fn fire_at_intruder() -> impl BehaviorNode<Guard> {
     seq((
         check(in_range),
-        check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+        check(|bb: &Blackboard<Guard>| bb.ammo > 0),
         leaf(|bb: &mut Blackboard<Guard>| {
-            bb.ammo.0 -= 1;
-            let entity = bb.entity;
-            bb.commands.entity(entity).insert(Firing);
-            println!("  {} fires ({} left)", bb.name.0, bb.ammo.0);
+            bb.ammo -= 1;
+            bb.agent_commands().insert(Firing);
+            println!("  {} fires ({} left)", bb.name, bb.ammo);
             NodeResult::Success
         }),
     ))
@@ -123,7 +144,7 @@ fn guard_tree() -> impl BehaviorNode<Guard> {
         seq((check(alarm_raised), fire_at_intruder())),
         // Out of ammo: reload, keeping progress across ticks.
         seq((
-            check(|bb: &Blackboard<Guard>| bb.ammo.0 == 0),
+            check(|bb: &Blackboard<Guard>| bb.ammo == 0),
             action(Reload {
                 ticks: 2,
                 rounds: 2,
@@ -133,16 +154,16 @@ fn guard_tree() -> impl BehaviorNode<Guard> {
         seq((
             check(alarm_raised),
             leaf(|bb: &mut Blackboard<Guard>| {
-                let step = (bb.shared.intruder - bb.post.0).signum();
-                bb.post.0 += step;
-                println!("  {} advances to {}", bb.name.0, bb.post.0);
+                let step = (bb.intruder - bb.post).signum();
+                bb.post += step;
+                println!("  {} advances to {}", bb.name, bb.post);
                 NodeResult::Success
             }),
         )),
         // Otherwise walk the beat.
         leaf(|bb: &mut Blackboard<Guard>| {
-            bb.post.0 += 1.0;
-            println!("  {} patrols to {}", bb.name.0, bb.post.0);
+            bb.post += 1.0;
+            println!("  {} patrols to {}", bb.name, bb.post);
             NodeResult::Success
         }),
     ))

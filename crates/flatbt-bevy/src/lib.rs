@@ -1,8 +1,7 @@
 //! Bevy ECS integration for FlatBT.
 //!
-//! Declare what the trees' blackboard holds with [`BehaviorContext`], register
-//! each tree with [`BehaviorPlugin`], then give agents a [`Behavior`] naming the
-//! tree they run.
+//! Declare what the trees see with [`BehaviorContext`], register each tree with
+//! [`BehaviorPlugin`], then give agents a [`Behavior`] naming the tree they run.
 //!
 //! ```
 //! use bevy_app::prelude::*;
@@ -10,30 +9,44 @@
 //! use bevy_ecs::query::QueryData;
 //! use flatbt_bevy::prelude::*;
 //!
-//! #[derive(Component)]
+//! #[derive(Component, PartialEq)]
 //! struct Ammo(u32);
 //! #[derive(Component)]
 //! struct Reloading;
 //!
-//! // 1. What the trees of this context may touch.
+//! // 1. What the trees of this context see: plain data, no borrows.
+//! struct Guard {
+//!     ammo: u32,
+//! }
+//!
+//! // 2. The access that gathers it and writes it back.
 //! #[derive(QueryData)]
 //! #[query_data(mutable)]
-//! struct Guard {
+//! struct GuardAccess {
 //!     ammo: &'static mut Ammo,
 //! }
 //!
 //! impl BehaviorContext for Guard {
-//!     type Agent = Self;
+//!     type Agent = GuardAccess;
 //!     type Param = ();
+//!     type Snapshot = Self;
+//!
+//!     fn read(_: Entity, agent: &GuardAccessItem, _: &()) -> Guard {
+//!         Guard { ammo: agent.ammo.0 }
+//!     }
+//!
+//!     fn write(guard: &Guard, agent: &mut GuardAccessItem) {
+//!         agent.ammo.set_if_neq(Ammo(guard.ammo));
+//!     }
 //! }
 //!
-//! // 2. A tree over that context.
+//! // 3. A tree over that context.
 //! fn shoot() -> impl BehaviorNode<Guard> {
 //!     select((
 //!         seq((
-//!             check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0),
+//!             check(|bb: &Blackboard<Guard>| bb.ammo > 0),
 //!             leaf(|bb: &mut Blackboard<Guard>| {
-//!                 bb.ammo.0 -= 1;
+//!                 bb.ammo -= 1;
 //!                 NodeResult::Success
 //!             }),
 //!         )),
@@ -44,7 +57,7 @@
 //!     ))
 //! }
 //!
-//! // 3. Build the tree once, then spawn agents that run it.
+//! // 4. Build the tree once, then spawn agents that run it.
 //! let mut app = App::new();
 //! app.add_plugins(BehaviorPlugin::for_tree(shoot));
 //! app.world_mut().spawn((Ammo(1), Behavior::for_tree(shoot)));
@@ -52,11 +65,14 @@
 //! app.update();
 //! ```
 //!
-//! Nodes receive [`Blackboard<C>`](Blackboard) — the agent's own components
-//! (mutable, disjoint per entity), shared read-only world access, and
-//! [`Commands`] for everything else. It is the struct a plain FlatBT tree would
-//! own, assembled from borrows because that is how an ECS hands data out. That declaration is what lets Bevy schedule the tick against other
-//! systems and lets [`BehaviorPlugin::parallel`] spread agents across threads.
+//! Nodes receive [`Blackboard<C>`](Blackboard): the snapshot
+//! [`BehaviorContext::read`] gathered, plus what the tree may defer to the
+//! world. It owns its data, so it has no lifetimes, a node signature names
+//! nothing but `Blackboard<Guard>`, and a tree can be exercised without a
+//! [`World`]. [`Agent`](BehaviorContext::Agent) and
+//! [`Param`](BehaviorContext::Param) declare the access `read` and `write` use,
+//! which is what lets Bevy schedule the tick against other systems and lets
+//! [`BehaviorPlugin::parallel`] spread agents across threads.
 //!
 //! # What lives where
 //!
@@ -104,7 +120,7 @@ mod tree;
 pub mod prelude;
 
 #[cfg(feature = "action")]
-pub use ask::{Act, AgentAction, Ask, act, ask};
+pub use ask::{Ask, ask};
 pub use context::{AgentItem, BehaviorContext, Blackboard, ParamItem, evaluate_every};
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub(crate) use tree::BehaviorTree;

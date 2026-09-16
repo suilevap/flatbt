@@ -2,7 +2,6 @@ use core::marker::PhantomData;
 use std::sync::Mutex;
 
 use bevy_app::{App, Plugin, Update};
-use bevy_ecs::entity::{Entities, EntityAllocator};
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
@@ -59,14 +58,21 @@ pub struct BehaviorSystems;
 /// # use bevy_ecs::prelude::*;
 /// # use bevy_ecs::query::QueryData;
 /// # use flatbt_bevy::prelude::*;
-/// # #[derive(Component)]
+/// # #[derive(Component, PartialEq)]
 /// # struct Ammo(u32);
 /// # #[derive(QueryData)]
 /// # #[query_data(mutable)]
-/// # struct Guard { ammo: &'static mut Ammo }
-/// # impl BehaviorContext for Guard { type Agent = Self; type Param = (); }
+/// # struct GuardAccess { ammo: &'static mut Ammo }
+/// # struct Guard { ammo: u32 }
+/// # impl BehaviorContext for Guard {
+/// #     type Agent = GuardAccess;
+/// #     type Param = ();
+/// #     type Snapshot = Self;
+/// #     fn read(_: Entity, a: &GuardAccessItem, _: &()) -> Guard { Guard { ammo: a.ammo.0 } }
+/// #     fn write(g: &Guard, a: &mut GuardAccessItem) { a.ammo.set_if_neq(Ammo(g.ammo)); }
+/// # }
 /// fn patrol() -> impl BehaviorNode<Guard> {
-///     check(|bb: &Blackboard<Guard>| bb.ammo.0 > 0)
+///     check(|bb: &Blackboard<Guard>| bb.ammo > 0)
 /// }
 ///
 /// App::new().add_plugins(BehaviorPlugin::for_tree(patrol));
@@ -157,31 +163,31 @@ type Agents<'w, 's, C, F> = Query<
     ),
 >;
 
-/// One agent's update, shared by both tick systems.
-fn tick_agent<'w, 's, 'q, 'a, 'c, C: BehaviorContext, F: TreeBuilder<C>>(
+/// One agent's update: gather, tick, write back, and hand over what the tree
+/// deferred.
+///
+/// The three steps are separable on purpose. Only the middle one runs the tree,
+/// and it touches nothing but a plain struct.
+fn tick_agent<C: BehaviorContext, F: TreeBuilder<C>>(
     entry_mode: EntryModeFn<C>,
     tree: &F::Tree,
-    shared: &'a ParamItem<'w, 's, C>,
+    shared: &ParamItem<'_, '_, C>,
     entity: Entity,
     behavior: &mut Behavior<C, F>,
-    agent: AgentItem<'a, 'q, C>,
-    commands: Commands<'c, 'c>,
-) {
-    let mut bb = Blackboard {
-        entity,
-        agent,
-        shared,
-        commands,
-    };
+    agent: &mut AgentItem<'_, '_, C>,
+) -> Option<CommandQueue> {
+    let mut bb = Blackboard::new(entity, C::read(entity, agent, shared));
     let mode = entry_mode(&bb);
     behavior.tick(tree, &mut bb, mode);
+    C::write(&bb.agent, agent);
+    bb.take_queue()
 }
 
 /// Ticks every agent running the tree named by `F`, in query order.
 ///
-/// Registered by [`BehaviorPlugin`] and by self-registration. Not public:
-/// `F` is a builder's own type, which no call site can name or infer, so
-/// choose the schedule and tick mode through the plugin instead.
+/// Registered by [`BehaviorPlugin::for_tree`]. Not public: `F` is a builder's
+/// own type, which no call site can name or infer, so choose the schedule and
+/// tick mode through the plugin instead.
 pub(crate) fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
     tree: Res<BehaviorTree<C, F>>,
     mut agents: Agents<C, F>,
@@ -190,16 +196,12 @@ pub(crate) fn tick_behaviors<C: BehaviorContext, F: TreeBuilder<C>>(
 ) {
     let (entry_mode, shared) = (tree.entry_mode(), &*shared);
     let tree = tree.get();
-    for (entity, mut behavior, agent) in agents.iter_mut() {
-        tick_agent(
-            entry_mode,
-            tree,
-            shared,
-            entity,
-            &mut behavior,
-            agent,
-            commands.reborrow(),
-        );
+    for (entity, mut behavior, mut agent) in agents.iter_mut() {
+        if let Some(mut queue) =
+            tick_agent(entry_mode, tree, shared, entity, &mut behavior, &mut agent)
+        {
+            commands.append(&mut queue);
+        }
     }
 }
 
@@ -233,8 +235,6 @@ pub(crate) fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
     tree: Res<BehaviorTree<C, F>>,
     mut agents: Agents<C, F>,
     shared: StaticSystemParam<C::Param>,
-    entities: &Entities,
-    allocator: &EntityAllocator,
     mut commands: Commands,
 ) where
     for<'w, 's> SystemParamItem<'w, 's, C::Param>: Sync,
@@ -247,16 +247,12 @@ pub(crate) fn tick_behaviors_parallel<C: BehaviorContext, F: TreeBuilder<C>>(
             queue: CommandQueue::default(),
             sink: &sink,
         },
-        |batch, (entity, mut behavior, agent)| {
-            tick_agent(
-                entry_mode,
-                tree,
-                shared,
-                entity,
-                &mut behavior,
-                agent,
-                Commands::new_from_entities(&mut batch.queue, allocator, entities),
-            );
+        |batch, (entity, mut behavior, mut agent)| {
+            if let Some(mut queue) =
+                tick_agent(entry_mode, tree, shared, entity, &mut behavior, &mut agent)
+            {
+                batch.queue.append(&mut queue);
+            }
         },
     );
     for queue in sink.into_inner().into_iter().flatten() {
