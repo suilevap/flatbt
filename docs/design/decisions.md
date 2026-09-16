@@ -133,3 +133,42 @@ nothing.
 
 Pinned by `a_resumed_branch_that_fails_falls_through_below_it_not_back_above`
 in `tests/resume.rs`.
+
+## 2026-09-16 — The Bevy blackboard is a snapshot
+
+An earlier draft held the update's borrows: five lifetimes, a higher-ranked
+bound on every tree, `BehaviorNode` carrying an associated-type equality across
+that family, and the constructor changes above so closures could be inferred
+against it. It also fixed a ceiling: a node holding live borrows cannot outlive
+the system run.
+
+It holds a plain struct instead. `BehaviorContext` has `Snapshot`, `read` and
+`write`; the tick is gather, run, write back. `Blackboard<C>` has no lifetimes,
+`BehaviorNode` is an ordinary bound, `BtAction<Blackboard<C>>` is writable
+directly, and node parameters work, so `scope!` composes. A tree is a value that
+takes a value, so it can be exercised with no `World` at all.
+
+Cost, measured over 100k agents: 4.1 ms serial and 1.9 ms parallel against
+4.2 / 1.9 borrowed — once the per-agent `CommandQueue` was made lazy. An owned
+empty one per agent per tick was a fifth of the whole tick: dropping a
+`CommandQueue` walks its buffer whether or not anything is in it.
+
+`read` takes the entity, so anything derived is decided once per agent per tick
+rather than in each node that wants it.
+
+## 2026-09-16 — `write` runs only for a tree that wrote
+
+`write` ran every tick, so a context that assigned unconditionally marked its
+whole population changed and dragged the rest of the engine along.
+`set_if_neq` answers that per field, but nothing enforced it and the call
+happened regardless.
+
+`Blackboard` sets a flag in `DerefMut`. Reading a snapshot field goes through
+`Deref`, writing one through `DerefMut`, so the tick knows whether the tree
+touched anything and skips `write` when it did not. Same bargain as Bevy's own
+change detection: taking `&mut` counts whether or not the value changed.
+
+The snapshot field is private for it, with `snapshot()`, `into_snapshot()` and
+`written()` in its place. `into_snapshot` takes `self`, and returning the
+snapshot by value from the tick cost 1.5 ms per 100k agents, so the tick reads
+it in place.

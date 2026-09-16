@@ -13,3 +13,7 @@ cargo test --offline -p flatbt-core
 cargo test --offline -p flatbt-nodes --no-default-features --features choose
 cargo test --offline -p flatbt-nodes --no-default-features --features action
 cargo test --offline -p flatbt-scope
+
+# Bevy integration: heavier dependencies, checked on its own.
+cargo test --offline -p flatbt --no-default-features --features bevy
+cargo test --offline -p flatbt-bevy
