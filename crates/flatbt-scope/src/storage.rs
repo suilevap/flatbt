@@ -42,7 +42,9 @@ where
 pub struct Compute<F>(F);
 
 /// Computes from context and fills the output slot.
-pub fn compute<C, T, F: Fn(&mut C) -> T>(init: F) -> Compute<F> {
+/// The callable is checked where the tree runs, like [`flatbt_core::leaf`], so
+/// an initializer closure stays open to inference. Annotate its argument.
+pub fn compute<F>(init: F) -> Compute<F> {
     Compute(init)
 }
 
