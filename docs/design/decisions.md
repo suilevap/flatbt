@@ -165,3 +165,26 @@ dropping a `CommandQueue` walks its buffer whether or not anything is in it.
 
 `read` takes the entity, so anything derived is decided once per agent per tick
 rather than in each node that wants it.
+
+## 2026-09-16 — `ask` fills scope locals
+
+`ask` had one shape: a node that waits for an answer and leaves it on the
+blackboard, where the nodes after it read it back as an `Option` and handle the
+`None` that cannot happen. The scope DSL already had the other half -- `let
+name: T;` reserves a slot and `.with(out name)` binds it -- and `Compute` is
+just a node writing one, so nothing stopped an action from writing one too.
+
+A second `BtAction` impl for `Ask`, over `&mut Option<T>` instead of `()`,
+fills the slot in `complete`. The predicate returns `Option<T>` in that shape
+and `bool` in the bare one, so which impl applies follows from the closure and
+neither constructor nor type parameter is needed for it.
+
+This is the ECS and the scope meeting: an ordinary system answers by writing an
+ordinary component, `BehaviorContext::read` brings it into the snapshot, and
+`ask` moves it into an invocation-local. Consumers take a value rather than an
+`Option`, and the local dies with the invocation, so re-entering the branch asks
+again rather than acting on a stale answer.
+
+Tests: `ask_fills_a_scope_local_and_the_nodes_after_it_read_a_value` in
+`crates/flatbt-bevy/tests/catalog.rs`; used for real by `take_cover` in
+`games/arena/src/ai.rs`.

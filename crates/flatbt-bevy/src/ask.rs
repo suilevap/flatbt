@@ -26,8 +26,54 @@ pub struct Ask<B, P> {
 /// which is what asking means. Nothing is inserted when `answered` already
 /// holds, so a standing answer costs one predicate call.
 ///
-/// Fails if the request is never answered and the branch is abandoned; succeeds
-/// the moment it is, so the node after it can use the answer.
+/// Succeeds the moment the answer is there, so the node after it can use it.
+///
+/// Bound to an output slot with `.with(out name)` inside [`scope!`], `ask`
+/// writes the answer into that local instead of leaving it on the blackboard --
+/// which is where the ECS and the scope meet. The question is answered by an
+/// ordinary system writing an ordinary component; the answer arrives as an
+/// ordinary local, and the nodes after it take a value rather than an `Option`,
+/// so they cannot run without one. The predicate returns `Option<T>` in that
+/// shape and `bool` in this one.
+///
+/// ```
+/// # use bevy_ecs::prelude::*;
+/// # use bevy_ecs::query::QueryData;
+/// # use flatbt_bevy::prelude::*;
+/// # use flatbt_scope::scope;
+/// # use flatbt_core::{BtNode, EntryMode, NodeResult};
+/// # #[derive(Component, Clone)]
+/// # struct WantsCover;
+/// # #[derive(Component)]
+/// # struct CoverTarget(u32);
+/// # struct Fighter { cover: Option<u32> }
+/// # #[derive(QueryData)]
+/// # struct FighterAccess { cover: Option<&'static CoverTarget> }
+/// # impl BehaviorContext for Fighter {
+/// #     type Agent = FighterAccess;
+/// #     type Param = ();
+/// #     type Snapshot = Self;
+/// #     fn read(_: Entity, a: &FighterAccessItem, _: &()) -> Fighter { Fighter { cover: a.cover.map(|c| c.0) } }
+/// #     fn write(_: &Fighter, _: &mut FighterAccessItem) {}
+/// # }
+/// # struct WalkTo;
+/// # impl BtNode<Blackboard<Fighter>, &u32> for WalkTo {
+/// #     type State = ();
+/// #     fn update(&self, _: &mut (), _: &mut Blackboard<Fighter>, _: &u32, _: EntryMode) -> NodeResult { NodeResult::Success }
+/// # }
+/// fn hide() -> impl BehaviorNode<Fighter> {
+///     scope! {
+///         let spot: u32;
+///         sequence {
+///             ask(WantsCover, |bb: &Blackboard<Fighter>| bb.cover).with(out spot);
+///             WalkTo.with(spot);
+///         }
+///     }
+/// }
+/// ```
+///
+/// The local belongs to the invocation, so leaving the branch and coming back
+/// asks again rather than acting on an answer chosen for an older situation.
 ///
 /// ```
 /// # use bevy_ecs::prelude::*;
@@ -86,5 +132,34 @@ where
 
     fn is_in_progress(&self, _: &(), bb: &Blackboard<C>, _: ()) -> bool {
         !(self.answered)(bb)
+    }
+}
+
+impl<C, B, P, T> BtAction<Blackboard<C>, &mut Option<T>> for Ask<B, P>
+where
+    C: BehaviorContext,
+    B: Bundle + Clone,
+    P: Fn(&Blackboard<C>) -> Option<T>,
+    T: 'static,
+{
+    type State = ();
+
+    fn start(&self, bb: &mut Blackboard<C>, _: &mut Option<T>) -> Option<()> {
+        if (self.answered)(bb).is_none() {
+            let request = self.request.clone();
+            bb.agent_commands().insert(request);
+        }
+        Some(())
+    }
+
+    fn is_in_progress(&self, _: &(), bb: &Blackboard<C>, _: &mut Option<T>) -> bool {
+        (self.answered)(bb).is_none()
+    }
+
+    /// Fills the slot the moment the answer is there, so the nodes after this
+    /// one read a value rather than an `Option`.
+    fn complete(&self, _: &mut (), bb: &mut Blackboard<C>, slot: &mut Option<T>) -> bool {
+        *slot = (self.answered)(bb);
+        true
     }
 }

@@ -9,7 +9,7 @@ use core::time::Duration;
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
-use flatbt::prelude::{BtAction, action, choose};
+use flatbt::prelude::{BtAction, BtNode, action, choose, scope};
 
 use crate::world::{Ammo, Arena, CoverTarget, Health, Speed, WantsCover};
 
@@ -153,25 +153,47 @@ fn reload() -> impl BehaviorNode<Fighter> {
     ))
 }
 
-/// The deferred query: ask, wait, then use the answer.
+/// Walks to a spot the tree was handed. Takes it as a parameter rather than
+/// reading it back off the blackboard, so it cannot run without one.
+struct WalkTo;
+
+impl BtNode<Blackboard<Fighter>, &Vec2> for WalkTo {
+    type State = ();
+
+    fn update(
+        &self,
+        _: &mut (),
+        bb: &mut Blackboard<Fighter>,
+        spot: &Vec2,
+        _: EntryMode,
+    ) -> NodeResult {
+        if bb.position.distance(*spot) < 8.0 {
+            return NodeResult::Success;
+        }
+        step_towards(bb, *spot);
+        NodeResult::Running
+    }
+}
+
+/// The deferred query, feeding a scope local.
 ///
 /// A tree cannot run an arbitrary query -- the context declares its access up
-/// front -- so it asks by inserting a component, `resolve_cover_requests`
-/// answers, and the tree reads the answer through its own agent view.
+/// front -- so it asks by inserting a component and `resolve_cover_requests`
+/// answers into another. `ask` waits for that answer and writes it into `spot`,
+/// which is where the ECS and the scope meet: the question is answered by a
+/// system, and the answer arrives as an ordinary local. `WalkTo` then reads a
+/// `Vec2`, not an `Option<Vec2>` -- the branch cannot be entered without one.
+///
+/// The local is per invocation, so leaving this branch and coming back asks
+/// again rather than walking to a spot chosen for an older situation.
 fn take_cover() -> impl BehaviorNode<Fighter> {
-    seq((
-        ask(WantsCover, |bb: &Blackboard<Fighter>| bb.cover.is_some()),
-        leaf(|bb: &mut Blackboard<Fighter>| {
-            let Some(spot) = bb.cover else {
-                return NodeResult::Failure;
-            };
-            if bb.position.distance(spot) < 8.0 {
-                return NodeResult::Success;
-            }
-            step_towards(bb, spot);
-            NodeResult::Running
-        }),
-    ))
+    scope! {
+        let spot: Vec2;
+        sequence {
+            ask(WantsCover, |bb: &Blackboard<Fighter>| bb.cover).with(out spot);
+            WalkTo.with(spot);
+        }
+    }
 }
 
 // --- the three minds ---------------------------------------------------------

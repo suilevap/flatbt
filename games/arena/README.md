@@ -64,9 +64,27 @@ failure reached that way says nothing about what the tree would choose now.
 It only saves a tick -- and only when the whole tree fails, which a `Running`
 fallback below the failure prevents. That case needs `entry_mode`.
 
-**`ask` is now a node the integration ships.** Asking the world something the
-context never declared was 25 lines of hand-written `BtAction` per question.
-It is one line: `ask(WantsCover, |bb| bb.cover.is_some())`.
+**`ask` is now a node the integration ships, and it feeds `scope!` locals.**
+Asking the world something the context never declared was 25 lines of
+hand-written `BtAction` per question. It is one line, and bound to an output
+slot it hands the answer to the nodes after it as a plain value:
+
+```rust
+scope! {
+    let spot: Vec2;
+    sequence {
+        ask(WantsCover, |bb: &Blackboard<Fighter>| bb.cover).with(out spot);
+        WalkTo.with(spot);
+    }
+}
+```
+
+That is where the ECS and the scope meet. An ordinary system answers by writing
+an ordinary component; `read` brings it into the snapshot; `ask` moves it into
+the local. `WalkTo` takes a `Vec2`, not an `Option<Vec2>`, so it cannot run
+without one — and the local belongs to the invocation, so leaving the branch
+and coming back asks again instead of walking to a spot chosen for an older
+situation.
 
 **`evaluate_every` no longer divides 128-bit integers.** It ran two of them per
 agent per tick, which on a real tree cost more than the tree: 57 ns per agent

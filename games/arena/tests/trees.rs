@@ -9,7 +9,7 @@ use core::time::Duration;
 use arena::ai::{Fighter, chaser, coward, sniper};
 use bevy::prelude::{Entity, Vec2};
 use flatbt::bevy::prelude::*;
-use flatbt::{BtNode, BtState, EntryMode, update};
+use flatbt::{BtState, EntryMode, update};
 
 fn fighter() -> Fighter {
     Fighter {
