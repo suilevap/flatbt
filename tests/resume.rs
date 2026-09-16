@@ -4,7 +4,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use flatbt::{BtNode, EntryMode, NodeResult, control, leaf, select, seq};
+use flatbt::{BtNode, EntryMode, NodeResult, check, control, leaf, select, seq};
 
 #[path = "../examples/support/mod.rs"]
 mod support;
@@ -206,6 +206,68 @@ fn failure_after_suspension_releases_path_and_runs_fallback() {
     assert!(modes.is_empty());
     assert!(!state.is_running());
     assert_eq!(drops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_resumed_branch_that_fails_falls_through_below_it_not_back_above() {
+    // Order is priority, but Resume skips `begin()`: the branch above was not
+    // consulted this update, and is not consulted when the resumed one fails
+    // either. Resume means resume, so the fallthrough goes forward only, and
+    // reconsidering is the caller's to ask for.
+    #[derive(Default)]
+    struct World {
+        top_ready: bool,
+        ran: Vec<&'static str>,
+        middle_updates: u32,
+    }
+
+    let tree = select((
+        seq((
+            check(|w: &World| w.top_ready),
+            leaf(|w: &mut World| {
+                w.ran.push("top");
+                Success
+            }),
+        )),
+        leaf(|w: &mut World| {
+            w.middle_updates += 1;
+            w.ran.push("middle");
+            if w.middle_updates >= 2 {
+                Failure
+            } else {
+                Running
+            }
+        }),
+        leaf(|w: &mut World| {
+            w.ran.push("fallback");
+            Success
+        }),
+    ));
+    let mut state = BtState::new(&tree);
+    let mut world = World::default();
+
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Evaluate),
+        Running
+    );
+    world.top_ready = true;
+
+    // The middle branch fails and the fallback below it runs, though the top
+    // branch became available while it was suspended.
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        Success
+    );
+    assert_eq!(world.ran, ["middle", "middle", "fallback"]);
+
+    // That invocation ended, so the next one starts fresh and priority applies
+    // again. A caller that wants this sooner re-enters with Evaluate itself --
+    // which is what `flatbt_bevy::Behavior::tick` does on a failed resume.
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        Success
+    );
+    assert_eq!(world.ran.last(), Some(&"top"));
 }
 
 #[test]

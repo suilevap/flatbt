@@ -54,6 +54,10 @@ tree. The tree must outlive its states. `update` rejects a different root.
 | `select((...))` | Try in order; stop on Success or Running. Empty selector fails. | Scan from child zero. |
 
 `Resume` follows the saved path. Fresh invocations always receive `Evaluate`.
+A resumed child that fails hands off to the next child below it, never back to
+one above: `Resume` skips `begin()`, so the children above were never consulted
+this update, and reconsidering them is the caller's to ask for. A caller that
+wants it can re-enter with `Evaluate` when a resumed update fails.
 A completed child can be followed by another child in the same update.
 During revalidation, a failed candidate preserves the old branch; a new Running
 candidate replaces it and drops its state.
@@ -99,8 +103,7 @@ and revalidation. Nodes receive references to explicitly named fields.
 use flatbt::prelude::*;
 
 let tree = scope! {
-    context: World;
-    let walk_pos: Vector2 = |bb| bb.next_patrol_pos;
+    let walk_pos: Vector2 = |bb: &mut World| bb.next_patrol_pos;
     let door_pos: Vector2 = get_visible_door_pos;
     sequence {
         LookAt.with(door_pos);
@@ -110,7 +113,8 @@ let tree = scope! {
 };
 ```
 
-Initializers are `Fn(&mut World) -> T`. `LookAt` receives `&Vector2`; `Walk`
+Initializers are `Fn(&mut World) -> T`, with the argument annotated. `LookAt`
+receives `&Vector2`; `Walk`
 implements `BtAction<World, &Vector2>`. Use `select { ... }`
 for fallback. Nested controls share locals; nested scopes own separate locals.
 

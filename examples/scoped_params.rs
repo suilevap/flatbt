@@ -12,8 +12,7 @@ fn main() {
         world.visible_door
     }
     let tree = scope! {
-        context: World;
-        let walk_pos: Vector2 = |world| {
+        let walk_pos: Vector2 = |world: &mut World| {
             world.selections += 1;
             world.next_patrol
         };
