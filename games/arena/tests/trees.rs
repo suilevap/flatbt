@@ -73,7 +73,10 @@ fn a_sniper_spends_its_magazine_then_reloads() {
 #[test]
 fn a_healthy_coward_fights_and_a_hurt_one_asks_for_cover() {
     let after = run(coward(), fighter(), 1);
-    assert!(after.position.x < 100.0, "unhurt, so it behaves as a chaser");
+    assert!(
+        after.position.x < 100.0,
+        "unhurt, so it behaves as a chaser"
+    );
 
     let hurt = Fighter {
         health: 10.0,
@@ -96,7 +99,8 @@ fn a_coward_walks_to_the_cover_it_was_given() {
     };
     let after = run(coward(), hiding, 3);
     assert!(
-        after.position.distance(Vec2::new(0.0, 200.0)) < fighter().position.distance(Vec2::new(0.0, 200.0)),
+        after.position.distance(Vec2::new(0.0, 200.0))
+            < fighter().position.distance(Vec2::new(0.0, 200.0)),
         "closed on the spot, ended at {}",
         after.position
     );
@@ -109,7 +113,8 @@ fn evaluate_every_spreads_a_population_across_the_period() {
     let mut evaluated = 0;
     for index in 0..1_000u32 {
         let entity = Entity::from_raw_u32(index).unwrap();
-        if evaluate_every(period, Duration::from_millis(500), delta, entity) == EntryMode::Evaluate {
+        if evaluate_every(period, Duration::from_millis(500), delta, entity) == EntryMode::Evaluate
+        {
             evaluated += 1;
         }
     }

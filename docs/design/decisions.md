@@ -115,28 +115,33 @@ Direct crate defaults are unchanged. Supersedes the empty entry-point defaults a
 README covers implemented APIs and common usage. CONTRIBUTING links internal design
 notes, decisions, and experiments. Advanced feature configuration is collapsed in README.
 
-## 2026-09-16 — A lost continuation is a fresh decision
+## 2026-09-16 — A failed resume re-enters from the root, in the driver
 
-`Resume` skips `begin()`, so no child above the active one is consulted. While
-the continuation holds, that is the point. When the resumed child *fails* it is
-not: the policy then chooses among children it never looked at. A `select` whose
-resumed branch failed would take the branch below it even when a higher-priority
-one had become available meanwhile -- and if that branch went Running, it held
-the continuation for good, because nothing ended to force an `Evaluate`.
+`Resume` skips `begin()`, so no child above the active one is consulted. When
+the resumed child *fails*, the policy then chooses among children it never
+looked at: a `select` takes the branch below the failure even when a
+higher-priority one became available meanwhile.
 
-`BtControl::continuation_failed` is called instead of `child_failed` when the
-failed child was the resumed continuation. It defaults to `child_failed`, so
-`Sequence` and `Choose` are unchanged: a sequence has no priority to restore,
-and a choose fails outward and re-picks on the next update. `Selector` overrides
-it to rescan from child zero.
+Considered and rejected: a `BtControl::continuation_failed` hook letting
+`Selector` rescan from child zero. It fixes the case completely, including the
+one below, but it makes `Resume` mean two things depending on what the resumed
+child returned, and puts branch-picking policy into the core loop. `Resume`
+stays an honest resume from the saved position.
 
-`ControlNode` will not run the failed child a second time in the same update:
-the rescan reaches it, and it has already failed, so its result is reused rather
-than its effects repeated.
+Instead the *driver* decides. `flatbt_bevy::Behavior::tick` re-enters the tree
+with `Evaluate` when a resumed update returns `Failure`. The next update would
+have entered as `Evaluate` anyway -- a terminal result drops invocation state --
+so this only spares the agent a tick of doing nothing, and it costs nothing when
+trees do not fail.
 
-Found by `games/arena`, where the symptom was an agent that never reconsidered.
-Tests: `selector_rescans_priority_when_its_resumed_branch_fails` and
-`a_failed_continuation_is_not_rerun_by_the_rescan` in `tests/resume.rs`.
+What that does not cover, measured rather than assumed: the retry keys on the
+*tree's* result, so a fallback below the failed branch that succeeds or goes
+`Running` hides the failure from it. A `Running` fallback then holds priority
+down for as long as it runs, because nothing ends to force an `Evaluate`. A tree
+shaped that way has to say so through `entry_mode`. Three tests in
+`crates/flatbt-bevy/tests/behavior.rs` pin all three outcomes, and
+`a_resumed_branch_that_fails_falls_through_below_it_not_back_above` in
+`tests/resume.rs` pins the core semantics being preserved.
 
 ## 2026-09-16 — The Bevy blackboard is a snapshot
 

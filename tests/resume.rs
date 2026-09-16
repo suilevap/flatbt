@@ -209,9 +209,11 @@ fn failure_after_suspension_releases_path_and_runs_fallback() {
 }
 
 #[test]
-fn selector_rescans_priority_when_its_resumed_branch_fails() {
-    // Order is priority. The top branch is unavailable when the middle one is
-    // chosen, and becomes available while it runs.
+fn a_resumed_branch_that_fails_falls_through_below_it_not_back_above() {
+    // Order is priority, but Resume skips `begin()`: the branch above was not
+    // consulted this update, and is not consulted when the resumed one fails
+    // either. Resume means resume, so the fallthrough goes forward only, and
+    // reconsidering is the caller's to ask for.
     #[derive(Default)]
     struct World {
         top_ready: bool,
@@ -238,7 +240,7 @@ fn selector_rescans_priority_when_its_resumed_branch_fails() {
         }),
         leaf(|w: &mut World| {
             w.ran.push("fallback");
-            Running
+            Success
         }),
     ));
     let mut state = BtState::new(&tree);
@@ -250,57 +252,22 @@ fn selector_rescans_priority_when_its_resumed_branch_fails() {
     );
     world.top_ready = true;
 
-    // The middle branch fails on resume. Its continuation is gone, so the
-    // choice that follows is a fresh one and is made with fresh information --
-    // the top branch, skipped rather than rejected, is tried before the
-    // fallback below it.
+    // The middle branch fails and the fallback below it runs, though the top
+    // branch became available while it was suspended.
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
         Success
     );
-    assert_eq!(world.ran, ["middle", "middle", "top"]);
+    assert_eq!(world.ran, ["middle", "middle", "fallback"]);
 
-    // Without the rescan the fallback would have gone Running and held the
-    // continuation for good, because nothing ever ends to force an Evaluate.
-    for _ in 0..3 {
-        let _ = update(&tree, &mut state, &mut world, EntryMode::Resume);
-    }
-    assert_eq!(world.ran.iter().filter(|r| **r == "fallback").count(), 0);
-}
-
-#[test]
-fn a_failed_continuation_is_not_rerun_by_the_rescan() {
-    // The rescan reaches the branch that just failed. It failed this update
-    // already; running it twice would repeat whatever it did.
-    #[derive(Default)]
-    struct Counts {
-        top: u32,
-        middle: u32,
-    }
-
-    let tree = select((
-        leaf(|c: &mut Counts| {
-            c.top += 1;
-            Failure
-        }),
-        leaf(|c: &mut Counts| {
-            c.middle += 1;
-            if c.middle >= 2 { Failure } else { Running }
-        }),
-    ));
-    let mut state = BtState::new(&tree);
-    let mut counts = Counts::default();
-
+    // That invocation ended, so the next one starts fresh and priority applies
+    // again. A caller that wants this sooner re-enters with Evaluate itself --
+    // which is what `flatbt_bevy::Behavior::tick` does on a failed resume.
     assert_eq!(
-        update(&tree, &mut state, &mut counts, EntryMode::Evaluate),
-        Running
+        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        Success
     );
-    assert_eq!(
-        update(&tree, &mut state, &mut counts, EntryMode::Resume),
-        Failure
-    );
-    assert_eq!(counts.top, 2, "tried once per update");
-    assert_eq!(counts.middle, 2, "resumed once, not rerun by the rescan");
+    assert_eq!(world.ran.last(), Some(&"top"));
 }
 
 #[test]

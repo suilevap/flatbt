@@ -42,8 +42,7 @@ a 4-core Xeon at 2.8 GHz:
 | 400 000 | 16.6 ms | 7.03 ms       | 2.37x   |
 
 About 41 ns per agent per tick serially, of which roughly 1 ns is the
-revalidation guard deciding whether this agent reconsiders at all, and about
-8 ns is `select` rescanning priority after a resumed branch fails. Below
+revalidation guard deciding whether this agent reconsiders at all. Below
 ~5 000 agents the task pool costs more than it saves and `.parallel()` is a
 loss, which is why it is opt-in rather than the default.
 
@@ -58,13 +57,12 @@ measured the same as the borrowed version -- but only after the per-agent
 fifth of the whole tick, because dropping a `CommandQueue` walks its buffer
 whether or not anything is in it.
 
-**`select` rescans priority when its resumed branch fails.** A resumed branch
-that fails leaves the selector choosing among children it never consulted, so
-it took the branch *below* the failure even when a higher-priority one had
-become available -- and if that branch went `Running`, the inversion held for
-good, because nothing ended to force an `Evaluate`. `BtControl` grew
-`continuation_failed` for it; `Sequence` and `Choose` keep the old behaviour,
-which was already right for them. It costs about 8 ns per agent per tick here.
+**A tree that fails on resume re-enters from the root in the same tick.** A
+resumed update never consults the branches above the one it resumed, so a
+failure reached that way says nothing about what the tree would choose now.
+`Behavior::tick` retries with `Evaluate`; core keeps `Resume` an honest resume.
+It only saves a tick -- and only when the whole tree fails, which a `Running`
+fallback below the failure prevents. That case needs `entry_mode`.
 
 **`ask` is now a node the integration ships.** Asking the world something the
 context never declared was 25 lines of hand-written `BtAction` per question.

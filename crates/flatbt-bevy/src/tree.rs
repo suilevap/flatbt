@@ -224,6 +224,16 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         } else {
             mode
         };
+        if self.run(tree, bb, mode) == NodeResult::Failure && mode == EntryMode::Resume {
+            // The continuation is gone, and a resumed update never consulted
+            // anything above it, so the failure says nothing about what the tree
+            // would choose now. The next update would enter as Evaluate anyway
+            // -- this only spares the agent a tick of doing nothing.
+            let _ = self.run(tree, bb, EntryMode::Evaluate);
+        }
+    }
+
+    fn run(&mut self, tree: &F::Tree, bb: &mut Blackboard<C>, mode: EntryMode) -> NodeResult {
         let result = tree.update(
             self.state.get_or_insert_with(Default::default),
             bb,
@@ -233,6 +243,7 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
         if result != NodeResult::Running {
             self.state = None;
         }
+        result
     }
 }
 

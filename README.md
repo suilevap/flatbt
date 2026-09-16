@@ -54,10 +54,11 @@ tree. The tree must outlive its states. `update` rejects a different root.
 | `select((...))` | Try in order; stop on Success or Running. Empty selector fails. | Scan from child zero. |
 
 `Resume` follows the saved path. Fresh invocations always receive `Evaluate`.
-If a resumed child fails, `select` scans from child zero rather than continuing
-below it: the children above it were skipped, not rejected, and the choice that
-follows a lost continuation is a fresh one. The failed child is not run twice in
-the same update.
+A resumed child that fails hands off to the next child below it, never back to
+one above: `Resume` skips `begin()`, so the children above were never consulted
+this update, and reconsidering them is the caller's to ask for. A caller that
+wants it can re-enter with `Evaluate` when a resumed update fails, which is what
+[`flatbt-bevy`](crates/flatbt-bevy) does.
 A completed child can be followed by another child in the same update.
 During revalidation, a failed candidate preserves the old branch; a new Running
 candidate replaces it and drops its state.

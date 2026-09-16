@@ -738,3 +738,186 @@ fn ask_asks_again_once_the_answer_is_withdrawn() {
     app.update();
     assert_eq!(app.world().resource::<Asked>().0, 2);
 }
+
+// --- a failed resume ---------------------------------------------------------
+
+#[derive(Component, Debug, PartialEq)]
+struct Log(Vec<&'static str>);
+
+#[derive(Resource, Default)]
+struct TopReady(bool);
+
+struct Scout {
+    log: Vec<&'static str>,
+    top_ready: bool,
+    middle_updates: u32,
+}
+
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct ScoutAccess {
+    log: &'static mut Log,
+    middle: &'static mut Ammo,
+}
+
+impl BehaviorContext for Scout {
+    type Agent = ScoutAccess;
+    type Param = Res<'static, TopReady>;
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &ScoutAccessItem, top: &Res<TopReady>) -> Scout {
+        Scout {
+            log: agent.log.0.clone(),
+            top_ready: top.0,
+            middle_updates: agent.middle.0,
+        }
+    }
+
+    fn write(scout: &Scout, agent: &mut ScoutAccessItem) {
+        if agent.log.0 != scout.log {
+            agent.log.0.clone_from(&scout.log);
+        }
+        agent.middle.set_if_neq(Ammo(scout.middle_updates));
+    }
+}
+
+/// Priority order, where the middle branch suspends and then fails, and the top
+/// one becomes available while it is suspended.
+fn scout_tree(fallback: NodeResult) -> impl BehaviorNode<Scout> {
+    select((
+        seq((
+            check(|bb: &Blackboard<Scout>| bb.top_ready),
+            leaf(|bb: &mut Blackboard<Scout>| {
+                bb.log.push("top");
+                NodeResult::Success
+            }),
+        )),
+        leaf(|bb: &mut Blackboard<Scout>| {
+            bb.middle_updates += 1;
+            bb.log.push("middle");
+            if bb.middle_updates >= 2 {
+                NodeResult::Failure
+            } else {
+                NodeResult::Running
+            }
+        }),
+        leaf(move |bb: &mut Blackboard<Scout>| {
+            bb.log.push("fallback");
+            fallback
+        }),
+    ))
+}
+
+/// No fallback worth the name: when the middle branch fails, so does the tree.
+fn failing_fallback() -> impl BehaviorNode<Scout> {
+    scout_tree(NodeResult::Failure)
+}
+
+fn ending_fallback() -> impl BehaviorNode<Scout> {
+    scout_tree(NodeResult::Success)
+}
+
+fn running_fallback() -> impl BehaviorNode<Scout> {
+    scout_tree(NodeResult::Running)
+}
+fn scout_app<F: TreeBuilder<Scout> + Copy>(builder: F) -> (App, Entity) {
+    let mut app = App::new();
+    app.init_resource::<TopReady>()
+        .add_plugins(BehaviorPlugin::for_tree(builder));
+    let agent = app
+        .world_mut()
+        .spawn((Log(vec![]), Ammo(0), Behavior::for_tree(builder)))
+        .id();
+    (app, agent)
+}
+
+fn log(app: &App, agent: Entity) -> Vec<&'static str> {
+    app.world().get::<Log>(agent).unwrap().0.clone()
+}
+
+#[test]
+fn a_tree_that_fails_on_resume_reconsiders_in_the_same_tick() {
+    let (mut app, agent) = scout_app(failing_fallback);
+
+    app.update();
+    assert_eq!(
+        log(&app, agent),
+        ["middle"],
+        "suspended in the middle branch"
+    );
+
+    app.world_mut().resource_mut::<TopReady>().0 = true;
+    app.update();
+
+    // Everything below the resumed branch failed too, so the whole invocation
+    // did -- and a failure reached from a resume says nothing about what the
+    // tree would choose now, because nothing above the resumed branch was
+    // consulted. The same tick re-enters from the root, which spares the agent
+    // a tick of doing nothing.
+    assert_eq!(
+        log(&app, agent),
+        ["middle", "middle", "fallback", "top"],
+        "the retry ran the branch that became available"
+    );
+}
+
+#[test]
+fn a_fallback_that_succeeds_below_a_failed_resume_keeps_priority_down() {
+    let (mut app, agent) = scout_app(ending_fallback);
+
+    app.update();
+    app.world_mut().resource_mut::<TopReady>().0 = true;
+    app.update();
+
+    // The tree did not fail -- the fallback below the resumed branch succeeded
+    // -- so there is nothing for the retry to catch. The agent spends this tick
+    // on the lower-priority branch, and the next invocation, which starts
+    // fresh, picks the top one.
+    assert_eq!(log(&app, agent), ["middle", "middle", "fallback"]);
+    app.update();
+    assert_eq!(log(&app, agent).last(), Some(&"top"));
+}
+
+#[test]
+fn a_running_fallback_below_a_failed_resume_holds_priority_down_for_good() {
+    let (mut app, agent) = scout_app(running_fallback);
+
+    app.update();
+    app.world_mut().resource_mut::<TopReady>().0 = true;
+    for _ in 0..4 {
+        app.update();
+    }
+
+    // The fallback goes Running, so the invocation never ends, the retry never
+    // fires, and the top branch is never consulted. Resume is honest about
+    // resuming, and this is what that honesty costs. `entry_mode` is what a
+    // tree shaped like this has to reach for -- the next test.
+    let log = log(&app, agent);
+    assert!(
+        !log.contains(&"top"),
+        "the top branch was never consulted again: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|r| **r == "fallback").count(),
+        4,
+        "resumed into the fallback on every tick: {log:?}"
+    );
+}
+
+#[test]
+fn entry_mode_is_what_recovers_a_running_fallback() {
+    let mut app = App::new();
+    app.init_resource::<TopReady>().add_plugins(
+        BehaviorPlugin::for_tree(running_fallback).entry_mode(|_| EntryMode::Evaluate),
+    );
+    let agent = app
+        .world_mut()
+        .spawn((Log(vec![]), Ammo(0), Behavior::for_tree(running_fallback)))
+        .id();
+
+    app.update();
+    app.world_mut().resource_mut::<TopReady>().0 = true;
+    app.update();
+
+    assert_eq!(log(&app, agent).last(), Some(&"top"));
+}
