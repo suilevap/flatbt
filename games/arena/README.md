@@ -51,6 +51,15 @@ loss, which is why it is opt-in rather than the default.
 context never declared was 25 lines of hand-written `BtAction` per question.
 It is one line: `ask(WantsCover, |bb| bb.cover.is_some())`.
 
+**Actions no longer name the blackboard's lifetimes.** `BtAction` is generic
+over its context, so implementing it for a blackboard meant writing
+`Blackboard<'_, '_, '_, '_, '_, Fighter>` in the impl header and in every
+method -- five lifetimes that are an artefact of assembling the blackboard from
+borrows and that no action ever mentions. `AgentAction` fixes the context, so
+its methods elide them like any ordinary function, and `act` turns one into a
+node. The game now spells that signature zero times; the whole integration
+spells it once, in the bridge impl.
+
 **`evaluate_every` no longer divides 128-bit integers.** It ran two of them per
 agent per tick, which on a real tree cost more than the tree: 57 ns per agent
 against 36 ns now. It works in `u64` and takes one remainder instead.

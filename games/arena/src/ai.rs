@@ -9,7 +9,7 @@ use core::time::Duration;
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
-use flatbt::prelude::{BtAction, action, choose};
+use flatbt::prelude::choose;
 
 use crate::world::{Ammo, Arena, CoverTarget, Health, Speed, WantsCover};
 
@@ -78,32 +78,23 @@ struct Reload {
     rounds: u32,
 }
 
-impl BtAction<Blackboard<'_, '_, '_, '_, '_, Fighter>> for Reload {
+impl AgentAction<Fighter> for Reload {
+    /// Ticks elapsed so far. Kept between updates; dropped when it ends.
     type State = u32;
 
-    fn start(&self, _: &mut Blackboard<'_, '_, '_, '_, '_, Fighter>, _: ()) -> Option<u32> {
+    fn start(&self, _: &mut Blackboard<Fighter>) -> Option<u32> {
         Some(0)
     }
 
-    fn is_in_progress(
-        &self,
-        elapsed: &u32,
-        _: &Blackboard<'_, '_, '_, '_, '_, Fighter>,
-        _: (),
-    ) -> bool {
+    fn is_in_progress(&self, elapsed: &u32, _: &Blackboard<Fighter>) -> bool {
         *elapsed < self.ticks
     }
 
-    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<'_, '_, '_, '_, '_, Fighter>, _: ()) {
+    fn tick(&self, elapsed: &mut u32, _: &mut Blackboard<Fighter>) {
         *elapsed += 1;
     }
 
-    fn complete(
-        &self,
-        _: &mut u32,
-        bb: &mut Blackboard<'_, '_, '_, '_, '_, Fighter>,
-        _: (),
-    ) -> bool {
+    fn complete(&self, _: &mut u32, bb: &mut Blackboard<Fighter>) -> bool {
         bb.ammo.0 = self.rounds;
         true
     }
@@ -112,7 +103,7 @@ impl BtAction<Blackboard<'_, '_, '_, '_, '_, Fighter>> for Reload {
 fn reload() -> impl BehaviorNode<Fighter> {
     seq((
         check(|bb: &Blackboard<Fighter>| !has_ammo(bb)),
-        action(Reload {
+        act(Reload {
             ticks: 30,
             rounds: 6,
         }),
