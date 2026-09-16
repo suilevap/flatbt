@@ -16,6 +16,9 @@ cargo run --release --bin scaling        # a control: what this machine's task p
 cargo test --release                     # the trees, with no Bevy app
 ```
 
+`bench` takes `AGENTS=`, `THREADS=`, `TREE=` and `SPLIT=1`, the last spreading
+one tree across three names to measure what splitting costs.
+
 It is its own workspace, so the repository's checks never build Bevy's renderer.
 
 ## What is in it

@@ -320,9 +320,20 @@ Closed since the arena:
   `read` runs per agent, so the answer can be a field. The arena decides
   `rethink` there rather than carrying the clock into every node.
 - **Whether the blackboard should be borrows or a snapshot.** Snapshot, at no
-  measurable cost. See above.
+  measurable cost.
 - **Whether `ask` and `scope!` compose.** They do, and `ask` writes the answer
   into the local rather than leaving it on the blackboard.
+- **`write` running every tick.** It does not any more. `Blackboard` sets a flag
+  in `DerefMut`, so a tree that only read is never written back and never marks
+  its agent changed — Bevy's own bargain, where taking `&mut` counts whether or
+  not anything changed. Free in the arena, where almost every agent moves.
+- **Mutable shared access.** Not wanted. `Param` is read-only, the agent's own
+  data is the mutable part, and anything further is a deferred edit. Allowing
+  more would mean a second context flavour for the serial tick alone.
+- **Ticking outside `Update`.** Every stage of `Main`, a `FixedUpdate` running
+  five times in one frame, and a schedule the game runs itself all hold a tick,
+  and deferred edits are applied by whichever schedule ran it. See
+  `crates/flatbt-bevy/tests/schedules.rs`.
 
 Still open:
 
@@ -332,25 +343,23 @@ Still open:
 - **A `Running` branch below a failed resume holds priority down for good.**
   `Behavior::tick` re-enters with `Evaluate` when a resumed update *fails*, but a
   fallback that succeeds or runs hides the failure from it. Only `entry_mode`
-  recovers that shape. Fixing it properly means `Resume` meaning two things
+  recovers that shape. Accepted: the alternative is `Resume` meaning two things
   inside `select`, which was tried and reverted.
-- **Mutable shared access.** `Param` is read-only, because the parallel tick
-  needs it to be. A serial tick could allow more, at the cost of a second
-  context flavour.
+- **Two trees of the same Rust type cannot both be registered**, since the
+  resource is keyed by the builder type, and a builder parameterized at runtime
+  therefore configures nothing. Making configuration first-class would mean
+  keying on the *tree* type and storing configured instances beside it, with
+  `Behavior` carrying an index. Measured incentive: splitting one tree across
+  three names costs about 6% serially and 10% parallel over 100 000 agents
+  (`SPLIT=1 cargo run --release --bin bench` in the arena), because each split
+  is its own archetype, system and set of `par_iter` batches. More variants can
+  only make that worse, though that was not measured.
 - **Batch size control for the parallel tick.** Bevy's default is one batch per
   thread; a tree whose cost varies a lot per agent would want to say otherwise.
 - **A revalidation budget per frame.** Staggering smooths the load but sets no
   ceiling.
-- **`write` runs every tick**, so a context that assigns unconditionally dirties
-  change detection for the whole population. `set_if_neq` is the answer and the
-  docs say so, but nothing enforces it.
-- **A forgotten `BehaviorPlugin` is a runtime warning, not a compile error.**
-  The tree name is written twice — once at registration, once per agent — and
-  only the component hook catches a mismatch.
-- **Two trees of the same Rust type cannot both be registered**, since the
-  resource is keyed by the builder type. Distinct builder functions normally
-  have distinct opaque types, so this only bites a builder parameterized at
-  runtime — which `Behavior::for_tree` already documents as not configuring
-  anything.
+- **A forgotten `BehaviorPlugin` is a runtime warning, not a compile error**,
+  and a tree registered into a schedule nobody runs is silent. Accepted: a
+  component means nothing without a system, which is true of Bevy generally.
 - **The windowed arena has never been run.** It builds; this container has no
   display.

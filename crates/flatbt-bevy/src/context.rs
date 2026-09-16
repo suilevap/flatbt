@@ -126,12 +126,19 @@ pub trait BehaviorContext: Send + Sync + 'static {
 /// implements `BtAction<Blackboard<Guard>>` without spelling anything else.
 ///
 /// [`Deref`] targets the snapshot, so `bb.ammo` reaches it while `bb.entity`
-/// stays on the blackboard itself.
+/// stays on the blackboard itself. Reading goes through [`Deref`] and writing
+/// through [`DerefMut`], which is what lets the tick skip
+/// [`BehaviorContext::write`] entirely for an agent whose tree only looked.
 pub struct Blackboard<C: BehaviorContext> {
     /// The entity that owns the behavior.
     pub entity: Entity,
-    /// What [`BehaviorContext::read`] gathered for this update.
-    pub agent: C::Snapshot,
+    /// What [`BehaviorContext::read`] gathered for this update. Private so that
+    /// reaching it goes through [`Deref`], which is what notices a write.
+    snapshot: C::Snapshot,
+    /// Set by [`DerefMut`], so [`BehaviorContext::write`] is skipped for an
+    /// agent whose tree only looked. Same bargain as Bevy's own change
+    /// detection: taking `&mut` counts, whether or not anything changed.
+    written: bool,
     /// Absent until a node defers something. Most agents never do, and an empty
     /// queue is not free: dropping one walks its buffer, which at one per agent
     /// per tick cost a fifth of the whole tick.
@@ -143,9 +150,27 @@ impl<C: BehaviorContext> Blackboard<C> {
     pub fn new(entity: Entity, snapshot: C::Snapshot) -> Self {
         Self {
             entity,
-            agent: snapshot,
+            snapshot,
+            written: false,
             queue: None,
         }
+    }
+
+    /// The snapshot as the tree left it.
+    pub fn snapshot(&self) -> &C::Snapshot {
+        &self.snapshot
+    }
+
+    /// Takes the snapshot away, for a caller driving a tree without a tick
+    /// system -- a unit test, say.
+    pub fn into_snapshot(self) -> C::Snapshot {
+        self.snapshot
+    }
+
+    /// Whether anything took `&mut` to the snapshot this update. `false` means
+    /// [`BehaviorContext::write`] has nothing to put back.
+    pub fn written(&self) -> bool {
+        self.written
     }
 
     /// Defers a world edit beyond what the snapshot can carry: spawning,
@@ -214,13 +239,14 @@ impl<C: BehaviorContext> Deref for Blackboard<C> {
     type Target = C::Snapshot;
 
     fn deref(&self) -> &Self::Target {
-        &self.agent
+        &self.snapshot
     }
 }
 
 impl<C: BehaviorContext> DerefMut for Blackboard<C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.agent
+        self.written = true;
+        &mut self.snapshot
     }
 }
 

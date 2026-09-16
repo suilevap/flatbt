@@ -13,7 +13,7 @@
 use std::time::{Duration, Instant};
 
 use arena::Mind;
-use arena::ai::{chaser, coward, sniper};
+use arena::ai::{Fighter, chaser, coward, sniper};
 use arena::world::{ARENA, Ammo, Arena, Cover, Health, Speed, resolve_cover_requests, track_arena};
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
@@ -42,6 +42,21 @@ fn scatter(index: u32) -> Vec2 {
     let x = (hash >> 16) as f32 / 65_536.0;
     let y = (hash & 0xffff) as f32 / 65_536.0;
     Vec2::new(x - 0.5, y - 0.5) * ARENA
+}
+
+/// Three names for one tree, so the same work splits across three resources,
+/// three archetypes and three systems. What that split costs is the question
+/// behind "should trees of the same type share a loop".
+fn split_a() -> impl BehaviorNode<Fighter> {
+    sniper()
+}
+
+fn split_b() -> impl BehaviorNode<Fighter> {
+    sniper()
+}
+
+fn split_c() -> impl BehaviorNode<Fighter> {
+    sniper()
 }
 
 fn build(agents: u32, parallel: bool) -> App {
@@ -75,6 +90,40 @@ fn build(agents: u32, parallel: bool) -> App {
         ),
     );
 
+    let split = std::env::var_os("SPLIT").is_some();
+    if split {
+        // One tree, three names. Everything else about the run is the same.
+        if parallel {
+            app.add_plugins((
+                BehaviorPlugin::for_tree(split_a).parallel(),
+                BehaviorPlugin::for_tree(split_b).parallel(),
+                BehaviorPlugin::for_tree(split_c).parallel(),
+            ));
+        } else {
+            app.add_plugins((
+                BehaviorPlugin::for_tree(split_a),
+                BehaviorPlugin::for_tree(split_b),
+                BehaviorPlugin::for_tree(split_c),
+            ));
+        }
+        let world = app.world_mut();
+        for index in 0..24 {
+            world.spawn((
+                Transform::from_translation(scatter(index * 7919).extend(0.0)),
+                Cover,
+            ));
+        }
+        for index in 0..agents {
+            let body = agent_body(index);
+            match index % 3 {
+                0 => world.spawn((body, Behavior::for_tree(split_a))),
+                1 => world.spawn((body, Behavior::for_tree(split_b))),
+                _ => world.spawn((body, Behavior::for_tree(split_c))),
+            };
+        }
+        return app;
+    }
+
     let plugins = (
         BehaviorPlugin::for_tree(chaser),
         BehaviorPlugin::for_tree(sniper),
@@ -98,12 +147,7 @@ fn build(agents: u32, parallel: bool) -> App {
         ));
     }
     for index in 0..agents {
-        let body = (
-            Transform::from_translation(scatter(index).extend(0.0)),
-            Health(100.0 - (index % 90) as f32),
-            Ammo(index % 7),
-            Speed(1.0 + (index % 3) as f32 * 0.4),
-        );
+        let body = agent_body(index);
         let mind = match only.as_str() {
             "chaser" => Mind::Chaser,
             "sniper" => Mind::Sniper,
@@ -117,6 +161,16 @@ fn build(agents: u32, parallel: bool) -> App {
         };
     }
     app
+}
+
+/// One agent's components, so both spawn paths make the same population.
+fn agent_body(index: u32) -> impl Bundle {
+    (
+        Transform::from_translation(scatter(index).extend(0.0)),
+        Health(100.0 - (index % 90) as f32),
+        Ammo(index % 7),
+        Speed(1.0 + (index % 3) as f32 * 0.4),
+    )
 }
 
 fn measure(agents: u32, parallel: bool, frames: u32) -> f64 {

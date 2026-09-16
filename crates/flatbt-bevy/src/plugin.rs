@@ -179,7 +179,11 @@ fn tick_agent<C: BehaviorContext, F: TreeBuilder<C>>(
     let mut bb = Blackboard::new(entity, C::read(entity, agent, shared));
     let mode = entry_mode(&bb);
     behavior.tick(tree, &mut bb, mode);
-    C::write(&bb.agent, agent);
+    // A tree that only read leaves nothing to put back, and writing anyway
+    // would mark the whole population changed for the rest of the engine.
+    if bb.written() {
+        C::write(bb.snapshot(), agent);
+    }
     bb.take_queue()
 }
 

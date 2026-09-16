@@ -1,4 +1,5 @@
 use core::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -920,4 +921,104 @@ fn entry_mode_is_what_recovers_a_running_fallback() {
     app.update();
 
     assert_eq!(log(&app, agent).last(), Some(&"top"));
+}
+
+// --- write is skipped for a tree that only read ------------------------------
+
+#[derive(Resource, Default)]
+struct Writes(u32);
+
+struct Watcher {
+    ammo: u32,
+}
+
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct WatcherAccess {
+    ammo: &'static mut Ammo,
+}
+
+impl BehaviorContext for Watcher {
+    type Agent = WatcherAccess;
+    type Param = ();
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &WatcherAccessItem, _: &()) -> Watcher {
+        Watcher { ammo: agent.ammo.0 }
+    }
+
+    /// Counts its own calls through a static, because `write` has no world.
+    fn write(watcher: &Watcher, agent: &mut WatcherAccessItem) {
+        WRITES.fetch_add(1, Ordering::Relaxed);
+        agent.ammo.set_if_neq(Ammo(watcher.ammo));
+    }
+}
+
+static WRITES: AtomicUsize = AtomicUsize::new(0);
+
+fn only_looks() -> impl BehaviorNode<Watcher> {
+    check(|bb: &Blackboard<Watcher>| bb.ammo > 0)
+}
+
+fn spends() -> impl BehaviorNode<Watcher> {
+    leaf(|bb: &mut Blackboard<Watcher>| {
+        bb.ammo = bb.ammo.saturating_sub(1);
+        NodeResult::Success
+    })
+}
+
+fn watcher_app<F: TreeBuilder<Watcher> + Copy>(builder: F) -> App {
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(builder));
+    app.world_mut()
+        .spawn((Ammo(5), Behavior::for_tree(builder)));
+    app
+}
+
+/// One test, because `write` counts through a static and tests share a process.
+#[test]
+fn write_runs_only_for_a_tree_that_took_mut_to_its_snapshot() {
+    WRITES.store(0, Ordering::Relaxed);
+    let mut app = watcher_app(only_looks);
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(
+        WRITES.load(Ordering::Relaxed),
+        0,
+        "nothing took &mut to the snapshot, so there was nothing to put back"
+    );
+
+    let mut app = watcher_app(spends);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(WRITES.load(Ordering::Relaxed), 3, "one per tick that wrote");
+}
+
+#[test]
+fn a_read_only_tree_leaves_change_detection_alone() {
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(only_looks))
+        .init_resource::<Writes>()
+        .add_systems(
+            Update,
+            (|changed: Query<(), Changed<Ammo>>, mut seen: ResMut<Writes>| {
+                seen.0 += changed.iter().count() as u32;
+            })
+            .after(BehaviorSystems),
+        );
+    app.world_mut()
+        .spawn((Ammo(5), Behavior::for_tree(only_looks)));
+
+    app.update(); // the spawn itself counts as a change
+    app.world_mut().resource_mut::<Writes>().0 = 0;
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(
+        app.world().resource::<Writes>().0,
+        0,
+        "the agent was not marked changed on any of those ticks"
+    );
 }

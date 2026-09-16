@@ -83,3 +83,81 @@ fn a_schedule_the_game_runs_itself_holds_a_tick() {
     app.world_mut().run_schedule(TurnPhase);
     assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(2)));
 }
+
+/// `FixedUpdate` runs a whole number of times per frame, including none and
+/// including several. A tick registered there follows it.
+#[test]
+fn a_fixed_schedule_ticks_as_often_as_it_runs() {
+    use bevy_time::{Fixed, Time, TimePlugin};
+    use core::time::Duration;
+
+    let mut app = App::new();
+    app.add_plugins(TimePlugin)
+        .add_plugins(BehaviorPlugin::for_tree(fire).in_schedule(FixedUpdate));
+    app.insert_resource(Time::<Fixed>::from_seconds(0.01));
+    let entity = app
+        .world_mut()
+        .spawn((Fired(0), Behavior::for_tree(fire)))
+        .id();
+
+    // No time has passed, so the fixed loop has nothing to run.
+    app.update();
+    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
+
+    // Hand the fixed loop five steps' worth of time and take one frame.
+    app.world_mut()
+        .resource_mut::<Time<Fixed>>()
+        .accumulate_overstep(Duration::from_millis(50));
+    app.update();
+    assert_eq!(
+        app.world().get::<Fired>(entity),
+        Some(&Fired(5)),
+        "five fixed steps in one frame, five ticks"
+    );
+}
+
+/// Commands a node defers are applied by the schedule that ran the tick, not by
+/// `Update`, so a tree ticking somewhere unusual still gets its edits.
+#[test]
+fn deferred_edits_land_in_the_schedule_that_ticked() {
+    #[derive(Component)]
+    struct Marked;
+
+    fn mark() -> impl BehaviorNode<Agent> {
+        leaf(|bb: &mut Blackboard<Agent>| {
+            bb.agent_commands().insert(Marked);
+            NodeResult::Success
+        })
+    }
+
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(mark).in_schedule(TurnPhase));
+    let entity = app
+        .world_mut()
+        .spawn((Fired(0), Behavior::for_tree(mark)))
+        .id();
+
+    app.world_mut().run_schedule(TurnPhase);
+    assert!(
+        app.world().get::<Marked>(entity).is_some(),
+        "the insert applied when TurnPhase finished, with no Update in between"
+    );
+}
+
+/// A tree registered into a schedule nobody runs is silent: no tick, no
+/// warning. The registration is what the component hook checks for, and it is
+/// there. Pinned so the silence is a decision rather than a surprise.
+#[test]
+fn a_schedule_that_never_runs_is_silent() {
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(fire).in_schedule(TurnPhase));
+    let entity = app
+        .world_mut()
+        .spawn((Fired(0), Behavior::for_tree(fire)))
+        .id();
+
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(app.world().get::<Fired>(entity), Some(&Fired(0)));
+}

@@ -30,7 +30,7 @@ fn run(tree: impl BehaviorNode<Fighter>, snapshot: Fighter, ticks: u32) -> Fight
     for _ in 0..ticks {
         let _ = update(&tree, &mut state, &mut bb, EntryMode::Resume);
     }
-    bb.agent
+    bb.into_snapshot()
 }
 
 #[test]

@@ -23,3 +23,6 @@ bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std", "multi_threaded"] }
 flatbt-nodes = { workspace = true, features = ["action", "choose"] }
 flatbt-scope.workspace = true
+# Drives `FixedUpdate`, so the tests can show a tick running more than once a
+# frame rather than assuming it does.
+bevy_time = { version = "0.19", default-features = false, features = ["std"] }

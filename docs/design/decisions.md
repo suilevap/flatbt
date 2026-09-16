@@ -188,3 +188,23 @@ again rather than acting on a stale answer.
 Tests: `ask_fills_a_scope_local_and_the_nodes_after_it_read_a_value` in
 `crates/flatbt-bevy/tests/catalog.rs`; used for real by `take_cover` in
 `games/arena/src/ai.rs`.
+
+## 2026-09-16 — `write` runs only for a tree that wrote
+
+`BehaviorContext::write` ran every tick, so a context that assigned
+unconditionally marked its whole population changed and dragged the rest of the
+engine along. `set_if_neq` answered it per field, but nothing enforced that and
+the call happened regardless.
+
+`Blackboard` now sets a flag in `DerefMut`. Reading a snapshot field goes
+through `Deref`, writing one through `DerefMut`, so the tick knows whether the
+tree touched anything and skips `write` when it did not. Same bargain as Bevy's
+own change detection: taking `&mut` counts whether or not the value changed.
+
+The snapshot field is private for it — reaching it directly would step around
+the flag — with `snapshot()`, `into_snapshot()` and `written()` in its place.
+`into_snapshot` takes `self`, and returning the snapshot by value from the tick
+cost 1.5 ms per 100k agents, so the tick uses `snapshot()` and leaves it where
+it is.
+
+Costs nothing in the arena, where almost every agent moves every tick.
