@@ -95,12 +95,16 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "action")]
+mod ask;
 mod context;
 mod plugin;
 mod tree;
 
 pub mod prelude;
 
+#[cfg(feature = "action")]
+pub use ask::{Ask, ask};
 pub use context::{AgentItem, BehaviorContext, Blackboard, ParamItem, evaluate_every};
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub(crate) use tree::BehaviorTree;

@@ -6,8 +6,14 @@ publish.workspace = true
 description = "Bevy ECS integration for FlatBT"
 rust-version = "1.95"
 
+[features]
+default = ["action"]
+# `ask` is an action, and the only thing here that needs the action catalog.
+action = ["dep:flatbt-nodes", "flatbt-nodes/action"]
+
 [dependencies]
 flatbt-core.workspace = true
+flatbt-nodes = { workspace = true, optional = true }
 bevy_app = { version = "0.19", default-features = false, features = ["std"] }
 bevy_ecs = { version = "0.19", default-features = false, features = ["std"] }
 

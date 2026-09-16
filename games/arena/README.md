@@ -34,17 +34,26 @@ a 4-core Xeon at 2.8 GHz:
 
 | agents  | serial  | `.parallel()` | speedup |
 | ------- | ------- | ------------- | ------- |
-| 10 000  | 0.72 ms | 0.50 ms       | 1.43x   |
-| 50 000  | 2.81 ms | 1.24 ms       | 2.27x   |
-| 100 000 | 5.65 ms | 2.61 ms       | 2.16x   |
-| 200 000 | 11.6 ms | 4.28 ms       | 2.71x   |
-| 400 000 | 23.6 ms | 8.23 ms       | 2.86x   |
+| 10 000  | 0.50 ms | 0.41 ms       | 1.22x   |
+| 50 000  | 1.85 ms | 1.00 ms       | 1.86x   |
+| 100 000 | 3.55 ms | 1.81 ms       | 1.97x   |
+| 200 000 | 7.21 ms | 3.15 ms       | 2.29x   |
+| 400 000 | 14.7 ms | 5.84 ms       | 2.51x   |
 
-About 57 ns per agent per tick serially. Below ~5 000 agents the task pool
-costs more than it saves and `.parallel()` is a loss, which is why it is opt-in
-rather than the default.
+About 36 ns per agent per tick serially, of which roughly 7 ns is the
+revalidation guard deciding whether this agent reconsiders at all. Below
+~5 000 agents the task pool costs more than it saves and `.parallel()` is a
+loss, which is why it is opt-in rather than the default.
 
 ## What building it changed
+
+**`ask` is now a node the integration ships.** Asking the world something the
+context never declared was 25 lines of hand-written `BtAction` per question.
+It is one line: `ask(WantsCover, |bb| bb.cover.is_some())`.
+
+**`evaluate_every` no longer divides 128-bit integers.** It ran two of them per
+agent per tick, which on a real tree cost more than the tree: 57 ns per agent
+against 36 ns now. It works in `u64` and takes one remainder instead.
 
 **Commands are handed out per batch, not per agent.** The parallel tick used
 `ParallelCommands::command_scope` around each agent. That takes a thread-local
@@ -55,24 +64,26 @@ control that measures the difference in isolation.
 
 ## What building it found
 
-**A tree that only resumes never changes its mind.** `select` rescans its
-children on `EntryMode::Evaluate` and only then; `choose!` re-picks the same
-way. The default entry mode is `Resume`, so a reactive tree does nothing
-reactive until its context says when to reconsider. The coward needs it to
-notice it is hurt, and `take_cover` needs it to notice its request was
-answered. `Fighter::entry_mode` uses `evaluate_every`, which also keeps the
-population from reconsidering all on one frame.
+**`Running` is a promise, and a leaf cannot keep it.** `take_cover` asked for
+cover with a leaf that returned `Running` while it waited. Under `Resume` a
+control node re-runs its active child directly, so the tree never left that
+leaf: it re-inserted its request every frame, and the archetype churn cost
+220 ns per agent per tick -- four times the whole tree -- while scaling to
+exactly 1.0x however many threads it was given. The symptom read as
+"parallelism does not work here", not as "this tree is wrong".
 
-This was not a small mistake to make. With the trees stuck in the asking
-branch, every hurt coward re-inserted its request every frame, and the
-resulting archetype churn cost 220 ns per agent per tick -- four times the
-whole tree -- while scaling to exactly 1.0x however many threads it was given.
-Nothing in the API hinted at it, and the cost showed up as "parallelism does
-not work here" rather than as "this tree is wrong".
+`Failure` would have been enough on its own. A control node whose resumed
+child fails moves on to the next sibling, and an invocation that reaches a
+terminal result is dropped, so the next tick starts fresh from the root as
+`Evaluate`. Only `Running` sticks. A node that returns it is promising to make
+progress and eventually stop, and a stateless leaf has nothing to keep that
+promise with -- which is why asking is `ask`, an action whose `start` runs once
+per invocation.
 
-**Asking the world something is an action, not a leaf.** A leaf that returns
-`Running` runs again on every resume, so a leaf that inserts a request inserts
-it every frame. `BtAction::start` runs once per invocation, `is_in_progress`
-is where the waiting goes, and `complete` is where the answer gets used --
-which is exactly the shape of a deferred query. `AskForCover` in `src/ai.rs`
-is the whole pattern, and it is nine lines.
+**Revalidation is for abandoning work, not for reacting.** With the asking
+fixed, the coward switches between fighting and hiding without any entry mode
+at all: each invocation ends, and the next one re-picks. `entry_mode` earns its
+place only for the branch that does not end -- walking to cover takes a hundred
+frames, and a coward healed halfway there should turn around. That costs about
+7 ns per agent per tick, and `evaluate_every` spreads it so the population does
+not all reconsider on one frame.

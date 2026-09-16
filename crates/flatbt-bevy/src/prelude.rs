@@ -8,6 +8,8 @@ pub use flatbt_core::{
     NodeResult, Selector, Sequence, check, control, leaf, select, seq,
 };
 
+#[cfg(feature = "action")]
+pub use crate::ask;
 pub use crate::{
     Behavior, BehaviorContext, BehaviorNode, BehaviorPlugin, BehaviorSystems, Blackboard,
     TreeBuilder, evaluate_every,

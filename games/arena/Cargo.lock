@@ -1844,6 +1844,7 @@ dependencies = [
  "bevy_app",
  "bevy_ecs",
  "flatbt-core",
+ "flatbt-nodes",
 ]
 
 [[package]]

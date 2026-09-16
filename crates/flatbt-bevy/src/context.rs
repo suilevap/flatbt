@@ -185,18 +185,31 @@ pub fn evaluate_every(
     delta: Duration,
     entity: Entity,
 ) -> EntryMode {
-    let period = period.as_nanos();
+    let period = nanos(period);
     if period == 0 {
+        return EntryMode::Evaluate;
+    }
+    let delta = nanos(delta);
+    if delta >= period {
         return EntryMode::Evaluate;
     }
     // A multiplicative hash, so entities spawned together -- consecutive
     // indices -- land in different slots rather than sharing one.
-    let phase = (u128::from(entity.index_u32().wrapping_mul(2_654_435_761)) * period) >> 32;
-    let now = elapsed.as_nanos() + phase;
-    let previous = elapsed.saturating_sub(delta).as_nanos() + phase;
-    if now / period == previous / period {
-        EntryMode::Resume
-    } else {
+    let hash = u64::from(entity.index_u32().wrapping_mul(2_654_435_761));
+    let phase = ((u128::from(hash) * u128::from(period)) >> 32) as u64;
+    // The slot boundary falls inside this tick exactly when the offset clock
+    // has less than a tick left of its current period. One remainder rather
+    // than the two divisions the quotients would take: this runs once per agent
+    // per tick, and at that rate a 128-bit division costs more than the tree it
+    // is guarding.
+    if nanos(elapsed).saturating_add(phase) % period < delta {
         EntryMode::Evaluate
+    } else {
+        EntryMode::Resume
     }
+}
+
+/// Nanoseconds as [`u64`], which holds 584 years of them.
+fn nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }

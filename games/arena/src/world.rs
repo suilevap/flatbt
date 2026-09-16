@@ -20,7 +20,7 @@ pub struct Speed(pub f32);
 pub struct Cover;
 
 /// Asked for by a tree, answered by [`resolve_cover_requests`] on a later tick.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct WantsCover;
 
 /// The answer. Absent until the request is served.

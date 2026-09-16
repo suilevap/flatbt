@@ -119,44 +119,14 @@ fn reload() -> impl BehaviorNode<Fighter> {
     ))
 }
 
-/// The deferred query, as an action: ask once, wait, then use the answer.
+/// The deferred query: ask, wait, then use the answer.
 ///
-/// A tree cannot run an arbitrary query itself -- the context declares its
-/// access up front -- so it asks by inserting a component and reads the answer
-/// from its own agent view once a game system has written it.
-///
-/// It has to be an action rather than a leaf returning `Running`. A leaf is
-/// re-entered on every resume, so it would re-insert the request every frame
-/// and thrash the entity between archetypes; `start` runs once per invocation,
-/// which is what "ask" means.
-struct AskForCover;
-
-impl BtAction<Blackboard<'_, '_, '_, '_, '_, Fighter>> for AskForCover {
-    type State = ();
-
-    fn start(&self, bb: &mut Blackboard<'_, '_, '_, '_, '_, Fighter>, _: ()) -> Option<()> {
-        bb.agent_commands().insert(WantsCover);
-        Some(())
-    }
-
-    fn is_in_progress(&self, _: &(), bb: &Blackboard<'_, '_, '_, '_, '_, Fighter>, _: ()) -> bool {
-        bb.cover.is_none()
-    }
-
-    fn tick(&self, _: &mut (), _: &mut Blackboard<'_, '_, '_, '_, '_, Fighter>, _: ()) {}
-
-    fn complete(&self, _: &mut (), _: &mut Blackboard<'_, '_, '_, '_, '_, Fighter>, _: ()) -> bool {
-        true
-    }
-}
-
+/// A tree cannot run an arbitrary query -- the context declares its access up
+/// front -- so it asks by inserting a component, `resolve_cover_requests`
+/// answers, and the tree reads the answer through its own agent view.
 fn take_cover() -> impl BehaviorNode<Fighter> {
     seq((
-        // Nothing to walk to yet: ask, and wait for the answer.
-        select((
-            check(|bb: &Blackboard<Fighter>| bb.cover.is_some()),
-            action(AskForCover),
-        )),
+        ask(WantsCover, |bb: &Blackboard<Fighter>| bb.cover.is_some()),
         leaf(|bb: &mut Blackboard<Fighter>| {
             let Some(spot) = bb.cover.map(|c| c.0) else {
                 return NodeResult::Failure;
