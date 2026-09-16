@@ -58,6 +58,27 @@ pub trait BtControl<C> {
         completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp;
+
+    /// Called instead of [`child_failed`](BtControl::child_failed) when the
+    /// child that failed was the resumed continuation.
+    ///
+    /// Resume skips [`begin`](BtControl::begin), so no child before the active
+    /// one was consulted this update. While the continuation holds that is the
+    /// point. Once it fails there is nothing left to preserve, and whatever the
+    /// policy decides next it decides on information it never gathered -- so a
+    /// policy whose order means priority answers here instead.
+    ///
+    /// The framework will not run the failed child again in the same update.
+    /// Defaults to `child_failed`.
+    fn continuation_failed(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        completed_child_index: usize,
+        child_count: usize,
+    ) -> ControlOp {
+        self.child_failed(state, ctx, completed_child_index, child_count)
+    }
 }
 
 /// Policy with statically typed children.
@@ -87,8 +108,16 @@ where
     ) -> NodeResult {
         let mut params = params.into_value();
         let active_child_index = self.children.active_child_index(&state.children);
+        // The child this update resumes, if any: the only one entered with a
+        // saved continuation, and the only one the policy did not choose.
+        let mut continuation = None;
+        // Set once a continuation has failed, so the rescan does not rerun it.
+        let mut failed = None;
         let mut op = match (mode, active_child_index) {
-            (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
+            (EntryMode::Resume, Some(child_index)) => {
+                continuation = Some(child_index);
+                ControlOp::RunChild(child_index)
+            }
             _ => self
                 .policy
                 .begin(&mut state.inner, ctx, active_child_index, Children::LEN),
@@ -104,6 +133,20 @@ where
                             Children::LEN,
                         ));
                     }
+                    // A policy rescanning after its continuation failed reaches
+                    // that child again. It already failed this update, and
+                    // running it twice would repeat its effects.
+                    if failed.is_some_and(|failed| failed == child_index) {
+                        op = self.policy.child_failed(
+                            &mut state.inner,
+                            ctx,
+                            child_index,
+                            Children::LEN,
+                        );
+                        continue;
+                    }
+                    let resumed = continuation == Some(child_index);
+                    continuation = None;
                     match self.children.run_child(
                         &mut state.children,
                         child_index,
@@ -118,6 +161,15 @@ where
                             child_index,
                             Children::LEN,
                         ),
+                        NodeResult::Failure if resumed => {
+                            failed = Some(child_index);
+                            self.policy.continuation_failed(
+                                &mut state.inner,
+                                ctx,
+                                child_index,
+                                Children::LEN,
+                            )
+                        }
                         NodeResult::Failure => self.policy.child_failed(
                             &mut state.inner,
                             ctx,
@@ -184,7 +236,8 @@ impl<C> BtControl<C> for Sequence {
 }
 
 /// Tries children in order; stops on Success or Running.
-/// Evaluate scans from child zero; Resume follows the saved child.
+/// Evaluate scans from child zero; Resume follows the saved child, and rescans
+/// from zero if that child fails.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selector;
 
@@ -195,6 +248,23 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
 
 impl<C> BtControl<C> for Selector {
     type State = ();
+
+    /// Order is priority, so a lost continuation means rescanning from the top:
+    /// the children above the resumed one were skipped, not rejected, and one
+    /// of them may have become available while it ran.
+    fn continuation_failed(
+        &self,
+        _: &mut (),
+        _: &mut C,
+        _: usize,
+        child_count: usize,
+    ) -> ControlOp {
+        if child_count == 0 {
+            ControlOp::Failure
+        } else {
+            ControlOp::RunChild(0)
+        }
+    }
 
     fn begin(
         &self,

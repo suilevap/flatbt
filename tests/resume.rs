@@ -4,7 +4,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use flatbt::{BtNode, EntryMode, NodeResult, control, leaf, select, seq};
+use flatbt::{BtNode, EntryMode, NodeResult, check, control, leaf, select, seq};
 
 #[path = "../examples/support/mod.rs"]
 mod support;
@@ -206,6 +206,101 @@ fn failure_after_suspension_releases_path_and_runs_fallback() {
     assert!(modes.is_empty());
     assert!(!state.is_running());
     assert_eq!(drops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn selector_rescans_priority_when_its_resumed_branch_fails() {
+    // Order is priority. The top branch is unavailable when the middle one is
+    // chosen, and becomes available while it runs.
+    #[derive(Default)]
+    struct World {
+        top_ready: bool,
+        ran: Vec<&'static str>,
+        middle_updates: u32,
+    }
+
+    let tree = select((
+        seq((
+            check(|w: &World| w.top_ready),
+            leaf(|w: &mut World| {
+                w.ran.push("top");
+                Success
+            }),
+        )),
+        leaf(|w: &mut World| {
+            w.middle_updates += 1;
+            w.ran.push("middle");
+            if w.middle_updates >= 2 {
+                Failure
+            } else {
+                Running
+            }
+        }),
+        leaf(|w: &mut World| {
+            w.ran.push("fallback");
+            Running
+        }),
+    ));
+    let mut state = BtState::new(&tree);
+    let mut world = World::default();
+
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Evaluate),
+        Running
+    );
+    world.top_ready = true;
+
+    // The middle branch fails on resume. Its continuation is gone, so the
+    // choice that follows is a fresh one and is made with fresh information --
+    // the top branch, skipped rather than rejected, is tried before the
+    // fallback below it.
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        Success
+    );
+    assert_eq!(world.ran, ["middle", "middle", "top"]);
+
+    // Without the rescan the fallback would have gone Running and held the
+    // continuation for good, because nothing ever ends to force an Evaluate.
+    for _ in 0..3 {
+        let _ = update(&tree, &mut state, &mut world, EntryMode::Resume);
+    }
+    assert_eq!(world.ran.iter().filter(|r| **r == "fallback").count(), 0);
+}
+
+#[test]
+fn a_failed_continuation_is_not_rerun_by_the_rescan() {
+    // The rescan reaches the branch that just failed. It failed this update
+    // already; running it twice would repeat whatever it did.
+    #[derive(Default)]
+    struct Counts {
+        top: u32,
+        middle: u32,
+    }
+
+    let tree = select((
+        leaf(|c: &mut Counts| {
+            c.top += 1;
+            Failure
+        }),
+        leaf(|c: &mut Counts| {
+            c.middle += 1;
+            if c.middle >= 2 { Failure } else { Running }
+        }),
+    ));
+    let mut state = BtState::new(&tree);
+    let mut counts = Counts::default();
+
+    assert_eq!(
+        update(&tree, &mut state, &mut counts, EntryMode::Evaluate),
+        Running
+    );
+    assert_eq!(
+        update(&tree, &mut state, &mut counts, EntryMode::Resume),
+        Failure
+    );
+    assert_eq!(counts.top, 2, "tried once per update");
+    assert_eq!(counts.middle, 2, "resumed once, not rerun by the rescan");
 }
 
 #[test]

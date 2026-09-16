@@ -34,18 +34,27 @@ a 4-core Xeon at 2.8 GHz:
 
 | agents  | serial  | `.parallel()` | speedup |
 | ------- | ------- | ------------- | ------- |
-| 10 000  | 0.50 ms | 0.41 ms       | 1.22x   |
-| 50 000  | 1.85 ms | 1.00 ms       | 1.86x   |
-| 100 000 | 3.55 ms | 1.81 ms       | 1.97x   |
-| 200 000 | 7.21 ms | 3.15 ms       | 2.29x   |
-| 400 000 | 14.7 ms | 5.84 ms       | 2.51x   |
+| 10 000  | 0.55 ms | 0.47 ms       | 1.18x   |
+| 50 000  | 2.09 ms | 1.14 ms       | 1.84x   |
+| 100 000 | 4.20 ms | 1.89 ms       | 2.23x   |
+| 200 000 | 8.34 ms | 3.72 ms       | 2.24x   |
+| 400 000 | 17.1 ms | 6.57 ms       | 2.60x   |
 
-About 36 ns per agent per tick serially, of which roughly 7 ns is the
-revalidation guard deciding whether this agent reconsiders at all. Below
+About 42 ns per agent per tick serially, of which roughly 1 ns is the
+revalidation guard deciding whether this agent reconsiders at all, and about
+8 ns is `select` rescanning priority after a resumed branch fails. Below
 ~5 000 agents the task pool costs more than it saves and `.parallel()` is a
 loss, which is why it is opt-in rather than the default.
 
 ## What building it changed
+
+**`select` rescans priority when its resumed branch fails.** A resumed branch
+that fails leaves the selector choosing among children it never consulted, so
+it took the branch *below* the failure even when a higher-priority one had
+become available -- and if that branch went `Running`, the inversion held for
+good, because nothing ended to force an `Evaluate`. `BtControl` grew
+`continuation_failed` for it; `Sequence` and `Choose` keep the old behaviour,
+which was already right for them. It costs about 8 ns per agent per tick here.
 
 **`ask` is now a node the integration ships.** Asking the world something the
 context never declared was 25 lines of hand-written `BtAction` per question.

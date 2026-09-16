@@ -54,6 +54,10 @@ tree. The tree must outlive its states. `update` rejects a different root.
 | `select((...))` | Try in order; stop on Success or Running. Empty selector fails. | Scan from child zero. |
 
 `Resume` follows the saved path. Fresh invocations always receive `Evaluate`.
+If a resumed child fails, `select` scans from child zero rather than continuing
+below it: the children above it were skipped, not rejected, and the choice that
+follows a lost continuation is a fresh one. The failed child is not run twice in
+the same update.
 A completed child can be followed by another child in the same update.
 During revalidation, a failed candidate preserves the old branch; a new Running
 candidate replaces it and drops its state.

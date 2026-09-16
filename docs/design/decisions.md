@@ -114,3 +114,26 @@ Direct crate defaults are unchanged. Supersedes the empty entry-point defaults a
 
 README covers implemented APIs and common usage. CONTRIBUTING links internal design
 notes, decisions, and experiments. Advanced feature configuration is collapsed in README.
+
+## 2026-09-16 — A lost continuation is a fresh decision
+
+`Resume` skips `begin()`, so no child above the active one is consulted. While
+the continuation holds, that is the point. When the resumed child *fails* it is
+not: the policy then chooses among children it never looked at. A `select` whose
+resumed branch failed would take the branch below it even when a higher-priority
+one had become available meanwhile -- and if that branch went Running, it held
+the continuation for good, because nothing ended to force an `Evaluate`.
+
+`BtControl::continuation_failed` is called instead of `child_failed` when the
+failed child was the resumed continuation. It defaults to `child_failed`, so
+`Sequence` and `Choose` are unchanged: a sequence has no priority to restore,
+and a choose fails outward and re-picks on the next update. `Selector` overrides
+it to rescan from child zero.
+
+`ControlNode` will not run the failed child a second time in the same update:
+the rescan reaches it, and it has already failed, so its result is reused rather
+than its effects repeated.
+
+Found by `games/arena`, where the symptom was an agent that never reconsidered.
+Tests: `selector_rescans_priority_when_its_resumed_branch_fails` and
+`a_failed_continuation_is_not_rerun_by_the_rescan` in `tests/resume.rs`.
