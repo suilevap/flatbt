@@ -91,10 +91,20 @@ pub trait BehaviorContext: Send + Sync + 'static {
         shared: &ParamItem<'_, '_, Self>,
     ) -> Self::Snapshot;
 
-    /// Writes the snapshot back after the tick.
+    /// Publishes what the tree decided, after the tick.
     ///
-    /// Called every tick, so assign through [`Mut::set_if_neq`] or an explicit
-    /// comparison where spurious change detection would cost something.
+    /// Not a mirror of [`read`](BehaviorContext::read). A snapshot is better
+    /// off when no field is both gathered and written: what the world said is
+    /// the tree's input, and what the tree decided is an *intent* an ordinary
+    /// system carries out. A tree that subtracts the round it fired is deciding
+    /// what a shot costs, which belongs to the weapon; one that writes its own
+    /// position is deciding how fast the agent is and what a frame is worth. Let
+    /// it say `shoot` and `move_to` instead, and put the rest in `Agent` as `&`
+    /// rather than `&mut` so the split is the borrow checker's business.
+    ///
+    /// Only runs when a node took `&mut` to the snapshot, so a tree that merely
+    /// looked leaves change detection alone. Where a value can be written
+    /// unchanged, [`Mut::set_if_neq`] keeps the rest of the engine out of it.
     ///
     /// [`Mut::set_if_neq`]: bevy_ecs::change_detection::DetectChangesMut::set_if_neq
     fn write(snapshot: &Self::Snapshot, agent: &mut AgentItem<'_, '_, Self>);
