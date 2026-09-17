@@ -140,10 +140,7 @@ where
     for<'w, 's> SystemParamItem<'w, 's, C::Param>: Sync,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(BehaviorTree::<C, F>::new(
-            self.builder.build(),
-            self.entry_mode,
-        ));
+        app.insert_resource(BehaviorTree::<C, F>::new(&self.builder, self.entry_mode));
         if self.parallel {
             app.add_systems(
                 self.schedule,

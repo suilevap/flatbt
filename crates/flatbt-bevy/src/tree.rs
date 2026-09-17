@@ -102,8 +102,11 @@ where
 ///
 /// Inserted by [`BehaviorPlugin`](crate::BehaviorPlugin). Trees are immutable
 /// definitions, so they belong in a resource rather than copied into each agent.
+///
+/// Public so a game ticking its agents itself reads the tree the same way the
+/// generated system does. See [`Behavior::tick`].
 #[derive(Resource)]
-pub(crate) struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
+pub struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
     tree: F::Tree,
     entry_mode: EntryModeFn<C>,
     // Load-bearing: it keeps `C` a direct field use. Reached only through the
@@ -113,19 +116,23 @@ pub(crate) struct BehaviorTree<C: BehaviorContext, F: TreeBuilder<C>> {
 }
 
 impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
-    pub(crate) fn new(tree: F::Tree, entry_mode: Option<EntryModeFn<C>>) -> Self {
+    /// Builds the tree once. [`BehaviorPlugin`](crate::BehaviorPlugin) does
+    /// this; a game registering its own tick does it itself.
+    pub fn new(builder: &F, entry_mode: Option<EntryModeFn<C>>) -> Self {
         Self {
-            tree,
+            tree: builder.build(),
             entry_mode: entry_mode.unwrap_or(C::entry_mode),
             context: PhantomData,
         }
     }
 
-    pub(crate) fn get(&self) -> &F::Tree {
+    /// The definition, to hand to [`Behavior::tick`].
+    pub fn get(&self) -> &F::Tree {
         &self.tree
     }
 
-    pub(crate) fn entry_mode(&self) -> EntryModeFn<C> {
+    /// How this tree re-enters a suspended invocation.
+    pub fn entry_mode(&self) -> EntryModeFn<C> {
         self.entry_mode
     }
 }
@@ -218,7 +225,22 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> Behavior<C, F> {
     /// The result is not reported anywhere: at the root it says only that this
     /// invocation ended, and the next tick starts a new one. A tree that has
     /// something to say says it through `bb`.
-    pub(crate) fn tick(&mut self, tree: &F::Tree, bb: &mut Blackboard<C>, mode: EntryMode) {
+    /// Runs one update against a tree fetched by the caller.
+    ///
+    /// This is the seam under [`BehaviorPlugin`](crate::BehaviorPlugin).
+    /// Everything above it -- [`BehaviorContext`], the query, the gather, the
+    /// write-back, the schedule -- is a system the plugin writes out of a
+    /// declaration, and a game can write instead. This part it cannot: a
+    /// composed tree's state type cannot be named, so only a generic over the
+    /// builder can hold it, and that is what the library is for.
+    ///
+    /// Reach for it when the declaration cannot say what you need: mutable
+    /// shared state, several queries, a parallel strategy of your own, a tick
+    /// that does not run in a system at all. What you give up is what the
+    /// generated system knows -- command queues handed out per `par_iter`
+    /// batch, a write-back skipped for a tree that only read, and an order that
+    /// cannot be got wrong.
+    pub fn tick(&mut self, tree: &F::Tree, bb: &mut Blackboard<C>, mode: EntryMode) {
         // A fresh invocation always enters as Evaluate, whatever the caller asks
         // for, and a terminal result drops invocation state. Same as FlatBT's
         // own root lifetime in `update`.

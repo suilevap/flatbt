@@ -237,6 +237,40 @@ The one consequence is that a deliberately gating agent query is
 indistinguishable from a forgotten component, which is why there is no
 diagnostic for it.
 
+## Two layers, and which one is the library
+
+One part of this crate is irreducible and one part is convenience, and they are
+now separated by a public seam rather than by a `pub(crate)`.
+
+**Irreducible**: `Behavior<C, F>`, `TreeBuilder`, `BehaviorNode`, and the
+`BehaviorTree` resource. They exist because a composed tree's invocation state
+is nested control state over closures, whose type cannot be written down. Only a
+generic over the builder can hold it, and no user code can work around that --
+not even the registration, because a builder's type cannot be named either, so
+installing a hand-written tick still takes a generic function.
+
+**Convenience**: `BehaviorContext` and the systems `BehaviorPlugin` generates
+from it. This is a system writer, and it is not irreducible -- checked by
+writing the arena's tick by hand in `games/arena/src/handrolled.rs`:
+forty-five lines of ordinary Bevy against thirty of declaration, plus a type
+alias for the query tuple that `#[derive(QueryData)]` was providing.
+
+Measured back to back over 100 000 agents, `HANDROLLED=1` against the generated
+system: 2.00-2.22 ms serial against 2.31-2.36, so the generator costs about 8%
+on that path -- a function pointer for the entry mode and a generic seam. With
+`.parallel()` the generated system runs at 1.19-1.26 ms and the hand-written one
+has no parallel path at all, so it stays at its serial figure. The generator is
+about 1.7x ahead overall, and the gap is knowledge rather than code: command
+queues handed out per `par_iter` batch rather than per agent (1.5x on its own),
+a write-back skipped for a tree that only read, and an order that cannot be got
+wrong.
+
+So the answer to "framework or user code" is both, with the seam documented:
+`Behavior::tick`, `BehaviorTree` and `Blackboard`'s constructor are public, and
+a game whose tick the declaration cannot express -- mutable shared state,
+several queries, its own parallel strategy, a tick that does not run in a system
+at all -- writes it without forking the crate.
+
 ## What the integration still carries, and why
 
 Roughly 1100 lines including docs and examples; about 400 of code. Attribution,

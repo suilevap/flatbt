@@ -229,8 +229,9 @@ impl<C: BehaviorContext> Blackboard<C> {
         }
     }
 
-    /// Hands the deferred edits to the caller, if there were any.
-    pub(crate) fn take_queue(&mut self) -> Option<CommandQueue> {
+    /// Hands the deferred edits over, if a node made any. A game ticking its
+    /// agents itself appends these to its own [`Commands`].
+    pub fn take_queue(&mut self) -> Option<CommandQueue> {
         self.queue.take()
     }
 }

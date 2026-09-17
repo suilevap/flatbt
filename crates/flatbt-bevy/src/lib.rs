@@ -65,6 +65,72 @@
 //! app.update();
 //! ```
 //!
+//! ## Ticking the agents yourself
+//!
+//! [`BehaviorPlugin`] writes the tick system out of the declaration above. That
+//! is convenience, not the library: what only the library can do is hold a
+//! tree's state, whose type a composed tree makes unnameable. That part is
+//! [`Behavior::tick`], and it is public, so a game whose tick the declaration
+//! cannot express writes its own:
+//!
+//! ```
+//! # use bevy_app::prelude::*;
+//! # use bevy_ecs::prelude::*;
+//! # use bevy_ecs::query::QueryData;
+//! # use flatbt_bevy::prelude::*;
+//! # use flatbt_bevy::BehaviorTree;
+//! # #[derive(Component, PartialEq)]
+//! # struct Ammo(u32);
+//! # struct Guard { ammo: u32 }
+//! # #[derive(QueryData)]
+//! # #[query_data(mutable)]
+//! # struct GuardAccess { ammo: &'static mut Ammo }
+//! # impl BehaviorContext for Guard {
+//! #     type Agent = GuardAccess;
+//! #     type Param = ();
+//! #     type Snapshot = Self;
+//! #     fn read(_: Entity, a: &GuardAccessItem, _: &()) -> Guard { Guard { ammo: a.ammo.0 } }
+//! #     fn write(g: &Guard, a: &mut GuardAccessItem) { a.ammo.set_if_neq(Ammo(g.ammo)); }
+//! # }
+//! # fn shoot() -> impl BehaviorNode<Guard> {
+//! #     leaf(|bb: &mut Blackboard<Guard>| { bb.ammo = bb.ammo.saturating_sub(1); NodeResult::Success })
+//! # }
+//! fn tick_guards<F: TreeBuilder<Guard>>(
+//!     tree: Res<BehaviorTree<Guard, F>>,
+//!     mut agents: Query<(Entity, &mut Behavior<Guard, F>, &mut Ammo)>,
+//!     mut commands: Commands,
+//! ) {
+//!     for (entity, mut behavior, mut ammo) in agents.iter_mut() {
+//!         let mut bb = Blackboard::<Guard>::new(entity, Guard { ammo: ammo.0 });
+//!         behavior.tick(tree.get(), &mut bb, EntryMode::Evaluate);
+//!         ammo.set_if_neq(Ammo(bb.ammo));
+//!         if let Some(mut queue) = bb.take_queue() {
+//!             commands.append(&mut queue);
+//!         }
+//!     }
+//! }
+//!
+//! // Registering it has to be generic too: a builder's type cannot be written
+//! // down, so only a function that takes one can name the system it installs.
+//! fn install<F: TreeBuilder<Guard> + Copy>(app: &mut App, builder: F) {
+//!     app.insert_resource(BehaviorTree::<Guard, F>::new(&builder, None))
+//!         .add_systems(Update, tick_guards::<F>);
+//! }
+//!
+//! let mut app = App::new();
+//! install(&mut app, shoot);
+//! # let _ = app;
+//! ```
+//!
+//! Written out against a real context that is about forty-five lines to the
+//! declaration's thirty, and it is serial. Measured over 100 000 agents it is
+//! about 8% faster than the generated system on that serial path -- no function
+//! pointer for the entry mode, no generic seam -- and about 1.7x slower than the
+//! generated one with [`parallel`](BehaviorPlugin::parallel) on, which also
+//! hands out command queues per `par_iter` batch, skips the write-back for a
+//! tree that only read, and cannot be misordered. So write your own when you
+//! need something the declaration cannot say, and expect to re-earn the rest.
+//!
 //! Nodes receive [`Blackboard<C>`](Blackboard): the snapshot
 //! [`BehaviorContext::read`] gathered, plus what the tree may defer to the
 //! world. It owns its data, so it has no lifetimes, a node signature names
@@ -121,7 +187,7 @@ pub mod prelude;
 pub use context::{AgentItem, BehaviorContext, Blackboard, EntityCommandQueue, ParamItem};
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub use stagger::evaluate_every;
-pub(crate) use tree::BehaviorTree;
+pub use tree::BehaviorTree;
 pub use tree::{Behavior, BehaviorNode, EntryModeFn, TreeBuilder};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.

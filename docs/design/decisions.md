@@ -239,3 +239,32 @@ nothing enforces.
 The `guards` example was still writing `post` and `ammo` back as a mirror, which
 contradicted the guidance. It issues `Orders` now, and `carry_out_orders` owns
 how far a guard marches and what a shot costs.
+
+## 2026-09-17 — The seam between the library and the convenience is public
+
+Asked whether `BehaviorContext` belongs in the crate at all. It does not have
+to: the arena's tick was written out by hand to check, and it is forty-five
+lines of ordinary Bevy against thirty of declaration, plus a type alias for the
+query tuple that `#[derive(QueryData)]` was providing.
+
+Measured back to back over 100 000 agents, the hand-written tick is about 8%
+faster on the serial path (2.00-2.22 ms against 2.31-2.36) -- the generator pays
+a function pointer for the entry mode and a generic seam -- and has no parallel
+path, where the generated one runs at 1.19-1.26. So the generator is about 1.7x
+ahead overall, on knowledge rather than code.
+
+What is machinery is small: `Behavior<C, F>`, `TreeBuilder`, `BehaviorNode` and
+the `BehaviorTree` resource, which exist because a composed tree's state type
+cannot be written down. Even the registration has to be generic for the same
+reason -- a builder's type cannot be named either.
+
+So the two are separated rather than chosen between. `Behavior::tick`,
+`BehaviorTree` and `Blackboard`'s constructor were `pub(crate)`, which meant
+there was no way to opt out of the generated system; four things had to be made
+public just to run the experiment. They are public now, with a compiled example
+of a hand-written tick in the crate docs, and the docs say what such a tick gives
+up: per-batch command queues, the write-back skip, and an order that cannot be
+got wrong.
+
+`BehaviorTree::new` takes the builder rather than a built tree, because `F`
+cannot be inferred from `F::Tree`.
