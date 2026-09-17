@@ -1,3 +1,6 @@
 /target/
+# Nested crates build here too, and they are not always ignored by a
+# .gitignore of their own on every branch.
+**/target/
 /.idea/
 .DS_Store

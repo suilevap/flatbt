@@ -133,3 +133,49 @@ nothing.
 
 Pinned by `a_resumed_branch_that_fails_falls_through_below_it_not_back_above`
 in `tests/resume.rs`.
+
+## 2026-09-17 — Bevy: the blackboard is an ordinary component
+
+`flatbt-bevy` behind the `bevy` feature. A tree over `C` is ticked by a system
+whose query is `(&mut Behavior<C, F>, &mut C)`, where `C` is a plain component
+the game defines. `BehaviorPlugin::for_tree(builder)` builds the tree once into
+a resource and adds that tick; agents carry `Behavior::for_tree(builder)`, whose
+only content is the invocation state, sized for that tree. Both type parameters
+come from the builder function, so neither is ever written out.
+
+The crate does not describe what a blackboard holds, how it is filled, or what a
+value written into it means. Two findings put it there, after two earlier shapes
+(live borrows, then a `BehaviorContext` with `read`/`write` producing a
+snapshot) were built and removed:
+
+- A real gather is several systems at several rates -- one for what is cheap,
+  another for a raycast, another for a path query only agents already in combat
+  should pay for. A single `read` function cannot express that; ordinary systems
+  with `.run_if(..)` can.
+- What a tree writes is however that game controls its agents, which no library
+  can guess.
+
+Answering both by deletion took the crate from 436 lines of code to 208, and
+measured back to back over 100 000 agents in `games/arena` the tick is about
+1.9x cheaper serially and 2.4x in parallel, and the whole frame 18% and 8%,
+because the blackboard is read and written in place rather than gathered into a
+temporary per agent and applied back.
+
+Given up, deliberately: a node cannot defer a world edit (there is no
+`bb.commands`; a tree writes a request field and a system answers it); there is
+no warning for an unregistered tree, since the tick query no longer has anything
+to hang one on; `entry_mode` is `fn(&C) -> EntryMode` with no `Entity`; and the
+agent query is no longer a turn gate, so a turn-based game gates from the
+blackboard instead.
+
+`Behavior::tick` re-enters once with `EntryMode::Evaluate` when a tick entered as
+`Resume` fails at the root, which is the caller-side half of the 2026-09-16
+decision above. Entry mode defaults to `Evaluate`: resuming is an optimisation,
+and a tree that only ever resumes never leaves the branch it is in.
+
+`Behavior::tick` and `BehaviorTree` are public, so a game that needs its own tick
+system writes one; the only thing it cannot write for itself is the generic that
+names the tree, because a composed tree's state type and a builder's type are
+both unnameable.
+
+See [Bevy integration](bevy-integration-draft.md).
