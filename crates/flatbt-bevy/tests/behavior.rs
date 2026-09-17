@@ -907,3 +907,71 @@ fn a_read_only_tree_leaves_change_detection_alone() {
         "the agent was not marked changed on any of those ticks"
     );
 }
+
+// --- what `read` is allowed to do --------------------------------------------
+
+#[derive(Component)]
+struct Depot(u32);
+
+#[derive(Resource)]
+struct Bonus(u32);
+
+struct Scavenger {
+    ammo: u32,
+    /// Summed in `read` from entities this agent does not own.
+    stock: u32,
+}
+
+#[derive(QueryData)]
+#[query_data(mutable)]
+struct ScavengerAccess {
+    ammo: &'static mut Ammo,
+}
+
+impl BehaviorContext for Scavenger {
+    type Agent = ScavengerAccess;
+    /// Anything read-only: a resource, and a lookup query over the whole world.
+    type Param = (Res<'static, Bonus>, Query<'static, 'static, &'static Depot>);
+    type Snapshot = Self;
+
+    fn read(
+        _: Entity,
+        agent: &ScavengerAccessItem,
+        (bonus, depots): &(Res<Bonus>, Query<&Depot>),
+    ) -> Scavenger {
+        Scavenger {
+            ammo: agent.ammo.0,
+            stock: depots.iter().map(|depot| depot.0).sum::<u32>() + bonus.0,
+        }
+    }
+
+    fn write(scavenger: &Scavenger, agent: &mut ScavengerAccessItem) {
+        agent.ammo.set_if_neq(Ammo(scavenger.ammo));
+    }
+}
+
+fn restock() -> impl BehaviorNode<Scavenger> {
+    leaf(|bb: &mut Blackboard<Scavenger>| {
+        bb.ammo = bb.stock;
+        NodeResult::Success
+    })
+}
+
+/// `read` is not limited to the agent's own components. It gets whatever
+/// `Param` declares, which is any read-only system param -- so gathering can
+/// walk the world, and still tick in parallel, because none of it is mutable.
+#[test]
+fn read_may_query_entities_the_agent_does_not_own() {
+    let mut app = App::new();
+    app.insert_resource(Bonus(1))
+        .add_plugins(BehaviorPlugin::for_tree(restock).parallel());
+    app.world_mut().spawn(Depot(10));
+    app.world_mut().spawn(Depot(20));
+    let agent = app
+        .world_mut()
+        .spawn((Ammo(0), Behavior::for_tree(restock)))
+        .id();
+
+    app.update();
+    assert_eq!(app.world().get::<Ammo>(agent), Some(&Ammo(31)));
+}

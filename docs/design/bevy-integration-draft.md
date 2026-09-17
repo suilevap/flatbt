@@ -245,7 +245,7 @@ after moving every constructor fix into core and the blackboard to a snapshot:
 | Piece | Forced by |
 | --- | --- |
 | `BehaviorContext`, `Blackboard` | Declaring ECS access, and gathering a per-agent view from it. This is the integration. |
-| `read` / `write` | The snapshot. Their cost is two functions per context; what they buy is that nothing below them knows the ECS exists. |
+| `read` / `write` | The snapshot. Their cost is two functions per context; what they buy is that nothing below them knows the ECS exists, that gather-tick-write cannot be misordered, and that a tree which only read is never written back. |
 | `BehaviorTree` resource, `Behavior` component, `TreeBuilder` | Bevy resources and components are `'static`, and the state type has to be nameable without naming the tree. |
 | Plugins, tick systems | Bevy scheduling. |
 | `BehaviorNode<C>` | FlatBT: `Behavior` needs the invocation state as one named type, and `State: Bound` leaves a projection while `State = T` needs a nameable `T`, which a composed tree's state is not. An associated type is the only equality target left, so it takes a trait — and in return position that trait also names a subtree without naming its type. |
@@ -330,11 +330,26 @@ Closed since the arena:
   and deferred edits are applied by whichever schedule ran it. See
   `crates/flatbt-bevy/tests/schedules.rs`.
 
+Considered and kept: leaving the gather to the game instead, as two systems it
+writes and schedules itself. Written out for the arena's context and measured at
+49 lines against 41 -- longer, because one `QueryData` struct serves both
+directions where two systems need two query tuples. It buys no reach either:
+`Param` is any read-only system param, so `read` already walks the world (see
+`read_may_query_entities_the_agent_does_not_own`), and mutable access during
+gather would cost `par_iter_mut`. What it adds is two ways to be wrong -- an
+ordering nothing enforces, and a snapshot component that marks itself changed
+every frame without `bypass_change_detection` -- and it loses the write skip,
+since a hand-written apply system runs over everyone regardless.
+
 Still open:
 
 - **Running the tick off the frame thread.** Gather, run and write back are
-  separable and the snapshot borrows nothing, so it is no longer forbidden —
-  but all three still run in one system. Nothing has asked for it yet.
+  separable and the snapshot borrows nothing, so it is no longer forbidden, but
+  all three still run in one system. The obstacle is that the snapshot is a
+  stack temporary, not where `read` and `write` live: moving it into the
+  `Behavior` component would let a gather at frame N be ticked later and applied
+  later still, without changing anything a user writes. Nothing has asked for it
+  yet.
 - **A `Running` branch below a failed resume holds priority down for good.**
   `Behavior::tick` re-enters with `Evaluate` when a resumed update *fails*, but a
   fallback that succeeds or runs hides the failure from it. Only `entry_mode`
