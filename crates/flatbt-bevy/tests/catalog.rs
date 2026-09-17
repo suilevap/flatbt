@@ -48,7 +48,7 @@ fn reloading() -> impl BehaviorNode<Guard> {
 #[test]
 fn an_action_runs_across_ticks() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(reloading).entry_mode(|_| EntryMode::Resume));
+    app.add_plugins(BehaviorPlugin::for_tree(reloading).tick_mode(|_| Tick::Resume));
     let entity = app
         .world_mut()
         .spawn((Guard::default(), Behavior::for_tree(reloading)))

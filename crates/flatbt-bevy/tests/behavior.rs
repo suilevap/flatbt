@@ -100,7 +100,7 @@ fn march() -> impl BehaviorNode<Runner> {
 #[test]
 fn a_suspended_invocation_resumes_where_it_left_off() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(march).entry_mode(|_| EntryMode::Resume));
+    app.add_plugins(BehaviorPlugin::for_tree(march).tick_mode(|_| Tick::Resume));
     let agent = app
         .world_mut()
         .spawn((Runner::default(), Behavior::for_tree(march)))
@@ -164,7 +164,7 @@ fn give_up() -> impl BehaviorNode<Runner> {
 #[test]
 fn a_resumed_tick_that_fails_at_the_root_reconsiders_in_the_same_tick() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(persist_or_give_up).entry_mode(|_| EntryMode::Resume));
+    app.add_plugins(BehaviorPlugin::for_tree(persist_or_give_up).tick_mode(|_| Tick::Resume));
     let agent = app
         .world_mut()
         .spawn((

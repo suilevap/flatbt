@@ -179,3 +179,61 @@ names the tree, because a composed tree's state type and a builder's type are
 both unnameable.
 
 See [Bevy integration](bevy-integration-draft.md).
+
+## 2026-09-17 — Bevy: a tick a tree cannot skip for itself, a read-only input, and `ask`
+
+Three follow-ups to the entry above, each settled by writing the alternatives
+and measuring them rather than by argument.
+
+**`Tick::Skip`.** The plugin's `entry_mode` becomes `tick_mode`, and its answer
+becomes `Tick::{Skip, Resume, Evaluate}`. `Skip` does not enter the tree and
+leaves a suspended invocation exactly as it was. It is not derivable from a
+guard inside the tree, and all three shapes that look like they should work are
+pinned failing in `crates/flatbt-bevy/tests/entry.rs`: a guard as child zero of
+a `seq` is never consulted again under `Resume` (the active child is re-entered
+directly) nor under `Evaluate` (`seq` continues its active child rather than
+rescanning), and under a `select`, which does rescan, a candidate that fails
+leaves the standing branch in place and runs it. Failing a candidate is how a
+tree redirects, not how it stops.
+
+Over 200 000 agents with nine in ten idle, serial tick: 2.19-2.24 ms with every
+agent entering the tree, 1.49-1.50 ms with nine in ten failing a root guard,
+0.62-0.63 ms with nine in ten skipped. In `games/arena`, `NOSKIP=1` against the
+default over 100 000 agents: 1.28-1.41 ms against 0.72-0.78 for the tick, and
+2.31-2.45 against 1.67-1.80 for the whole frame. It also replaces the root
+guard as the turn-based gate, and unlike the guard it holds across a turn that
+spans several ticks.
+
+**`Split<In, Out>`.** An optional blackboard whose input half is reachable by
+`Deref` and nothing else; writing goes through `out()`. Both fields are private,
+so the rule crosses the module boundary, and a `compile_fail` doctest pins it.
+It costs nothing measurable and every constructor composes over it unchanged.
+The gather still needs `&mut In` and no Rust type can tell a gather system from
+a node, so `sensed_mut()` is public: what the split buys is that no node reaches
+the input by accident.
+
+Rejected for the same job: two components in the tick's query, which needs a
+struct holding two borrows and brings back the higher-ranked bound; and the
+output as the root's `params`, where the mechanism works -- `P` does reach a
+leaf through every control node -- but `update` and `BtState` fix the root's `P`
+to `()`, `leaf` and `check` ignore `P` so every write becomes a hand-written
+`BtNode`, and `scope!` owns `P` for its locals.
+
+**`ask` returns, in `flatbt-nodes`.** With the question and the answer both
+fields of the context, `ask` is two closures over `C` and knows nothing about
+the ECS, so it is a catalog node rather than a Bevy one. `request` runs once per
+invocation and `is_in_progress` holds until `answered` returns a value; bound to
+a `scope!` output slot it fills the local, so the node after it takes a value
+rather than an `Option` and the answer does not outlive the decision that wanted
+it. The action shape is the point: a leaf returning `Running` is re-entered on
+every resume, which was the arena's 220 ns-per-agent bug.
+
+**No command channel, and why that is measured.** `Commands` borrows the world
+and would put lifetimes back into every node signature. `CommandQueue` does not,
+so a game can put one in its own blackboard and drain it after the tick, in
+about twenty lines; `crates/flatbt-bevy/tests/commands.rs` keeps a working copy
+with the price. Over 200 000 agents an unused queue costs 70% of the tick (the
+blackboard grows by 56 bytes per agent, and the drain is another pass), and a
+queue every agent writes to costs twenty times the frame. It suits the rare
+structural edit and never what an agent decides every tick, which is why it is a
+documented pattern with a number attached rather than an API that looks free.

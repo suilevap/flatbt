@@ -78,8 +78,65 @@ where
     }
 }
 
-/// How a tick re-enters a suspended invocation, given the blackboard.
-pub type EntryModeFn<C> = fn(&C) -> EntryMode;
+/// What a tick does with one agent, decided from its blackboard.
+///
+/// [`Skip`](Tick::Skip) is the one a tree cannot express for itself. A guard at
+/// the root does not hold a suspended tree still: `Resume` re-enters the active
+/// child directly, so a child above it is never consulted, and `seq` continues
+/// its active child on `Evaluate` too. Even a `select`, which does rescan, runs
+/// its standing branch when the candidate above fails -- failing a candidate is
+/// how a tree *redirects*, not how it stops. So "do not run this agent at all"
+/// has to be said before the tree is entered.
+///
+/// It matters when the work is elsewhere. An agent whose action is being
+/// carried out by ordinary systems over the next hundred frames has nothing to
+/// decide until that ends, and reconsidering it every frame is the cost the
+/// whole population pays. Over 200 000 agents on a 4-core Xeon, with nine in
+/// ten having nothing to decide:
+///
+/// | | serial tick |
+/// | --- | --- |
+/// | every agent enters the tree | 2.19-2.24 ms |
+/// | nine in ten fail a guard at the root | 1.49-1.50 ms |
+/// | nine in ten are `Skip`ped | 0.62-0.63 ms |
+///
+/// And the guard row is the optimistic one: it only works at all for an agent
+/// entering as `Evaluate` with nothing suspended below the guard.
+///
+/// See `tests/entry.rs` for what each variant does to a suspended invocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tick {
+    /// Do not enter the tree. The suspended invocation is left exactly as it
+    /// was, so a later tick resumes into the same node.
+    Skip,
+    /// Enter, continuing where the invocation left off.
+    Resume,
+    /// Enter, reconsidering from the root.
+    Evaluate,
+}
+
+impl From<EntryMode> for Tick {
+    fn from(mode: EntryMode) -> Self {
+        match mode {
+            EntryMode::Resume => Tick::Resume,
+            EntryMode::Evaluate => Tick::Evaluate,
+        }
+    }
+}
+
+impl Tick {
+    /// The entry mode, or `None` when the agent is not entered at all.
+    pub fn entry_mode(self) -> Option<EntryMode> {
+        match self {
+            Tick::Skip => None,
+            Tick::Resume => Some(EntryMode::Resume),
+            Tick::Evaluate => Some(EntryMode::Evaluate),
+        }
+    }
+}
+
+/// What a tick does with one agent, given its blackboard.
+pub type TickFn<C> = fn(&C) -> Tick;
 
 /// The one tree named by `F`, built once and shared by every agent running it.
 ///
@@ -90,7 +147,7 @@ pub type EntryModeFn<C> = fn(&C) -> EntryMode;
 #[derive(Resource)]
 pub struct BehaviorTree<C: Send + Sync + 'static, F: TreeBuilder<C>> {
     tree: F::Tree,
-    entry_mode: EntryModeFn<C>,
+    tick_mode: TickFn<C>,
     // Load-bearing: it keeps `C` a direct field use. Reached only through the
     // `F::Tree` projection, `C` sends the monomorphization collector through
     // every blanket impl behind it and over the recursion limit.
@@ -100,10 +157,10 @@ pub struct BehaviorTree<C: Send + Sync + 'static, F: TreeBuilder<C>> {
 impl<C: Send + Sync + 'static, F: TreeBuilder<C>> BehaviorTree<C, F> {
     /// Builds the tree once. [`BehaviorPlugin`](crate::BehaviorPlugin) does
     /// this; a game registering its own tick does it itself.
-    pub fn new(builder: &F, entry_mode: EntryModeFn<C>) -> Self {
+    pub fn new(builder: &F, tick_mode: TickFn<C>) -> Self {
         Self {
             tree: builder.build(),
-            entry_mode,
+            tick_mode,
             context: PhantomData,
         }
     }
@@ -113,9 +170,9 @@ impl<C: Send + Sync + 'static, F: TreeBuilder<C>> BehaviorTree<C, F> {
         &self.tree
     }
 
-    /// How this tree re-enters a suspended invocation.
-    pub fn entry_mode(&self) -> EntryModeFn<C> {
-        self.entry_mode
+    /// What this tree's tick does with one agent.
+    pub fn tick_mode(&self) -> TickFn<C> {
+        self.tick_mode
     }
 }
 

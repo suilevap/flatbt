@@ -60,6 +60,9 @@ struct Guard {
     alarm: bool,
     intruder: f32,
     alarm_changed: bool,
+    /// Set by the gather while a march the tree already ordered is still under
+    /// way, so the tree is not asked to re-decide a walk in progress.
+    marching: bool,
     // Decided.
     march_to: Option<f32>,
     fire: bool,
@@ -71,7 +74,11 @@ struct Guard {
 /// that fills only the expensive fields -- none of which the tree can tell.
 fn gather(mut guards: Query<(&Name, &Post, &Ammo, &mut Guard)>, alarm: Res<Alarm>) {
     for (name, post, ammo, mut guard) in guards.iter_mut() {
+        let marching = guard
+            .march_to
+            .is_some_and(|target| (target - post.0).abs() > 1.0);
         *guard = Guard {
+            marching,
             name: name.0,
             post: post.0,
             ammo: ammo.0,
@@ -86,12 +93,17 @@ fn gather(mut guards: Query<(&Name, &Post, &Ammo, &mut Guard)>, alarm: Res<Alarm
 }
 
 /// A guard sticks with what it is doing until the alarm itself moves, which is
-/// the only thing here worth abandoning a reload for.
-fn while_the_alarm_holds(guard: &Guard) -> EntryMode {
+/// the only thing here worth abandoning a reload for -- and while it is marching
+/// somewhere the tree already chose, it is not entered at all.
+fn while_the_alarm_holds(guard: &Guard) -> Tick {
     if guard.alarm_changed {
-        EntryMode::Evaluate
+        Tick::Evaluate
+    } else if guard.marching {
+        // `carry_out_orders` is walking it there; there is nothing to decide
+        // until it arrives, and the invocation waits untouched meanwhile.
+        Tick::Skip
     } else {
-        EntryMode::Resume
+        Tick::Resume
     }
 }
 
@@ -214,7 +226,7 @@ fn main() {
         intruder: 4.0,
     })
     // One registration per tree; both type parameters come from the builder.
-    .add_plugins(BehaviorPlugin::for_tree(guard_tree).entry_mode(while_the_alarm_holds))
+    .add_plugins(BehaviorPlugin::for_tree(guard_tree).tick_mode(while_the_alarm_holds))
     .add_message::<Fired>()
     // Gather, decide, act: the order is the only thing the integration asks of
     // a game, and it is stated the way Bevy states orders.

@@ -74,16 +74,41 @@ holding the one built tree. `Behavior<C, F>` is the component and holds only the
 saved state of a suspended invocation, sized exactly for that tree. Nothing is
 erased, allocated, copied per agent, or reference counted.
 
-Entry mode is decided per agent per tick by `fn(&C) -> EntryMode`, given to the
-plugin. It defaults to `EntryMode::Evaluate` and folds away when it is constant.
-Evaluating is the default because it is the answer that cannot be wrong: a tree
-that only ever resumes never leaves the branch it is in, so `select` never
-rescans and `choose!` never re-picks. Resuming is an optimisation, correct
-exactly when the standing decision is known to still hold — and worth measuring
-before reaching for, since a tree whose invocations end each tick has nothing to
-resume into. Because the answer comes from the blackboard, anything it needs — a
-clock, a staggered slot, a perception flag, whose turn it is — is gathered like
+What a tick does with one agent is decided per agent per tick by
+`fn(&C) -> Tick`, given to the plugin. `Tick` is `Evaluate`, `Resume` or `Skip`;
+it defaults to `Evaluate` and folds away when it is constant. Evaluating is the
+default because it is the answer that cannot be wrong: a tree that only ever
+resumes never leaves the branch it is in, so `select` never rescans and
+`choose!` never re-picks. Resuming is an optimisation, correct exactly when the
+standing decision is known to still hold — and worth measuring before reaching
+for, since a tree whose invocations end each tick has nothing to resume into.
+Because the answer comes from the blackboard, anything it needs — a clock, a
+staggered slot, a perception flag, whose turn it is — is gathered like
 everything else.
+
+`Skip` is the one that had to be added rather than derived, because a tree
+cannot stop itself. Three shapes were tried and all three fail, each pinned in
+`crates/flatbt-bevy/tests/entry.rs`:
+
+- A guard as child zero of a `seq`, under `Resume`: never consulted again, since
+  `Resume` re-enters the active child directly and a child above it was not
+  looked at this update.
+- The same guard under `Evaluate`: also never consulted, because `seq` continues
+  its active child on `Evaluate` rather than rescanning.
+- A guard under a `select`, which does rescan on `Evaluate`: consulted, but a
+  candidate that *fails* leaves the standing branch in place and runs it.
+  Failing a candidate is how a tree redirects, not how it stops.
+
+So "do not run this agent" has to be said before the tree is entered. It matters
+when the work is elsewhere: an agent walking somewhere the tree already chose,
+or waiting out an action a system is carrying out, has nothing to decide until
+that ends. Over 200 000 agents with nine in ten idle, serial tick: 2.19-2.24 ms
+if every agent enters the tree, 1.49-1.50 ms if nine in ten fail a root guard,
+0.62-0.63 ms if nine in ten are skipped — and the guard row is optimistic,
+covering only the case where a guard works at all. In `games/arena`, where
+skipping covers fighters walking to a spot the tree already chose, `NOSKIP=1`
+against the default over 100 000 agents measures 1.28-1.41 ms against
+0.72-0.78 serial and 2.31-2.45 against 1.67-1.80 for the whole frame.
 
 Periodic revalidation is the common case of that decision, and it needs no
 scheduler: `evaluate_every` derives each agent's slot within the period from its
@@ -145,6 +170,8 @@ About 210 lines of code, and about 540 with its documentation. Attribution:
 | `BehaviorNode<C>` | FlatBT: `Behavior` needs the invocation state as one named type, and `State: Bound` leaves a projection while `State = T` needs a nameable `T`, which a composed tree's state is not. An associated type is the only equality target left, so it takes a trait — and in return position that trait also names a subtree without naming its type. |
 | Plugins, tick systems | Bevy scheduling. |
 | `evaluate_every` | Nothing. It is a policy, and it is a free function a game could have written; it ships because staggering is easy to get subtly wrong. |
+| `Tick::Skip` | Nothing in Rust; it is here because a tree cannot express it, as above. |
+| `Split<In, Out>` | Nothing. Forty lines a game could write, and it ships only because private fields cross a module boundary and a hand-rolled version in the game's own module would not. |
 
 Everything else is the game's. `Behavior::tick` is public, so a game that wants
 its own tick system — a different query, its own parallel strategy, a tick that
@@ -196,17 +223,18 @@ What was given up, listed so it is a decision and not an oversight:
   its decision to the blackboard and a system carries it out — which the arena
   wanted anyway, since "spawn a projectile" was never the tree's to size, aim or
   own. A tree that genuinely needs an unbounded edit writes a request field and
-  a system answers it.
+  a system answers it. See *Commands, and what they cost* below.
 - **No warning for an unregistered tree.** See above: there is nothing left to
   hang it on, and Bevy does not warn about a component with no system either.
-- **`entry_mode` no longer sees the `Entity`.** It takes `&C`. A gather that
+- **The tick mode no longer sees the `Entity`.** It takes `&C`. A gather that
   needs the entity has it, so a staggered slot or a turn flag is a field like
   any other.
 - **The agent query is no longer a gate.** With `type Agent` gone, a turn-based
   game cannot put `With<Turn>` in the tick's query to iterate exactly the
-  holder. It gates from the blackboard instead — the gather writes `has_turn`,
-  the tree checks it at the root — so out-of-turn agents cost one predicate each
-  rather than nothing. See `crates/flatbt-bevy/tests/schedules.rs`.
+  holder. It gates with `Tick::Skip` instead — the gather writes `has_turn`, the
+  tick mode reads it — so out-of-turn agents cost one predicate each rather than
+  nothing, and, unlike a guard inside the tree, this also holds across a turn
+  that spans several ticks. See `crates/flatbt-bevy/tests/schedules.rs`.
 
 ## The tick's one piece of behavior
 
@@ -228,6 +256,87 @@ exactly whose decision it is. Pinned by
 `crates/flatbt-core/tests/resume.rs` and
 `crates/flatbt-bevy/tests/behavior.rs`.
 
+## Keeping the input read-only
+
+The tick takes `&mut C`, so a blackboard is mutable in full and "the tree only
+reads the top half" is a convention. `Split<In, Out>` makes it a rule: `In` is
+reachable by `Deref` and nothing else, writing goes through `out()`, and both
+fields are private, so the rule crosses the module boundary rather than resting
+on a comment. Its `compile_fail` doctest is the proof.
+
+It costs nothing measurable — one component, the same two-term query, the same
+layout — and every constructor FlatBT ships composes over it unchanged, which
+`crates/flatbt-bevy/tests/split.rs` exercises node by node. What it does not do
+is tell a gather system from a node: the gather needs `&mut In`, and no Rust
+type can distinguish the caller, so `sensed_mut()` is public. The guarantee is
+that no node reaches the input by accident.
+
+It is optional on purpose. A blackboard with no meaningful split reads better as
+a plain component with flat field names, and `Split` is generic, so it appears
+in query types.
+
+Considered and rejected for the same job:
+
+- **Two components**, `&C` and `&mut O` in the tick's query. This is the shape
+  the ECS suggests, and it cannot be had: `BtNode<C>` fixes one context type, so
+  a node seeing both means a struct holding two borrows, which brings back the
+  higher-ranked bound that shape 1 was abandoned for.
+- **The output as the root's `params`.** `BtNode<C, P>` already carries `P` down
+  through every control node, and `P` is documented as the place for
+  update-local borrows, so the mechanism works — a `&mut Out` does reach a leaf.
+  It fails on two counts: `update` and `BtState` in core fix the root's `P` to
+  `()`, so it needs a core change; and `leaf` and `check` are generic over `P`
+  and ignore it, so the two most common nodes cannot reach the output at all and
+  every write becomes a hand-written `BtNode` naming both types. `scope!` also
+  owns `P` for its locals, so the two would collide inside a scope.
+
+## Commands, and what they cost
+
+`Commands` borrows the world, so a node holding one brings back the lifetimes.
+`CommandQueue` does not: it is an owned buffer, so it can simply be a field of
+the blackboard, and a system after the tick drains every agent's queue into the
+world. That is about twenty lines, works today with nothing from this crate, and
+`crates/flatbt-bevy/tests/commands.rs` is a working copy kept as the record.
+
+What it costs, over 200 000 agents, serial tick / whole frame:
+
+| blackboard | tick | frame |
+| --- | --- | --- |
+| a `bool` field, carried out by a system | 0.77-0.84 ms | 0.94-1.00 ms |
+| a queue nothing writes to | 1.30-1.33 ms | 1.90-1.98 ms |
+| a queue 1 agent in 100 writes to | 1.40-1.46 ms | 2.16-2.26 ms |
+| a queue every agent writes to | 4.82-4.84 ms | 19.2-19.4 ms |
+
+Carrying an unused queue costs 70% of the tick: the blackboard grows by 56 bytes
+per agent, and the drain is another pass over the population. Using one
+everywhere costs twenty times the frame. So a queue suits the rare structural
+edit — a spawn, a despawn, an archetype move, a handful per frame — and never
+what an agent decides every tick, which is a field and a system.
+
+This is why the crate ships no command channel rather than an opt-in one: an
+opt-in the game can write in twenty lines, whose cost depends entirely on how
+the game uses it, is better as a documented pattern with a price than as an API
+that looks free.
+
+## Asking the world
+
+A tree reads and writes its blackboard and nothing else, so reaching past it
+means asking: write the question where the gather will see it, and wait. `ask`
+is that as one node — `request` runs once per invocation, `is_in_progress` holds
+until `answered` returns a value — and bound to a `scope!` output slot it hands
+the answer on as a plain value, so the node after it takes a `Vec2` rather than
+an `Option<Vec2>` and cannot run without one.
+
+It lives in `flatbt-nodes`, not here. The earlier version inserted a marker
+component and read a `CoverTarget` back, which made it Bevy's; with the question
+and the answer both fields, `ask` is two closures over `C` and knows nothing
+about the ECS. An ordinary system is what connects the fields to the world.
+
+The shape matters: a leaf returning `Running` is re-entered on every resume, so
+a leaf that asks asks again every tick. As an action, `start` runs once per
+invocation, which is what asking means. That was the arena's 220 ns-per-agent
+bug before it was a node.
+
 ## Rejected alternatives
 
 - **`&mut World` context.** One lifetime, no declaration, nodes may do anything.
@@ -241,6 +350,10 @@ exactly whose decision it is. Pinned by
 - **Keeping `read`/`write` as an optional convenience** beside the plain tick.
   Rejected: two ways to do the same thing, where the one that reads shorter is
   the one that stops working as a game grows.
+- **A command channel in the tick**, as an opt-in flag on the plugin. Rejected
+  on measurement: see *Commands, and what they cost*.
+- **A `Skip` expressed as a guard inside the tree.** Rejected on semantics: no
+  entry mode consults a root guard once the tree is suspended below it.
 - **Tree registry keyed by name or handle.** Rejected: the tree is already data;
   a resource keyed by the builder type needs no second lookup.
 - **Registering the tick from a component hook on first spawn.** Rejected:

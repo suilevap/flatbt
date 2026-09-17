@@ -112,10 +112,13 @@ fn a_schedule_that_never_runs_is_silent() {
 }
 
 /// Nothing gates the tick query itself: every entity carrying a blackboard and
-/// a [`Behavior`] ticks, every time its schedule runs. A turn-based game gates
-/// from inside the blackboard instead -- the gather writes whose turn it is and
-/// the tree checks it at the root, so the agents who are not up fail on their
-/// first node and cost one predicate each.
+/// a [`Behavior`] is visited, every time its schedule runs. A turn-based game
+/// gates with [`Tick::Skip`], which does not enter the tree and leaves a
+/// suspended invocation exactly as it was -- so a turn spanning several ticks
+/// costs no extra state, and an agent out of turn costs one predicate.
+///
+/// A guard at the root would not do the job: a suspended tree does not consult
+/// a child above the one it is in. See `tests/entry.rs`.
 #[derive(Resource)]
 struct Turn {
     order: Vec<Entity>,
@@ -130,14 +133,39 @@ fn pass_the_turn(mut turn: ResMut<Turn>, mut agents: Query<(Entity, &mut Agent)>
     }
 }
 
+/// Runs over three turns, so the gate has to survive a suspended tree.
+struct Act;
+
+impl BtNode<Agent> for Act {
+    type State = u32;
+
+    fn update(&self, turns: &mut u32, agent: &mut Agent, _: (), _: EntryMode) -> NodeResult {
+        *turns += 1;
+        agent.fired += 1;
+        if *turns < 3 {
+            NodeResult::Running
+        } else {
+            NodeResult::Success
+        }
+    }
+}
+
 fn take_turn() -> impl BehaviorNode<Agent> {
-    seq((check(|agent: &Agent| agent.has_turn), fire()))
+    seq((Act,))
 }
 
 #[test]
 fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(take_turn));
+    app.add_plugins(
+        BehaviorPlugin::for_tree(take_turn).tick_mode(|agent: &Agent| {
+            if agent.has_turn {
+                Tick::Resume
+            } else {
+                Tick::Skip
+            }
+        }),
+    );
     let agents: Vec<Entity> = (0..3)
         .map(|_| {
             app.world_mut()
@@ -151,7 +179,7 @@ fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
     })
     .add_systems(Update, pass_the_turn.before(BehaviorSystems));
 
-    for _ in 0..3 {
+    for _ in 0..6 {
         app.update();
     }
 
@@ -161,7 +189,8 @@ fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
         .collect();
     assert_eq!(
         fired,
-        vec![1, 1, 1],
-        "each agent acted on its own turn only"
+        vec![2, 2, 2],
+        "each agent acted exactly on its own turns, and each resumed the \
+         invocation it left rather than starting a new one"
     );
 }

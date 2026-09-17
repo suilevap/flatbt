@@ -203,11 +203,13 @@ be exercised with no `World` at all.
 
 | API | Behavior |
 | --- | --- |
-| `BehaviorPlugin::for_tree(builder)` | Builds one tree and adds its tick; `.in_schedule(..)`, `.parallel()`, `.entry_mode(..)` |
+| `BehaviorPlugin::for_tree(builder)` | Builds one tree and adds its tick; `.in_schedule(..)`, `.parallel()`, `.tick_mode(..)` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
 | `Behavior::tick` | The tick itself, for a game that registers its own system |
 | `BehaviorNode<C>` | What a tree over blackboard `C` is; also names a subtree |
-| `evaluate_every` | Periodic `entry_mode` answer, staggered across agents |
+| `Tick` | What a tick does with one agent: `Evaluate`, `Resume` or `Skip` |
+| `Split<In, Out>` | Optional blackboard whose input half a node cannot write |
+| `evaluate_every` | Periodic revalidation, staggered across agents |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
 ### Gather, decide, act
@@ -230,6 +232,73 @@ app.add_systems(Update, (gather_cheap, gather_visibility).before(BehaviorSystems
    .add_systems(Update, find_cover.before(BehaviorSystems).run_if(on_timer(..)))
    .add_systems(Update, carry_out.after(BehaviorSystems));
 ```
+
+### Keeping the input read-only
+
+The tick takes `&mut C`, so a blackboard is mutable in full and "the tree only
+reads the top half" is a convention. `Split<In, Out>` makes it a rule: `In` is
+reachable by `Deref` and nothing else, and writing goes through `out()`.
+
+```rust,ignore
+type Fighter = Split<Sensed, Orders>;
+
+check(|f: &Fighter| f.ammo > 0)                     // Deref reaches the input
+leaf(|f: &mut Fighter| { f.out().shoot = true; .. }) // and this is the only write
+```
+
+It costs nothing — one component, the same two-term query, the same layout — and
+everything FlatBT ships composes over it unchanged. The gather still needs
+`&mut In`, and a Rust type cannot tell a gather system from a node, so
+`sensed_mut()` is public; what the split buys is that no node reaches the input
+by accident, since there is no `DerefMut`. It is optional: a blackboard with no
+meaningful split stays a plain component with flat field names.
+
+### Asking the world
+
+A tree reads and writes its blackboard and nothing else. When it needs something
+the blackboard does not hold yet — a path, a line of sight, a nearest anything —
+the only thing it can do is ask: write the question where the gather will see
+it, and wait. `ask` is that as one node, and it belongs to the node catalog
+rather than to Bevy, because nothing about it is ECS-specific.
+
+```rust,ignore
+scope! {
+    let spot: Vec2;
+    sequence {
+        ask(|f: &mut Fighter| f.out().wants_cover = true, |f: &Fighter| f.cover)
+            .with(out spot);
+        WalkTo.with(spot);
+    }
+}
+```
+
+`WalkTo` then takes a `Vec2` rather than an `Option<Vec2>`, so it cannot run
+without one. `ask` is an action rather than a leaf because a leaf returning
+`Running` is re-entered on every resume, so a leaf that asks would ask again
+every tick; `start` runs once per invocation, which is what asking means. And
+the local belongs to the invocation, so leaving the branch and coming back asks
+again instead of acting on an answer chosen for an older situation.
+
+### Commands from a node
+
+There are none, and that is measured rather than assumed. `Commands` borrows the
+world and would put lifetimes back into every node signature, but `CommandQueue`
+is `'static`, so a game that wants real ECS commands from a tree puts one in its
+blackboard and drains it after the tick — about twenty lines, and
+`crates/flatbt-bevy/tests/commands.rs` is a working copy. Over 200 000 agents:
+
+| blackboard | serial tick | whole frame |
+| --- | --- | --- |
+| a `bool` field, carried out by a system | 0.77-0.84 ms | 0.94-1.00 ms |
+| a queue nothing writes to | 1.30-1.33 ms | 1.90-1.98 ms |
+| a queue 1 agent in 100 writes to | 1.40-1.46 ms | 2.16-2.26 ms |
+| a queue every agent writes to | 4.82-4.84 ms | 19.2-19.4 ms |
+
+Carrying an unused queue costs 70% of the tick, because the blackboard grows by
+56 bytes per agent and the drain is another pass. Using one everywhere costs
+twenty times the frame. So it suits the rare structural edit — a spawn, a
+despawn, a handful per frame — and never what an agent decides every tick, which
+is a field and a system.
 
 ### What lives where
 
@@ -268,24 +337,47 @@ app is built, so the tick is in place before any agent exists and any schedule
 will do: `First` through `Last`, `FixedUpdate`, or one the game runs itself. It
 also carries that tree's ordering, run conditions and `.parallel()`.
 
-Each tick reconsiders from the root by default. Resuming — continuing down the
-path a suspended invocation chose — is an optimisation, and the answer is the
-blackboard's, per agent per tick:
+Each tick reconsiders from the root by default. What a tick does with one agent
+is the blackboard's answer, per agent per tick:
 
 ```rust,ignore
-BehaviorPlugin::for_tree(guard_tree)
-    .entry_mode(|guard: &Guard| if guard.alarm_changed {
-        EntryMode::Evaluate
+BehaviorPlugin::for_tree(guard_tree).tick_mode(|guard: &Guard| {
+    if guard.marching {
+        // A system outside the tree is carrying out what it decided.
+        Tick::Skip
+    } else if guard.alarm_changed {
+        Tick::Evaluate
     } else {
-        EntryMode::Resume
-    })
+        Tick::Resume
+    }
+})
 ```
 
-Reconsidering is the default because it is the answer that cannot be wrong: a
-tree that only ever resumes never leaves the branch it is in, so `select` never
+`Evaluate` is the default because it is the answer that cannot be wrong: a tree
+that only ever resumes never leaves the branch it is in, so `select` never
 rescans and `choose!` never re-picks. A constant answer folds away. When a
 resumed tick fails outright, the tick re-enters once with `Evaluate`, so a
 standing decision that ran out never leaves an agent idle for a tick.
+
+`Skip` does not enter the tree at all, and leaves the suspended invocation
+exactly as it was. It is the one thing a tree cannot do for itself: a guard at
+the root does not hold a suspended tree still, because `Resume` re-enters the
+active child directly and `seq` continues its active child on `Evaluate` too;
+even a `select`, which does rescan, runs its standing branch when the candidate
+above it fails. Failing a candidate is how a tree *redirects*, not how it stops.
+
+It is worth having when the work is elsewhere — an agent walking somewhere the
+tree already chose has nothing to decide until it arrives. Over 200 000 agents
+with nine in ten having nothing to decide:
+
+| | serial tick |
+| --- | --- |
+| every agent enters the tree | 2.19-2.24 ms |
+| nine in ten fail a guard at the root | 1.49-1.50 ms |
+| nine in ten are `Skip`ped | 0.62-0.63 ms |
+
+and the guard row is the optimistic one, since it only works at all for an agent
+entering as `Evaluate` with nothing suspended below the guard.
 
 For a tree that should simply rethink periodically, `evaluate_every` answers on
 a period without putting the whole population on one frame. Each agent's slot
@@ -301,18 +393,19 @@ say to the game says it in the blackboard.
 ### Turn based, and stopping
 
 Nothing here assumes a frame loop. Register the tick in whatever schedule the
-turn runs in with `in_schedule`, and gate whose turn it is the way everything
-else is gated — the gather writes it, the tree checks it at the root:
+turn runs in with `in_schedule`, and gate whose turn it is with `Tick::Skip`:
 
 ```rust,ignore
-fn take_turn() -> impl BehaviorNode<Agent> {
-    seq((check(|agent: &Agent| agent.has_turn), act()))
-}
+BehaviorPlugin::for_tree(fighter)
+    .in_schedule(TurnPhase)
+    .tick_mode(|agent: &Agent| if agent.has_turn { Tick::Resume } else { Tick::Skip })
 ```
 
-A turn spanning several ticks needs no extra state: the agent's invocation stays
-suspended while it is not its turn and resumes exactly where it left off, which
-is what FlatBT's saved state already is.
+A guard at the root would not do: a turn spanning several ticks leaves the tree
+suspended, and a suspended tree does not consult a child above the one it is in.
+`Skip` does not enter it at all, so the invocation waits exactly where it was and
+resumes when the turn comes round — which is what FlatBT's saved state already
+is, with nothing added for it.
 
 Stopping every tree at once is a run condition on the set:
 

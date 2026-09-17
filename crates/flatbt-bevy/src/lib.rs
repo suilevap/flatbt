@@ -83,20 +83,39 @@
 //! library can guess. [`BehaviorPlugin`] registers a tick and nothing else, and
 //! [`Behavior::tick`] is public for a game that wants to register its own.
 //!
+//! [`Split`] is the one shape it does offer, and it is optional: a blackboard
+//! whose input half a node can read and cannot write, so "the tree only reads
+//! this part" is a rule rather than a comment.
+//!
+//! There is no way to issue an ECS command from a node. `Commands` borrows the
+//! world and would put lifetimes back into every signature; `CommandQueue` does
+//! not, so a game that needs one puts it in its own blackboard and drains it
+//! after the tick. `tests/commands.rs` is a working copy, with what it costs.
+//!
 //! [`BehaviorPlugin::parallel`] spreads agents across the task pool: a tree
 //! touches one component, its own blackboard, which is disjoint per entity.
-//! [`BehaviorPlugin::entry_mode`] decides per agent per tick whether a suspended
-//! invocation reconsiders, and [`evaluate_every`] is a policy for staggering
-//! that across a population.
+//! [`BehaviorPlugin::tick_mode`] decides, per agent per tick, whether the tree
+//! is entered at all and how -- [`Tick::Skip`] leaves a suspended invocation
+//! untouched, which a guard at the root cannot do -- and [`evaluate_every`] is a
+//! policy for staggering reconsideration across a population.
+//!
+//! A tree that needs something the blackboard does not hold yet asks for it:
+//! `flatbt_nodes::ask` writes the question once per invocation and waits, and
+//! bound to a `scope!` output slot it hands the answer on as a plain value. It
+//! is in the node catalog rather than here, because nothing about it is
+//! ECS-specific -- the question and the answer are fields, and an ordinary
+//! system is what connects them to the world.
 
 #![forbid(unsafe_code)]
 
 mod plugin;
+mod split;
 mod stagger;
 mod tree;
 
 pub mod prelude;
 
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
+pub use split::Split;
 pub use stagger::evaluate_every;
-pub use tree::{Behavior, BehaviorNode, BehaviorTree, EntryModeFn, TreeBuilder};
+pub use tree::{Behavior, BehaviorNode, BehaviorTree, Tick, TickFn, TreeBuilder};
