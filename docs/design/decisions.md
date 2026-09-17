@@ -210,3 +210,32 @@ suggested otherwise.
 convenience, not a guarantee -- a component means nothing without a system, here
 as anywhere in Bevy -- so the `on_add` hook, and the resource that bounds its
 noise, are behind `debug_assertions` and cost a release build nothing.
+
+## 2026-09-17 — `write` is optional, and `read` earns its keep
+
+With intents split out, `write` in the arena is one line -- copy the intent half
+to a component -- which raised the question of whether it belongs in the trait
+at all.
+
+Tried: replacing it with `type Intent: Component`, so the tick publishes
+generically and the method disappears. It does not pay. Bevy's `#[require]`
+cannot name an associated type (checked), so the intent component has to be
+spawned by hand or inserted by a hook on every agent, and the design forces
+exactly one intent component where two are often better -- `apply_movement`
+currently iterates every agent and skips the ones standing still, which separate
+components would avoid. `write` supports both shapes; the associated type
+supports one.
+
+What was wrong is that `write` was *required*. It now defaults to publishing
+nothing, which is right for a tree whose whole effect is deferred -- a message, a
+spawn, a component on another entity. Such a context implements two items rather
+than three, wants no `&mut` in `Agent`, and so drops `#[query_data(mutable)]`
+too.
+
+`read` stays as it was: something has to gather the input, and doing it in a
+system of the game's own was measured at 49 lines against 41, with an ordering
+nothing enforces.
+
+The `guards` example was still writing `post` and `ammo` back as a mirror, which
+contradicted the guidance. It issues `Orders` now, and `carry_out_orders` owns
+how far a guard marches and what a shot costs.

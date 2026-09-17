@@ -106,8 +106,13 @@ pub trait BehaviorContext: Send + Sync + 'static {
     /// looked leaves change detection alone. Where a value can be written
     /// unchanged, [`Mut::set_if_neq`] keeps the rest of the engine out of it.
     ///
+    /// Defaults to publishing nothing, which is right for a tree whose whole
+    /// effect is deferred -- a message, a spawn, a component on another entity.
+    /// Such a context wants no `&mut` in [`Agent`](BehaviorContext::Agent)
+    /// either, and so no `#[query_data(mutable)]`.
+    ///
     /// [`Mut::set_if_neq`]: bevy_ecs::change_detection::DetectChangesMut::set_if_neq
-    fn write(snapshot: &Self::Snapshot, agent: &mut AgentItem<'_, '_, Self>);
+    fn write(_snapshot: &Self::Snapshot, _agent: &mut AgentItem<'_, '_, Self>) {}
 
     /// Decides, per agent per tick, whether a suspended invocation reconsiders
     /// from the root or continues where it left off.

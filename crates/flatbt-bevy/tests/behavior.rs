@@ -1014,3 +1014,60 @@ fn a_node_can_write_a_message() {
     let seen: Vec<u32> = cursor.read(messages).map(|shot| shot.0).collect();
     assert_eq!(seen, [1, 0], "one per tick, in the order the ticks ran");
 }
+
+// --- a context that publishes nothing ----------------------------------------
+
+#[derive(Message, PartialEq, Debug)]
+struct Dry;
+
+struct Sentry {
+    ammo: u32,
+}
+
+/// No `#[query_data(mutable)]`, and no `&mut` anywhere: this context does not
+/// write back, so it does not ask for the access to.
+#[derive(QueryData)]
+struct SentryAccess {
+    ammo: &'static Ammo,
+}
+
+impl BehaviorContext for Sentry {
+    type Agent = SentryAccess;
+    type Param = ();
+    type Snapshot = Self;
+
+    fn read(_: Entity, agent: &SentryAccessItem, _: &()) -> Sentry {
+        Sentry { ammo: agent.ammo.0 }
+    }
+
+    // `write` is not implemented: its default publishes nothing.
+}
+
+fn warn_when_dry() -> impl BehaviorNode<Sentry> {
+    seq((
+        check(|bb: &Blackboard<Sentry>| bb.ammo == 0),
+        leaf(|bb: &mut Blackboard<Sentry>| {
+            bb.write_message(Dry);
+            NodeResult::Success
+        }),
+    ))
+}
+
+/// A tree whose whole effect is deferred needs no write-back at all.
+#[test]
+fn a_context_that_publishes_nothing_implements_no_write() {
+    let mut app = App::new();
+    app.add_message::<Dry>()
+        .add_plugins(BehaviorPlugin::for_tree(warn_when_dry));
+    app.world_mut()
+        .spawn((Ammo(0), Behavior::for_tree(warn_when_dry)));
+
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .resource::<bevy_ecs::message::Messages<Dry>>()
+            .len(),
+        1
+    );
+}
