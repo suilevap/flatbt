@@ -27,8 +27,49 @@ It is its own workspace, so the repository's checks never build Bevy's renderer.
   `coward`) over it. The coward switches between the other two behaviours with
   `choose!`, and hides using a query its context never declared.
 - `src/world.rs` -- the components, the one shared read-only resource every
-  tree reads, and `resolve_cover_requests`: an ordinary Bevy system that
-  answers a question the trees cannot ask for themselves.
+  tree reads, `resolve_cover_requests` answering a question the trees cannot
+  ask for themselves, and `apply_movement` / `fire_and_reload` carrying out what
+  they decided.
+
+## Trees decide; systems carry out
+
+The blackboard has two halves that do not overlap. Everything above `intent` is
+what the world said: `read` writes it, the tree only reads it. `intent` is what
+the tree decided: only the tree writes it, and `write` carries it back out. No
+field is both, and `FighterAccess` makes that the borrow checker's business
+rather than a convention -- every component in it is `&` except `&mut Intent`.
+
+```rust
+fn shoot(bb: &mut Blackboard<Fighter>) -> NodeResult {
+    bb.intent.shoot = true;      // not `bb.ammo -= 1`
+    NodeResult::Success
+}
+```
+
+A tree that subtracted the round itself would be deciding what a shot costs,
+which belongs to the weapon. It can be wrong about whether it *should* shoot; it
+cannot be wrong about how much ammunition a shot takes, because it never knew.
+The same for movement: the tree names a destination and never learns how fast
+this agent is or what a frame is worth.
+
+It reads better in the tests, which is where it shows most: they assert on
+decisions (`intent.move_to == Some(player)`) rather than on consequences
+(`position.x < 100.0`), so a failure says which judgement was wrong instead of
+which number moved.
+
+Measured back to back at 100 000 agents, against the version where trees wrote
+`position`, `health` and `ammo` directly:
+
+| | AI tick, serial | AI tick, parallel | whole frame, serial | whole frame, parallel |
+| --- | --- | --- | --- | --- |
+| trees write components | 2.58-2.65 ms | 1.46-1.55 ms | 2.95-2.99 ms | 1.70-1.79 ms |
+| trees write intents | 2.27-2.46 ms | 1.18-1.22 ms | 2.93-3.23 ms | 1.72-1.80 ms |
+
+The tick gets about a tenth cheaper serially and a fifth in parallel, because
+`write` now touches one small component instead of three. The frame does not pay
+for it, because what moved out is two systems that are pure per-entity work and
+spread across the pool as readily as the tick does -- `bin/bench` reports both
+columns so that relocation cannot be mistaken for a saving.
 
 ## Numbers
 
@@ -36,17 +77,19 @@ Three trees over one context, mixed evenly, ticking every frame. Wall time
 between `start_timing` and `stop_timing`, which bracket `BehaviorSystems`, on
 a 4-core Xeon at 2.8 GHz:
 
-| agents  | serial  | `.parallel()` | speedup |
-| ------- | ------- | ------------- | ------- |
-| 10 000  | 0.35 ms | 0.33 ms       | 1.05x   |
-| 50 000  | 1.37 ms | 0.81 ms       | 1.68x   |
-| 100 000 | 2.50 ms | 1.49 ms       | 1.68x   |
-| 200 000 | 5.47 ms | 2.65 ms       | 2.06x   |
-| 400 000 | 10.1 ms | 5.54 ms       | 1.83x   |
+| agents  | AI tick | with `.parallel()` | speedup | whole frame | frame, parallel |
+| ------- | ------- | ------------------ | ------- | ----------- | --------------- |
+| 10 000  | 0.32 ms | 0.30 ms            | 1.06x   | 0.58 ms     | 0.57 ms         |
+| 50 000  | 1.27 ms | 0.75 ms            | 1.68x   | 1.80 ms     | 1.19 ms         |
+| 100 000 | 2.46 ms | 1.23 ms            | 2.00x   | 3.18 ms     | 1.81 ms         |
+| 200 000 | 4.39 ms | 2.37 ms            | 1.85x   | 5.34 ms     | 3.24 ms         |
+| 400 000 | 8.57 ms | 4.32 ms            | 1.98x   | 10.0 ms     | 5.66 ms         |
 
-About 25 ns per agent per tick serially. Below ~5 000 agents the task pool
-costs more than it saves and `.parallel()` is a loss, which is why it is opt-in
-rather than the default.
+About 21 ns per agent per tick serially. The frame columns are there because
+work moved out of the tick has to show up somewhere, and without them a
+relocation reads as a saving. Below ~5 000 agents the task pool costs more than
+it saves and `.parallel()` is a loss, which is why it is opt-in rather than the
+default.
 
 One caution about every absolute number here: they were taken on a shared
 container whose throughput drifts. The same unchanged binary measured 4.2 ms

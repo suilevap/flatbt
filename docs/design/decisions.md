@@ -202,23 +202,6 @@ chosen for an older situation.
 It needs the action catalog, so it sits behind a default-on `action` feature --
 the only thing in the crate that needs it.
 
-**A node can write a Bevy message.** `Blackboard::write_message` is the channel
-for "this happened" -- a shot fired, a target lost -- where a marker component
-is the wrong shape: a marker has to be cleared by someone, and inserting and
-removing one moves the entity between archetypes twice a tick, which at a large
-population costs more than everything the tree did. The `guards` example used a
-marker and now does not.
-
-**`evaluate_every` moved to its own module.** It is a policy, not machinery:
-`entry_mode` returns a mode and this returns a mode, so a game that wants a
-different one writes it and never mentions this. Keeping it in `context.rs`
-suggested otherwise.
-
-**The unregistered-agent warning is debug only.** It is a development
-convenience, not a guarantee -- a component means nothing without a system, here
-as anywhere in Bevy -- so the `on_add` hook, and the resource that bounds its
-noise, are behind `debug_assertions` and cost a release build nothing.
-
 ## 2026-09-17 — Reconsidering is the default; resuming is the optimisation
 
 `BehaviorContext::entry_mode` defaulted to `EntryMode::Resume` on the argument
@@ -285,6 +268,55 @@ nothing enforces.
 The `guards` example was still writing `post` and `ammo` back as a mirror, which
 contradicted the guidance. It issues `Orders` now, and `carry_out_orders` owns
 how far a guard marches and what a shot costs.
+
+## 2026-09-17 — A tree decides; it does not bookkeep
+
+The arena's trees wrote `position`, `health` and `ammo` straight into the
+snapshot, and `write` mirrored them back. That put the rules of the game inside
+the behaviour: `bb.ammo -= 1` is the tree deciding what a shot costs, and
+`step_towards` is the tree deciding how fast the agent is and what a frame is
+worth.
+
+The snapshot now has two halves that do not overlap. Everything the world said
+is written by `read` and only read by the tree; an `Intent` -- a destination, a
+shot, a swing, a reload -- is written only by the tree and carried out by
+ordinary systems. No field is both, and the agent's `QueryData` makes that the
+borrow checker's business: every component in it is `&` except `&mut Intent`.
+
+Nothing in `flatbt-bevy` changed for it. `read` and `write` already allowed
+this; they had only ever been used as a mirror, which the documentation now
+stops implying.
+
+Measured back to back at 100 000 agents. The tick goes from 2.58-2.65 ms to
+2.27-2.46 serial and from 1.46-1.55 to 1.18-1.22 parallel, because `write`
+touches one small component instead of three. The whole frame is unchanged
+(2.95-2.99 against 2.93-3.23 serial, 1.70-1.79 against 1.72-1.80 parallel),
+because what moved out is pure per-entity work that spreads across the pool as
+readily as the tick. `bin/bench` reports both columns now, so a relocation
+cannot be read as a saving -- with the applying systems left serial the frame
+was 12% worse, which is what the second column is for.
+
+It reads better where it matters most. `tests/trees.rs` asserts on decisions
+(`intent.move_to == Some(player)`) rather than on consequences
+(`position.x < 100.0`), so a failure names the judgement that was wrong instead
+of the number that moved.
+
+**A node can write a Bevy message.** `Blackboard::write_message` is the channel
+for "this happened" -- a shot fired, a target lost -- where a marker component
+is the wrong shape: a marker has to be cleared by someone, and inserting and
+removing one moves the entity between archetypes twice a tick, which at a large
+population costs more than everything the tree did. The `guards` example used a
+marker and now does not.
+
+**`evaluate_every` moved to its own module.** It is a policy, not machinery:
+`entry_mode` returns a mode and this returns a mode, so a game that wants a
+different one writes it and never mentions this. Keeping it in `context.rs`
+suggested otherwise.
+
+**The unregistered-agent warning is debug only.** It is a development
+convenience, not a guarantee -- a component means nothing without a system, here
+as anywhere in Bevy -- so the `on_add` hook, and the resource that bounds its
+noise, are behind `debug_assertions` and cost a release build nothing.
 
 ## 2026-09-17 — The seam between the library and the convenience is public
 

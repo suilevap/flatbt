@@ -2,11 +2,16 @@
 //!
 //! This is what the snapshot buys: the context is a plain struct, so a tree is
 //! a value that takes a value. No `World`, no schedule, no entities -- just
-//! call it and look at what came back.
+//! call it and look at what it decided.
+//!
+//! "Decided" is the word. These assert on intents, not on consequences: a
+//! chaser *asks* to be at the player, and whether it gets there is
+//! `apply_movement`'s business and not under test here.
 
 use core::time::Duration;
 
 use arena::ai::{Fighter, chaser, coward, sniper};
+use arena::world::Intent;
 use bevy::prelude::{Entity, Vec2};
 use flatbt::bevy::prelude::*;
 use flatbt::{BtState, EntryMode, update};
@@ -20,6 +25,7 @@ fn fighter() -> Fighter {
         cover: None,
         player: Vec2::ZERO,
         rethink: false,
+        intent: Intent::default(),
     }
 }
 
@@ -34,14 +40,14 @@ fn run(tree: impl BehaviorNode<Fighter>, snapshot: Fighter, ticks: u32) -> Fight
 }
 
 #[test]
-fn a_chaser_closes_on_the_player() {
-    let after = run(chaser(), fighter(), 4);
-    assert!(
-        after.position.x < 100.0,
-        "moved towards the player at the origin, ended at {}",
-        after.position
+fn a_chaser_out_of_reach_heads_for_the_player() {
+    let after = run(chaser(), fighter(), 1);
+    assert_eq!(
+        after.intent.move_to,
+        Some(Vec2::ZERO),
+        "the player is there"
     );
-    assert_eq!(after.health, 100.0, "out of reach, so it never swung");
+    assert!(!after.intent.melee, "nothing to swing at yet");
 }
 
 #[test]
@@ -51,30 +57,42 @@ fn a_chaser_in_reach_swings_instead_of_moving() {
         ..fighter()
     };
     let after = run(chaser(), close, 1);
-    assert_eq!(after.position, Vec2::new(10.0, 0.0), "already in reach");
-    assert!(after.health < 100.0, "swinging costs it something");
+    assert!(after.intent.melee);
+    assert_eq!(after.intent.move_to, None, "already close enough");
 }
 
 #[test]
-fn a_sniper_spends_its_magazine_then_reloads() {
+fn a_sniper_in_range_and_loaded_shoots() {
     let in_range = Fighter {
         position: Vec2::new(300.0, 0.0),
         ammo: 2,
         ..fighter()
     };
-    let after = run(sniper(), in_range, 2);
-    assert_eq!(after.ammo, 0, "two shots at two ticks");
+    let after = run(sniper(), in_range, 1);
+    assert!(after.intent.shoot);
+    assert_eq!(after.ammo, 2, "spending the round is the weapon's business");
+}
 
-    // Dry, it starts a reload, which takes longer than one tick.
-    let after = run(sniper(), after, 1);
-    assert_eq!(after.ammo, 0, "still reloading");
+#[test]
+fn a_dry_sniper_reloads_and_it_takes_more_than_a_tick() {
+    let dry = || Fighter {
+        position: Vec2::new(300.0, 0.0),
+        ammo: 0,
+        ..fighter()
+    };
+    assert!(!run(sniper(), dry(), 1).intent.reload, "still reloading");
+    assert!(
+        run(sniper(), dry(), 31).intent.reload,
+        "finished, and says so once"
+    );
 }
 
 #[test]
 fn a_healthy_coward_fights_and_a_hurt_one_asks_for_cover() {
     let after = run(coward(), fighter(), 1);
-    assert!(
-        after.position.x < 100.0,
+    assert_eq!(
+        after.intent.move_to,
+        Some(Vec2::ZERO),
         "unhurt, so it behaves as a chaser"
     );
 
@@ -84,26 +102,21 @@ fn a_healthy_coward_fights_and_a_hurt_one_asks_for_cover() {
     };
     let after = run(coward(), hurt, 1);
     assert_eq!(
-        after.position,
-        Vec2::new(100.0, 0.0),
+        after.intent,
+        Intent::default(),
         "hurt and with nowhere to go yet, it waits on its request"
     );
 }
 
 #[test]
-fn a_coward_walks_to_the_cover_it_was_given() {
+fn a_coward_heads_for_the_cover_it_was_given() {
+    let spot = Vec2::new(0.0, 200.0);
     let hiding = Fighter {
         health: 10.0,
-        cover: Some(Vec2::new(0.0, 200.0)),
+        cover: Some(spot),
         ..fighter()
     };
-    let after = run(coward(), hiding, 3);
-    assert!(
-        after.position.distance(Vec2::new(0.0, 200.0))
-            < fighter().position.distance(Vec2::new(0.0, 200.0)),
-        "closed on the spot, ended at {}",
-        after.position
-    );
+    assert_eq!(run(coward(), hiding, 1).intent.move_to, Some(spot));
 }
 
 #[test]

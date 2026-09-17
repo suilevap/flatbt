@@ -11,15 +11,21 @@ use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
 use flatbt::prelude::{BtAction, BtNode, action, choose, scope};
 
-use crate::world::{Ammo, Arena, CoverTarget, Health, Speed, WantsCover};
+use crate::world::{Ammo, Arena, CoverTarget, Health, Intent, Speed, WantsCover};
 
-/// What every enemy tree sees. Plain data: the tree never touches the ECS, so
-/// nothing in a node signature carries a lifetime, and any of this can be
-/// exercised in a unit test with no `World`.
+/// What every enemy tree sees and decides. Plain data: the tree never touches
+/// the ECS, so nothing in a node signature carries a lifetime, and any of this
+/// can be exercised in a unit test with no `World`.
+///
+/// Two halves that do not overlap. Everything above `intent` is what the world
+/// said, written by `read` and only read by the tree. `intent` is what the tree
+/// decided, written only by the tree and carried back out by `write`. No field
+/// is both, which is the point: a tree that changed `ammo` directly would be
+/// deciding what a shot costs, and that belongs to the weapon.
 ///
 /// One snapshot serves all three trees. Shared values worth having per agent --
-/// the player's position -- are copied in here rather than borrowed, so they
-/// cost eight bytes instead of a lifetime parameter.
+/// the player's position -- are copied in rather than borrowed, so they cost
+/// eight bytes instead of a lifetime parameter.
 pub struct Fighter {
     pub position: Vec2,
     pub health: f32,
@@ -31,17 +37,23 @@ pub struct Fighter {
     /// Whether this agent's turn to reconsider falls in this tick. Decided in
     /// `read`, where it costs one bool instead of carrying two `Duration`s.
     pub rethink: bool,
+    /// What this tick's tree decided. Fresh every tick, because `read` builds
+    /// it fresh: an intent is what the agent wants *now*, never a leftover.
+    pub intent: Intent,
 }
 
 /// The access `read` and `write` may use. Declared once, for all three trees.
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct FighterAccess {
-    transform: &'static mut Transform,
-    health: &'static mut Health,
-    ammo: &'static mut Ammo,
+    transform: &'static Transform,
+    health: &'static Health,
+    ammo: &'static Ammo,
     speed: &'static Speed,
     cover: Option<&'static CoverTarget>,
+    /// The only thing a tree writes. Everything else here is read-only, which
+    /// the borrow checker now enforces rather than a convention.
+    intent: &'static mut Intent,
 }
 
 /// How often a fighter is allowed to abandon what it is doing.
@@ -68,18 +80,14 @@ impl BehaviorContext for Fighter {
             player: arena.player,
             rethink: evaluate_every(RETHINK, arena.elapsed, arena.delta, entity)
                 == EntryMode::Evaluate,
+            intent: Intent::default(),
         }
     }
 
+    /// One field, and only when it changed: an agent that wants the same thing
+    /// it wanted last tick does not dirty anything.
     fn write(fighter: &Fighter, agent: &mut FighterAccessItem) {
-        // Written through `set_if_neq` so an agent that stood still does not
-        // dirty its transform and drag the rest of the engine along with it.
-        let moved = fighter.position.extend(agent.transform.translation.z);
-        if agent.transform.translation != moved {
-            agent.transform.translation = moved;
-        }
-        agent.health.set_if_neq(Health(fighter.health));
-        agent.ammo.set_if_neq(Ammo(fighter.ammo));
+        agent.intent.set_if_neq(fighter.intent);
     }
 
     fn entry_mode(bb: &Blackboard<Fighter>) -> EntryMode {
@@ -97,9 +105,10 @@ fn range_to_player(bb: &Blackboard<Fighter>) -> f32 {
     bb.position.distance(bb.player)
 }
 
-fn step_towards(bb: &mut Blackboard<Fighter>, target: Vec2) {
-    let step = (target - bb.position).normalize_or_zero() * bb.speed;
-    bb.position += step;
+/// Asks to be somewhere. How fast, and whether anything is in the way, is
+/// `apply_movement`'s business.
+fn head_for(bb: &mut Blackboard<Fighter>, target: Vec2) {
+    bb.intent.move_to = Some(target);
 }
 
 fn hurt(bb: &Blackboard<Fighter>) -> bool {
@@ -111,14 +120,13 @@ fn has_ammo(bb: &Blackboard<Fighter>) -> bool {
 }
 
 fn shoot(bb: &mut Blackboard<Fighter>) -> NodeResult {
-    bb.ammo -= 1;
+    bb.intent.shoot = true;
     NodeResult::Success
 }
 
 /// Reloading takes several ticks, and holds its progress across them.
 struct Reload {
     ticks: u32,
-    rounds: u32,
 }
 
 impl BtAction<Blackboard<Fighter>> for Reload {
@@ -138,7 +146,7 @@ impl BtAction<Blackboard<Fighter>> for Reload {
     }
 
     fn complete(&self, _: &mut u32, bb: &mut Blackboard<Fighter>, _: ()) -> bool {
-        bb.ammo = self.rounds;
+        bb.intent.reload = true;
         true
     }
 }
@@ -146,10 +154,7 @@ impl BtAction<Blackboard<Fighter>> for Reload {
 fn reload() -> impl BehaviorNode<Fighter> {
     seq((
         check(|bb: &Blackboard<Fighter>| !has_ammo(bb)),
-        action(Reload {
-            ticks: 30,
-            rounds: 6,
-        }),
+        action(Reload { ticks: 30 }),
     ))
 }
 
@@ -170,7 +175,7 @@ impl BtNode<Blackboard<Fighter>, &Vec2> for WalkTo {
         if bb.position.distance(*spot) < 8.0 {
             return NodeResult::Success;
         }
-        step_towards(bb, *spot);
+        head_for(bb, *spot);
         NodeResult::Running
     }
 }
@@ -204,13 +209,13 @@ pub fn chaser() -> impl BehaviorNode<Fighter> {
         seq((
             check(|bb: &Blackboard<Fighter>| range_to_player(bb) < 24.0),
             leaf(|bb: &mut Blackboard<Fighter>| {
-                bb.health -= 0.05;
+                bb.intent.melee = true;
                 NodeResult::Success
             }),
         )),
         leaf(|bb: &mut Blackboard<Fighter>| {
             let player = bb.player;
-            step_towards(bb, player);
+            head_for(bb, player);
             NodeResult::Success
         }),
     ))
@@ -224,7 +229,7 @@ pub fn sniper() -> impl BehaviorNode<Fighter> {
             check(|bb: &Blackboard<Fighter>| range_to_player(bb) < 180.0),
             leaf(|bb: &mut Blackboard<Fighter>| {
                 let away = bb.position * 2.0 - bb.player;
-                step_towards(bb, away);
+                head_for(bb, away);
                 NodeResult::Success
             }),
         )),
@@ -235,7 +240,7 @@ pub fn sniper() -> impl BehaviorNode<Fighter> {
         )),
         leaf(|bb: &mut Blackboard<Fighter>| {
             let player = bb.player;
-            step_towards(bb, player);
+            head_for(bb, player);
             NodeResult::Success
         }),
     ))

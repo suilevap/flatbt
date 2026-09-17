@@ -15,6 +15,24 @@ pub struct Ammo(pub u32);
 #[derive(Component, Debug, PartialEq)]
 pub struct Speed(pub f32);
 
+/// What a tree decided this tick. The other half of the blackboard: `read`
+/// never touches these, and nothing but a tree writes them.
+///
+/// Splitting it this way is what keeps the AI out of the game's bookkeeping. A
+/// tree that wanted to shoot used to subtract the round itself, which put the
+/// rules of the weapon inside the behaviour; now it says `shoot` and
+/// [`fire_and_reload`] owns what that costs. The tree can be wrong about
+/// whether it *should* shoot. It cannot be wrong about how much ammunition a
+/// shot takes, because it never knew.
+#[derive(Component, Clone, Copy, Default, PartialEq, Debug)]
+pub struct Intent {
+    /// Where the agent wants to be. Absent means standing still.
+    pub move_to: Option<Vec2>,
+    pub shoot: bool,
+    pub melee: bool,
+    pub reload: bool,
+}
+
 /// Static geometry a coward can hide behind.
 #[derive(Component)]
 pub struct Cover;
@@ -52,6 +70,46 @@ pub fn track_arena(
     if let Ok(transform) = player.single() {
         arena.player = transform.translation.truncate();
     }
+}
+
+/// Moves an agent towards what its tree asked for, at the speed the agent has.
+///
+/// The tree never touches [`Transform`]: it does not know how fast this agent
+/// is, whether something blocks the way, or what a frame is worth.
+/// Spread across the task pool: the access is disjoint per entity, same as the
+/// tick's, and at this population a serial sweep costs more than the trees did.
+pub fn apply_movement(mut agents: Query<(&Intent, &Speed, &mut Transform)>) {
+    agents
+        .par_iter_mut()
+        .for_each(|(intent, speed, mut transform)| {
+            let Some(target) = intent.move_to else {
+                return;
+            };
+            let from = transform.translation.truncate();
+            let step = (target - from).normalize_or_zero() * speed.0;
+            if step != Vec2::ZERO {
+                transform.translation += step.extend(0.0);
+            }
+        });
+}
+
+/// Spends and refills ammunition, and charges for a swing.
+///
+/// Every number here is the weapon's, not the tree's.
+pub fn fire_and_reload(mut agents: Query<(&Intent, &mut Ammo, &mut Health)>) {
+    agents
+        .par_iter_mut()
+        .for_each(|(intent, mut ammo, mut health)| {
+            if intent.shoot && ammo.0 > 0 {
+                ammo.0 -= 1;
+            }
+            if intent.reload {
+                ammo.set_if_neq(Ammo(6));
+            }
+            if intent.melee {
+                health.0 -= 0.05;
+            }
+        });
 }
 
 /// The deferred query a tree cannot make for itself.

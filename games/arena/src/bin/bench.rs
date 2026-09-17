@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 
 use arena::Mind;
 use arena::ai::{Fighter, chaser, coward, sniper};
-use arena::world::{ARENA, Ammo, Arena, Cover, Health, Speed, resolve_cover_requests, track_arena};
+use arena::world::{
+    ARENA, Ammo, Arena, Cover, Health, Intent, Speed, apply_movement, fire_and_reload,
+    resolve_cover_requests, track_arena,
+};
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
 
@@ -86,7 +89,9 @@ fn build(agents: u32, parallel: bool) -> App {
             track_arena.before(start_timing),
             start_timing.before(BehaviorSystems),
             stop_timing.after(BehaviorSystems),
-            resolve_cover_requests.after(stop_timing),
+            // What the trees asked for is carried out here, by systems that own
+            // the rules the trees do not know.
+            (apply_movement, fire_and_reload, resolve_cover_requests).after(stop_timing),
         ),
     );
 
@@ -170,21 +175,26 @@ fn agent_body(index: u32) -> impl Bundle {
         Health(100.0 - (index % 90) as f32),
         Ammo(index % 7),
         Speed(1.0 + (index % 3) as f32 * 0.4),
+        Intent::default(),
     )
 }
 
-fn measure(agents: u32, parallel: bool, frames: u32) -> f64 {
+/// Both what the trees cost and what the whole frame costs, because work moved
+/// out of the tick has to show up somewhere.
+fn measure(agents: u32, parallel: bool, frames: u32) -> (f64, f64) {
     let mut app = build(agents, parallel);
     for _ in 0..8 {
         app.update(); // warm up: first frames allocate invocation state
     }
     app.world_mut().resource_mut::<AiCost>().total = Duration::ZERO;
     app.world_mut().resource_mut::<AiCost>().frames = 0;
+    let wall = Instant::now();
     for _ in 0..frames {
         app.update();
     }
+    let wall = wall.elapsed().as_secs_f64() * 1000.0 / frames as f64;
     let cost = app.world().resource::<AiCost>();
-    cost.total.as_secs_f64() * 1000.0 / cost.frames as f64
+    (cost.total.as_secs_f64() * 1000.0 / cost.frames as f64, wall)
 }
 
 fn main() {
@@ -198,10 +208,11 @@ fn main() {
     };
     for agents in sizes {
         let frames = if agents > 20_000 { 60 } else { 240 };
-        let serial = measure(agents, false, frames);
-        let parallel = measure(agents, true, frames);
+        let (serial, serial_frame) = measure(agents, false, frames);
+        let (parallel, parallel_frame) = measure(agents, true, frames);
         println!(
-            "{agents:>8}  {serial:>12.3}  {parallel:>12.3}  {:>7.2}x",
+            "{agents:>8}  {serial:>10.3}  {parallel:>10.3}  {:>7.2}x  {serial_frame:>10.3}  \
+             {parallel_frame:>10.3}",
             serial / parallel
         );
     }

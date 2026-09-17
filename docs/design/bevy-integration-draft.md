@@ -279,7 +279,7 @@ after moving every constructor fix into core and the blackboard to a snapshot:
 | Piece | Forced by |
 | --- | --- |
 | `BehaviorContext`, `Blackboard` | Declaring ECS access, and gathering a per-agent view from it. This is the integration. |
-| `read` / `write` | The snapshot. Their cost is two functions per context; what they buy is that nothing below them knows the ECS exists, that gather-tick-write cannot be misordered, and that a tree which only read is never written back. |
+| `read` / `write` | The snapshot. Their cost is two functions per context; what they buy is that nothing below them knows the ECS exists, that gather-tick-write cannot be misordered, and that a tree which only read is never written back. They are not a mirror: `read` gathers what the world said, `write` publishes what the tree decided, and a context is better off when no field is both. |
 | `BehaviorTree` resource, `Behavior` component, `TreeBuilder` | Bevy resources and components are `'static`, and the state type has to be nameable without naming the tree. |
 | Plugins, tick systems | Bevy scheduling. |
 | `BehaviorNode<C>` | FlatBT: `Behavior` needs the invocation state as one named type, and `State: Bound` leaves a projection while `State = T` needs a nameable `T`, which a composed tree's state is not. An associated type is the only equality target left, so it takes a trait — and in return position that trait also names a subtree without naming its type. |

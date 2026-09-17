@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use arena::Mind;
 use arena::ai::{chaser, coward, sniper};
 use arena::world::{
-    ARENA, Ammo, Arena, Cover, CoverTarget, Health, Player, Speed, resolve_cover_requests,
-    track_arena,
+    ARENA, Ammo, Arena, Cover, CoverTarget, Health, Intent, Player, Speed, apply_movement,
+    fire_and_reload, resolve_cover_requests, track_arena,
 };
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
@@ -79,8 +79,16 @@ fn main() {
                 (move_player, track_arena).chain().before(BehaviorSystems),
                 start_timing.before(BehaviorSystems),
                 stop_timing.after(BehaviorSystems),
-                // ...and everything they asked for is answered after.
-                (resolve_cover_requests, recover_in_cover, adjust_population).after(stop_timing),
+                // ...and everything they asked for is carried out after, by
+                // systems that own the rules the trees do not know.
+                (
+                    apply_movement,
+                    fire_and_reload,
+                    resolve_cover_requests,
+                    recover_in_cover,
+                    adjust_population,
+                )
+                    .after(stop_timing),
                 readout.after(stop_timing),
             ),
         )
@@ -152,6 +160,7 @@ fn spawn_enemy(commands: &mut Commands, index: u32) {
         Health(100.0 - (index % 90) as f32),
         Ammo(index % 7),
         Speed(60.0 + (index % 3) as f32 * 25.0),
+        Intent::default(),
     );
     // `Behavior::for_tree` names the tree by the same function the plugin was
     // given: spelling them the same way is the whole registration.
