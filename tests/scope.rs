@@ -491,9 +491,8 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
         }
     }
     let tree = scope! {
-        context: Context;
         let a: u32 = first;
-        let b: u32 = |ctx| {
+        let b: u32 = |ctx: &mut Context| {
             ctx.init_order.push("second");
             ctx.next + 10
         };
@@ -590,8 +589,7 @@ fn action_callbacks_reborrow_mixed_parameters_without_copying_the_output() {
         }
     }
     let tree = scope! {
-        context: Vec<u32>;
-        let input: u32 = |_| 7;
+        let input: u32 = |_: &mut Vec<u32>| 7;
         let output: u32;
         sequence { action(Double).with(input, out output); }
     };
@@ -623,8 +621,7 @@ fn scope_keeps_constructor_arguments_and_node_expressions_as_ordinary_rust() {
     let frames = 1;
     let constructions = std::cell::Cell::new(0);
     let tree = scope! {
-        context: World;
-        let frames: Vector2 = |world| world.next_patrol;
+        let frames: Vector2 = |world: &mut World| world.next_patrol;
         sequence {
             Mark { position: Vector2(5.0, 6.0) };
             {

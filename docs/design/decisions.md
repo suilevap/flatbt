@@ -114,3 +114,22 @@ Direct crate defaults are unchanged. Supersedes the empty entry-point defaults a
 
 README covers implemented APIs and common usage. CONTRIBUTING links internal design
 notes, decisions, and experiments. Advanced feature configuration is collapsed in README.
+
+## 2026-09-16 — A failed resume is the caller's to reconsider
+
+`Resume` skips `begin()`, so no child above the active one is consulted. When
+the resumed child *fails*, the policy then chooses among children it never
+looked at: a `select` takes the branch below the failure even when a
+higher-priority one became available meanwhile.
+
+Considered and rejected: a `BtControl::continuation_failed` hook letting
+`Selector` rescan from child zero. It fixes the case completely, but it makes
+`Resume` mean two things depending on what the resumed child returned, and puts
+branch-picking policy into the core loop. `Resume` stays an honest resume from
+the saved position, and a driver that wants otherwise re-enters with `Evaluate`
+itself -- a terminal result drops invocation state, so the next update would
+have done that anyway, and re-entering now only spares an agent a tick of doing
+nothing.
+
+Pinned by `a_resumed_branch_that_fails_falls_through_below_it_not_back_above`
+in `tests/resume.rs`.
