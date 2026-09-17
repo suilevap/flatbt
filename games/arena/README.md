@@ -38,16 +38,22 @@ a 4-core Xeon at 2.8 GHz:
 
 | agents  | serial  | `.parallel()` | speedup |
 | ------- | ------- | ------------- | ------- |
-| 10 000  | 0.52 ms | 0.49 ms       | 1.07x   |
-| 50 000  | 2.16 ms | 1.12 ms       | 1.93x   |
-| 100 000 | 4.12 ms | 1.88 ms       | 2.20x   |
-| 200 000 | 8.41 ms | 3.65 ms       | 2.30x   |
-| 400 000 | 16.6 ms | 7.03 ms       | 2.37x   |
+| 10 000  | 0.35 ms | 0.33 ms       | 1.05x   |
+| 50 000  | 1.37 ms | 0.81 ms       | 1.68x   |
+| 100 000 | 2.50 ms | 1.49 ms       | 1.68x   |
+| 200 000 | 5.47 ms | 2.65 ms       | 2.06x   |
+| 400 000 | 10.1 ms | 5.54 ms       | 1.83x   |
 
-About 41 ns per agent per tick serially, of which roughly 1 ns is the
-revalidation guard deciding whether this agent reconsiders at all. Below
-~5 000 agents the task pool costs more than it saves and `.parallel()` is a
-loss, which is why it is opt-in rather than the default.
+About 25 ns per agent per tick serially. Below ~5 000 agents the task pool
+costs more than it saves and `.parallel()` is a loss, which is why it is opt-in
+rather than the default.
+
+One caution about every absolute number here: they were taken on a shared
+container whose throughput drifts. The same unchanged binary measured 4.2 ms
+over 100 000 agents one afternoon and 2.5 ms the next. Only figures taken back
+to back in one session compare — which is what `bin/scaling` is for, and why
+the claims elsewhere in this file name an A against a B rather than a
+millisecond.
 
 ## What building it changed
 
