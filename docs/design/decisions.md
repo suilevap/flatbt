@@ -172,3 +172,41 @@ The snapshot field is private for it, with `snapshot()`, `into_snapshot()` and
 `written()` in its place. `into_snapshot` takes `self`, and returning the
 snapshot by value from the tick cost 1.5 ms per 100k agents, so the tick reads
 it in place.
+
+## 2026-09-17 — Reconsidering is the default; resuming is the optimisation
+
+`BehaviorContext::entry_mode` defaulted to `EntryMode::Resume` on the argument
+that a decision already taken should stand. That is the wrong polarity for a
+default: a tree that only ever resumes never leaves the branch it is in, so
+`select` never rescans and `choose!` never re-picks, and every reactive shape
+silently stops being reactive. Resuming is correct exactly when the standing
+decision is known to still hold, which is knowledge the tree's author has and
+the library does not.
+
+The cost that would have justified it is not there. Measured back to back over
+100 000 agents on three trees, staggered revalidation and reconsidering every
+tick come out the same: 2.54-2.72 ms against 2.57-2.77 ms. A tree whose
+invocations end each tick has nothing to resume into; the saving lives in
+long-running branches, which is also where resuming is most likely to be wrong.
+
+The three tests about what `Resume` does now ask for it explicitly, which is
+what they were always about.
+
+## 2026-09-17 — Three smaller answers from the same review
+
+**A node can write a Bevy message.** `Blackboard::write_message` is the channel
+for "this happened" -- a shot fired, a target lost -- where a marker component
+is the wrong shape: a marker has to be cleared by someone, and inserting and
+removing one moves the entity between archetypes twice a tick, which at a large
+population costs more than everything the tree did. The `guards` example used a
+marker and now does not.
+
+**`evaluate_every` moved to its own module.** It is a policy, not machinery:
+`entry_mode` returns a mode and this returns a mode, so a game that wants a
+different one writes it and never mentions this. Keeping it in `context.rs`
+suggested otherwise.
+
+**The unregistered-agent warning is debug only.** It is a development
+convenience, not a guarantee -- a component means nothing without a system, here
+as anywhere in Bevy -- so the `on_add` hook, and the resource that bounds its
+noise, are behind `debug_assertions` and cost a release build nothing.

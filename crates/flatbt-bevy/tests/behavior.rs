@@ -706,10 +706,12 @@ fn ending_fallback() -> impl BehaviorNode<Scout> {
 fn running_fallback() -> impl BehaviorNode<Scout> {
     scout_tree(NodeResult::Running)
 }
+/// These are about what `Resume` does, so they ask for it rather than taking
+/// the default, which reconsiders.
 fn scout_app<F: TreeBuilder<Scout> + Copy>(builder: F) -> (App, Entity) {
     let mut app = App::new();
     app.init_resource::<TopReady>()
-        .add_plugins(BehaviorPlugin::for_tree(builder));
+        .add_plugins(BehaviorPlugin::for_tree(builder).entry_mode(|_| EntryMode::Resume));
     let agent = app
         .world_mut()
         .spawn((Log(vec![]), Ammo(0), Behavior::for_tree(builder)))
@@ -974,4 +976,41 @@ fn read_may_query_entities_the_agent_does_not_own() {
 
     app.update();
     assert_eq!(app.world().get::<Ammo>(agent), Some(&Ammo(31)));
+}
+
+// --- messages ----------------------------------------------------------------
+
+#[derive(Message, PartialEq, Debug)]
+struct Shot(u32);
+
+fn announce() -> impl BehaviorNode<Guard> {
+    seq((
+        check(|bb: &Blackboard<Guard>| bb.ammo > 0),
+        leaf(|bb: &mut Blackboard<Guard>| {
+            bb.ammo -= 1;
+            let shot = Shot(bb.ammo);
+            bb.write_message(shot);
+            NodeResult::Success
+        }),
+    ))
+}
+
+/// A tree telling the world something happened, without a marker component to
+/// insert and clear.
+#[test]
+fn a_node_can_write_a_message() {
+    let mut app = App::new();
+    app.insert_resource(Alarm(true))
+        .add_message::<Shot>()
+        .add_plugins(BehaviorPlugin::for_tree(announce).parallel());
+    app.world_mut()
+        .spawn((Ammo(2), Fired(0), Behavior::for_tree(announce)));
+
+    app.update();
+    app.update();
+
+    let messages = app.world().resource::<bevy_ecs::message::Messages<Shot>>();
+    let mut cursor = messages.get_cursor();
+    let seen: Vec<u32> = cursor.read(messages).map(|shot| shot.0).collect();
+    assert_eq!(seen, [1, 0], "one per tick, in the order the ticks ran");
 }

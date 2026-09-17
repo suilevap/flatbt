@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use bevy_ecs::prelude::*;
 use flatbt_core::{BtNode, EntryMode, NodeResult};
 
+#[cfg(debug_assertions)]
 use crate::plugin::warn_unregistered;
 use crate::{BehaviorContext, Blackboard};
 
@@ -176,7 +177,10 @@ impl<C: BehaviorContext, F: TreeBuilder<C>> BehaviorTree<C, F> {
 /// out, name the builder as a function pointer:
 /// `Behavior::for_tree(shoot as fn() -> _)`.
 #[derive(Component)]
-#[component(on_add = warn_unregistered::<C, F>)]
+// A spawn-time hook to catch a tree nobody registered. It is a development
+// convenience, not a guarantee -- a component means nothing without a system,
+// here as anywhere in Bevy -- so it costs nothing in a release build.
+#[cfg_attr(debug_assertions, component(on_add = warn_unregistered::<C, F>))]
 pub struct Behavior<C: BehaviorContext, F: TreeBuilder<C>> {
     state: Option<<F::Tree as BehaviorNode<C>>::Data>,
     // Only the builder's type is needed; the value it was named by is not kept,

@@ -113,16 +113,19 @@
 
 mod context;
 mod plugin;
+mod stagger;
 mod tree;
 
 pub mod prelude;
 
-pub use context::{AgentItem, BehaviorContext, Blackboard, ParamItem, evaluate_every};
+pub use context::{AgentItem, BehaviorContext, Blackboard, EntityCommandQueue, ParamItem};
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
+pub use stagger::evaluate_every;
 pub(crate) use tree::BehaviorTree;
 pub use tree::{Behavior, BehaviorNode, EntryModeFn, TreeBuilder};
 
 /// Matches the diagnostics FlatBT writes for recoverable errors.
+#[cfg(debug_assertions)]
 pub(crate) fn log_error(message: impl core::fmt::Display) {
     use std::io::Write;
     let _ = writeln!(std::io::stderr().lock(), "[flatbt] {message}");

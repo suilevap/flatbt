@@ -2,23 +2,28 @@ use core::marker::PhantomData;
 use std::sync::Mutex;
 
 use bevy_app::{App, Plugin, Update};
+#[cfg(debug_assertions)]
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
 use bevy_ecs::system::{StaticSystemParam, SystemParamItem};
-use bevy_ecs::world::{CommandQueue, DeferredWorld};
+use bevy_ecs::world::CommandQueue;
+#[cfg(debug_assertions)]
+use bevy_ecs::world::DeferredWorld;
 
+#[cfg(debug_assertions)]
+use crate::log_error;
 use crate::tree::EntryModeFn;
 use crate::{
     AgentItem, Behavior, BehaviorContext, BehaviorTree, Blackboard, ParamItem, TreeBuilder,
-    log_error,
 };
 
 /// Reports an agent whose tree was never registered.
 ///
-/// Runs as `Behavior`'s `on_add` hook. Nothing else could: without a
-/// registration no system queries this component type, so the agent would sit
-/// there doing nothing, silently. Reported once per tree.
+/// Runs as `Behavior`'s `on_add` hook in debug builds only. Nothing else could
+/// catch it: without a registration no system queries this component type, so
+/// the agent would sit there doing nothing, silently. Reported once per tree.
+#[cfg(debug_assertions)]
 pub(crate) fn warn_unregistered<C: BehaviorContext, F: TreeBuilder<C>>(
     mut world: DeferredWorld<'_>,
     _: HookContext,
@@ -40,6 +45,7 @@ pub(crate) fn warn_unregistered<C: BehaviorContext, F: TreeBuilder<C>>(
 }
 
 /// Set once a missing registration has been reported, to bound the noise.
+#[cfg(debug_assertions)]
 #[derive(Resource)]
 struct Reported<C: BehaviorContext, F: TreeBuilder<C>>(PhantomData<fn() -> (C, F)>);
 

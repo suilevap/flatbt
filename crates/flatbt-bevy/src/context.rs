@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
-use core::time::Duration;
 
+use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::{IterQueryData, QueryData};
 use bevy_ecs::system::{ReadOnlySystemParam, SystemParamItem};
@@ -99,22 +99,31 @@ pub trait BehaviorContext: Send + Sync + 'static {
     /// [`Mut::set_if_neq`]: bevy_ecs::change_detection::DetectChangesMut::set_if_neq
     fn write(snapshot: &Self::Snapshot, agent: &mut AgentItem<'_, '_, Self>);
 
-    /// Decides, per agent per tick, whether a suspended invocation continues or
-    /// reconsiders from the root.
+    /// Decides, per agent per tick, whether a suspended invocation reconsiders
+    /// from the root or continues where it left off.
     ///
-    /// Resuming is the cheap path and the default: a decision already taken
-    /// stands, and an invocation that ends reconsiders on its own because the
-    /// next one starts fresh. This is for abandoning a branch that has not
-    /// ended -- a walk that takes a hundred frames while the reason for it
-    /// expires. Deciding here rather than storing a mode per agent means the
-    /// answer comes from the snapshot the tree already has.
+    /// Reconsidering is the default, because it is the answer that cannot be
+    /// wrong: a tree that only ever resumes never leaves the branch it is in,
+    /// so `select` never rescans and `choose!` never re-picks. Resuming is an
+    /// optimisation, correct exactly when the standing decision is known to
+    /// still hold -- a suspended branch nothing in the world has invalidated.
     ///
-    /// A fresh invocation always enters as [`EntryMode::Evaluate`].
+    /// It is worth measuring before reaching for. Over 100 000 agents on three
+    /// trees the arena cannot tell the two apart, because a tree whose
+    /// invocations end each tick has nothing to resume into; the saving is in
+    /// long-running branches, which is also where resuming is most likely to be
+    /// wrong.
+    ///
+    /// [`evaluate_every`](crate::evaluate_every) is the usual middle: resume
+    /// between an agent's slots, reconsider on the one tick its slot comes up.
+    ///
+    /// A fresh invocation always enters as [`EntryMode::Evaluate`] whatever this
+    /// returns.
     fn entry_mode(_bb: &Blackboard<Self>) -> EntryMode
     where
         Self: Sized,
     {
-        EntryMode::Resume
+        EntryMode::Evaluate
     }
 }
 
@@ -180,6 +189,21 @@ impl<C: BehaviorContext> Blackboard<C> {
     /// [`BehaviorContext::write`] puts back without going through the world.
     pub fn queue(&mut self, command: impl Command<Out = ()>) {
         self.queue.get_or_insert_default().push(command);
+    }
+
+    /// Writes a Bevy message, applied after the tick like any deferred edit.
+    ///
+    /// The channel for "this happened" -- a shot fired, a target lost -- where
+    /// a marker component would be the wrong shape. A marker has to be cleared
+    /// by someone, and inserting and removing one moves the entity between
+    /// archetypes twice a tick, which at a large population costs more than
+    /// everything the tree did.
+    pub fn write_message<M: Message>(&mut self, message: M) {
+        self.queue(move |world: &mut World| {
+            if let Some(mut messages) = world.get_resource_mut::<Messages<M>>() {
+                messages.write(message);
+            }
+        });
     }
 
     /// Commands targeting the agent entity.
@@ -248,47 +272,4 @@ impl<C: BehaviorContext> DerefMut for Blackboard<C> {
         self.written = true;
         &mut self.snapshot
     }
-}
-
-/// [`EntryMode::Evaluate`] on the one tick where this agent's slice of `period`
-/// elapses, [`EntryMode::Resume`] on every other.
-///
-/// A population that reconsiders on a timer would otherwise do it on the same
-/// frame and spike. Each agent's slot is derived from its [`Entity`], so the
-/// work spreads across the period and nothing is stored per agent. Pass the
-/// clock the snapshot already carries.
-///
-/// A tick longer than `period` still evaluates once, never twice.
-pub fn evaluate_every(
-    period: Duration,
-    elapsed: Duration,
-    delta: Duration,
-    entity: Entity,
-) -> EntryMode {
-    let period = nanos(period);
-    if period == 0 {
-        return EntryMode::Evaluate;
-    }
-    let delta = nanos(delta);
-    if delta >= period {
-        return EntryMode::Evaluate;
-    }
-    // A multiplicative hash, so entities spawned together -- consecutive
-    // indices -- land in different slots rather than sharing one.
-    let hash = u64::from(entity.index_u32().wrapping_mul(2_654_435_761));
-    let phase = ((u128::from(hash) * u128::from(period)) >> 32) as u64;
-    // The slot boundary falls inside this tick exactly when the offset clock
-    // has less than a tick left of its current period. One remainder rather
-    // than the two divisions the quotients would take: this runs once per agent
-    // per tick, and a constant period folds it into a multiply.
-    if nanos(elapsed).saturating_add(phase) % period < delta {
-        EntryMode::Evaluate
-    } else {
-        EntryMode::Resume
-    }
-}
-
-/// Nanoseconds as [`u64`], which holds 584 years of them.
-fn nanos(duration: Duration) -> u64 {
-    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }

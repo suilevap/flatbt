@@ -17,3 +17,7 @@ cargo test --offline -p flatbt-scope
 # Bevy integration: heavier dependencies, checked on its own.
 cargo test --offline -p flatbt --no-default-features --features bevy
 cargo test --offline -p flatbt-bevy
+
+# The unregistered-agent warning is debug only, so a release build is a
+# different compilation: check it too.
+cargo clippy --offline -p flatbt-bevy --all-targets --release -- -D warnings

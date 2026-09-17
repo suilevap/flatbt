@@ -23,9 +23,16 @@ struct Ammo(u32);
 #[derive(Component, Debug)]
 struct Name(&'static str);
 
-/// Inserted by the tree through commands; read by an ordinary Bevy system.
-#[derive(Component)]
-struct Firing;
+/// Written by the tree; read by an ordinary Bevy system.
+///
+/// A message rather than a marker component: "this happened" has no duration,
+/// so nothing has to clear it, and no entity moves between archetypes to carry
+/// it.
+#[derive(Message)]
+struct Fired {
+    guard: &'static str,
+    left: u32,
+}
 
 #[derive(Resource)]
 struct Alarm {
@@ -131,8 +138,11 @@ fn fire_at_intruder() -> impl BehaviorNode<Guard> {
         check(|bb: &Blackboard<Guard>| bb.ammo > 0),
         leaf(|bb: &mut Blackboard<Guard>| {
             bb.ammo -= 1;
-            bb.agent_commands().insert(Firing);
-            println!("  {} fires ({} left)", bb.name, bb.ammo);
+            let fired = Fired {
+                guard: bb.name,
+                left: bb.ammo,
+            };
+            bb.write_message(fired);
             NodeResult::Success
         }),
     ))
@@ -169,11 +179,11 @@ fn guard_tree() -> impl BehaviorNode<Guard> {
     ))
 }
 
-/// An ordinary system reacting to what the trees did. `Firing` is inserted by a
-/// node and cleared here, so the flag lasts exactly one tick.
-fn clear_firing(firing: Query<Entity, With<Firing>>, mut commands: Commands) {
-    for entity in firing.iter() {
-        commands.entity(entity).remove::<Firing>();
+/// An ordinary system reacting to what the trees did. Bevy drops read messages
+/// on its own, so there is no flag to clear and no archetype to move.
+fn report_shots(mut fired: MessageReader<Fired>) {
+    for shot in fired.read() {
+        println!("  {} fires ({} left)", shot.guard, shot.left);
     }
 }
 
@@ -185,7 +195,8 @@ fn main() {
     })
     // One registration per tree; both type parameters come from the builder.
     .add_plugins(BehaviorPlugin::for_tree(guard_tree))
-    .add_systems(Update, clear_firing.after(BehaviorSystems));
+    .add_message::<Fired>()
+    .add_systems(Update, report_shots.after(BehaviorSystems));
 
     // One tree, many agents: each carries only its own invocation state.
     app.world_mut().spawn((
