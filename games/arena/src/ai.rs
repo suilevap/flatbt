@@ -63,7 +63,7 @@ pub struct FighterAccess {
 /// cover takes a hundred frames, and a coward healed halfway there should turn
 /// around. `evaluate_every` staggers the agents so the whole population does
 /// not reconsider on one frame.
-const RETHINK: Duration = Duration::from_millis(100);
+pub const RETHINK: Duration = Duration::from_millis(100);
 
 impl BehaviorContext for Fighter {
     type Agent = FighterAccess;

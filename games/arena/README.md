@@ -16,8 +16,19 @@ cargo run --release --bin scaling        # a control: what this machine's task p
 cargo test --release                     # the trees, with no Bevy app
 ```
 
-`bench` takes `AGENTS=`, `THREADS=`, `TREE=` and `SPLIT=1`, the last spreading
-one tree across three names to measure what splitting costs.
+`bench` takes `AGENTS=`, `THREADS=`, `TREE=`, `SPLIT=1` (one tree under three
+names, to measure what splitting costs) and `HANDROLLED=1` (the same trees
+ticked by a system written by hand rather than generated from the context, in
+`src/handrolled.rs`).
+
+That last one answers whether `BehaviorContext` belongs in the library at all.
+It does not have to: the hand-written tick is forty-five lines of ordinary Bevy
+against thirty of declaration, plus a type alias for the query tuple that
+`#[derive(QueryData)]` was providing. Back to back over 100 000 agents it is
+about 8% faster on the serial path (2.00-2.22 ms against 2.31-2.36) and has no
+parallel path at all, where the generated system runs at 1.19-1.26 -- so the
+generator is about 1.7x ahead overall, on knowledge rather than code: per-batch
+command queues, the write-back skip, and an order that cannot be got wrong.
 
 It is its own workspace, so the repository's checks never build Bevy's renderer.
 

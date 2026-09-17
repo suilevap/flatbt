@@ -129,6 +129,30 @@ fn build(agents: u32, parallel: bool) -> App {
         return app;
     }
 
+    if std::env::var_os("HANDROLLED").is_some() {
+        app.add_plugins((
+            arena::handrolled::plugin(chaser),
+            arena::handrolled::plugin(sniper),
+            arena::handrolled::plugin(coward),
+        ));
+        let world = app.world_mut();
+        for index in 0..24 {
+            world.spawn((
+                Transform::from_translation(scatter(index * 7919).extend(0.0)),
+                Cover,
+            ));
+        }
+        for index in 0..agents {
+            let body = agent_body(index);
+            match Mind::nth(index) {
+                Mind::Chaser => world.spawn((body, Behavior::for_tree(chaser))),
+                Mind::Sniper => world.spawn((body, Behavior::for_tree(sniper))),
+                Mind::Coward => world.spawn((body, Behavior::for_tree(coward))),
+            };
+        }
+        return app;
+    }
+
     let plugins = (
         BehaviorPlugin::for_tree(chaser),
         BehaviorPlugin::for_tree(sniper),
