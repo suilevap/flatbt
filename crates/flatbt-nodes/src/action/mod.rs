@@ -4,6 +4,6 @@ mod ask;
 mod cancel;
 mod lifecycle;
 
-pub use ask::{Ask, ask};
+pub use ask::{Ask, Request, ask};
 pub use cancel::{BtCancel, CancelOnDrop};
 pub use lifecycle::{ActionNode, BtAction, action};

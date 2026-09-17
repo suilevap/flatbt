@@ -125,3 +125,98 @@ where
         true
     }
 }
+
+/// One question and its answer, in one field.
+///
+/// A tree reads and writes its context; a system reads and writes the world.
+/// Neither can see the other, so a question a tree cannot answer for itself has
+/// to be *written down* somewhere both look -- and the context is the only such
+/// place, because the invocation state a `scope!` local lives in is a type no
+/// system can name. `Request` is that place, as one field with three states
+/// rather than a pair of loose flags.
+///
+/// ```
+/// # use flatbt_core::{BtState, EntryMode, NodeResult, seq, update};
+/// # use flatbt_nodes::{Request, ask};
+/// struct Fighter {
+///     cover: Request<u32>,
+/// }
+///
+/// let tree = seq((ask(
+///     |f: &mut Fighter| f.cover.ask(),
+///     |f: &Fighter| f.cover.answered().copied(),
+/// ),));
+/// let mut state = BtState::new(&tree);
+/// let mut fighter = Fighter { cover: Request::Idle };
+///
+/// // The tree asks, and waits.
+/// let _ = update(&tree, &mut state, &mut fighter, EntryMode::Evaluate);
+/// assert!(fighter.cover.is_pending());
+///
+/// // A system answers whoever is pending. It does not re-derive who wants an
+/// // answer, so that condition stays in the tree that decided it.
+/// fighter.cover.answer(7);
+/// assert_eq!(
+///     update(&tree, &mut state, &mut fighter, EntryMode::Resume),
+///     NodeResult::Success
+/// );
+/// ```
+///
+/// [`take`](Self::take) resets it to `Idle`, so the next invocation asks again
+/// rather than acting on an answer chosen for an older situation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Request<T> {
+    /// Nobody has asked.
+    #[default]
+    Idle,
+    /// A tree asked; nothing has answered yet.
+    Pending,
+    /// Answered, and not yet taken.
+    Answered(T),
+}
+
+impl<T> Request<T> {
+    /// For the tree: mark the question asked, unless it already stands.
+    pub fn ask(&mut self) {
+        if matches!(self, Request::Idle) {
+            *self = Request::Pending;
+        }
+    }
+
+    /// For the system: is anyone waiting?
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Request::Pending)
+    }
+
+    /// For the system: answer a standing question. Answering an `Idle` request
+    /// does nothing, so a system cannot push an answer nobody asked for.
+    pub fn answer(&mut self, value: T) {
+        if matches!(self, Request::Pending) {
+            *self = Request::Answered(value);
+        }
+    }
+
+    /// The answer, if it is there.
+    pub fn answered(&self) -> Option<&T> {
+        match self {
+            Request::Answered(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Takes the answer and resets to `Idle`.
+    pub fn take(&mut self) -> Option<T> {
+        match core::mem::replace(self, Request::Idle) {
+            Request::Answered(value) => Some(value),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    /// Drops a standing question or answer.
+    pub fn clear(&mut self) {
+        *self = Request::Idle;
+    }
+}

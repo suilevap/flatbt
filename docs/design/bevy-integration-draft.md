@@ -332,6 +332,46 @@ component and read a `CoverTarget` back, which made it Bevy's; with the question
 and the answer both fields, `ask` is two closures over `C` and knows nothing
 about the ECS. An ordinary system is what connects the fields to the world.
 
+`Request<T>` puts both in one field — `Idle`, `Pending`, `Answered(T)` — so a
+question costs one field rather than two loose flags, and the system answering
+it matches on `Pending` instead of re-deriving *when* an answer is wanted. That
+condition then lives once, in the tree that decided it.
+
+### Why a node cannot simply run the query itself
+
+The obvious objection to all of this is that `ask` does not find anything: a
+system does, and `ask` only writes the question down. So why can a node not hold
+the `Query` and answer for itself?
+
+Because a tree outlives a frame and a `Query` does not. The tree is built once
+into a resource, so it is `'static`; a `Query<'w, 's, ..>` borrows the world for
+one system run. Three ways around that were written and all three fail, for
+reasons that are the language's rather than this crate's:
+
+- **Through the context.** `C` would have to hold the borrows. That is shape 1
+  above, with the higher-ranked bound and everything downstream of it.
+- **Through `params`.** `P` is documented as the place for update-local borrows
+  and does reach a leaf. But `ParamValue` is implemented for `&T` and `&mut T`
+  with `T: 'static`, and a query behind a reference is `&'a Query<'w, 's, ..>` —
+  two levels of lifetime. `for<'a, 'w, 's>` over that does not resolve:
+  *"implementation of `BtNode` is not general enough"*, in a five-line probe
+  with no Bevy in it at all. Passing the borrowing type by value instead fails
+  earlier, since `ParamValue` has no impl for it.
+- **Through a trait object**, `&'a dyn Perception`, which would hide the query's
+  own lifetimes behind the one the tree quantifies over. This is the shape that
+  should work, and it is blocked by `T: 'static` and `T: Sized` on the `&T` impl
+  of `ParamValue`. Relaxing those means `Value<'a> = &'a T where T: 'a`, which
+  puts a lifetime bound back into the parameter machinery for every tree.
+
+So the split is not a workaround: a tree that persists cannot hold a borrow that
+does not, and the blackboard is where the two meet. What `ask` adds is that the
+meeting is written once per invocation rather than once per tick, and that the
+answer leaves the blackboard for a scope local as soon as it arrives.
+
+A `dyn`-based escape hatch is the one worth revisiting if a consumer needs it,
+since it is a bounded change to `ParamValue` rather than a return to shape 1.
+Nothing has asked for it yet.
+
 The shape matters: a leaf returning `Running` is re-entered on every resume, so
 a leaf that asks asks again every tick. As an action, `start` runs once per
 invocation, which is what asking means. That was the arena's 220 ns-per-agent

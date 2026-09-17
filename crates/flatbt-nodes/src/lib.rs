@@ -8,7 +8,7 @@ pub mod action;
 pub mod choose;
 
 #[cfg(feature = "action")]
-pub use action::{ActionNode, Ask, BtAction, BtCancel, CancelOnDrop, action, ask};
+pub use action::{ActionNode, Ask, BtAction, BtCancel, CancelOnDrop, Request, action, ask};
 #[cfg(feature = "choose")]
 pub use choose::{Choose, ChooseNode};
 

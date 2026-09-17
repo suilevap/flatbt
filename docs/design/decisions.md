@@ -219,9 +219,25 @@ leaf through every control node -- but `update` and `BtState` fix the root's `P`
 to `()`, `leaf` and `check` ignore `P` so every write becomes a hand-written
 `BtNode`, and `scope!` owns `P` for its locals.
 
-**`ask` returns, in `flatbt-nodes`.** With the question and the answer both
-fields of the context, `ask` is two closures over `C` and knows nothing about
-the ECS, so it is a catalog node rather than a Bevy one. `request` runs once per
+**`ask` returns, in `flatbt-nodes`, with `Request<T>`.** With the question and
+the answer both fields of the context, `ask` is two closures over `C` and knows
+nothing about the ECS, so it is a catalog node rather than a Bevy one.
+`Request<T>` (`Idle`, `Pending`, `Answered(T)`) keeps both in one field, and the
+system answering it matches on `Pending` rather than re-deriving who wants an
+answer, so that condition stays in the tree that decided it.
+
+The question cannot be a `scope!` local: a local lives in the invocation state,
+whose type no system can name. And a node cannot run the query itself, which was
+checked three ways and fails on the language rather than on this crate -- a tree
+is built once into a resource and is `'static`, while a `Query<'w, 's, ..>`
+borrows the world for one system run. Through the context is shape 1 again;
+through `params`, `&'a Query<'w, 's, ..>` is two levels of lifetime and
+`for<'a, 'w, 's>` over it does not resolve ("implementation of `BtNode` is not
+general enough", reproduced in a five-line probe with no Bevy in it); and a
+`&'a dyn Perception` that would hide those lifetimes is blocked by `T: 'static`
+and `T: Sized` on `ParamValue for &T`. Relaxing those is the one escape hatch
+worth revisiting if a consumer needs it, since it is a bounded change to the
+parameter machinery rather than a return to shape 1. `request` runs once per
 invocation and `is_in_progress` holds until `answered` returns a value; bound to
 a `scope!` output slot it fills the local, so the node after it takes a value
 rather than an `Option` and the answer does not outlive the decision that wanted

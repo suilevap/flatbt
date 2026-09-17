@@ -279,6 +279,25 @@ every tick; `start` runs once per invocation, which is what asking means. And
 the local belongs to the invocation, so leaving the branch and coming back asks
 again instead of acting on an answer chosen for an older situation.
 
+`Request<T>` — `Idle`, `Pending`, `Answered(T)` — keeps the question and the
+answer in one field, and lets the system answering it match on `Pending` rather
+than re-derive who wants an answer:
+
+```rust,ignore
+ask(|f: &mut Fighter| f.out().cover.ask(),
+    |f: &Fighter| f.orders().cover.answered().copied())
+```
+
+The question has to be a field and cannot be a scope local, because a local
+lives in the invocation state — a type no system can name. And a node cannot
+run the query itself: a tree is built once into a resource and is `'static`,
+while a `Query<'w, 's, ..>` borrows the world for one system run. Passing it
+through the context is the design this one replaced; passing it through `params`
+does not resolve (`&'a Query<'w, 's, ..>` is two levels of lifetime, and
+`for<'a, 'w, 's>` over it gives "implementation of `BtNode` is not general
+enough"); and a `&dyn` that would hide those lifetimes is blocked by `T: 'static
++ Sized` on `ParamValue`. The design note has the probes.
+
 ### Commands from a node
 
 There are none, and that is measured rather than assumed. `Commands` borrows the
