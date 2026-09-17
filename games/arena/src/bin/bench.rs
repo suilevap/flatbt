@@ -129,6 +129,66 @@ fn build(agents: u32, parallel: bool) -> App {
         return app;
     }
 
+    if std::env::var_os("PLAIN").is_some() {
+        use arena::plain;
+        app.add_systems(
+            Update,
+            (
+                (plain::gather_agent, plain::gather_pace, plain::find_cover).before(start_timing),
+                plain::carry_out.after(stop_timing),
+            ),
+        );
+        if parallel {
+            app.add_plugins((
+                flatbt::bevy::MindPlugin::for_tree(plain::chaser)
+                    .entry_mode(|f: &plain::Fighter| {
+                        if f.rethink {
+                            EntryMode::Evaluate
+                        } else {
+                            EntryMode::Resume
+                        }
+                    })
+                    .parallel(),
+                flatbt::bevy::MindPlugin::for_tree(plain::sniper).parallel(),
+                flatbt::bevy::MindPlugin::for_tree(plain::coward).parallel(),
+            ));
+        } else {
+            app.add_plugins((
+                flatbt::bevy::MindPlugin::for_tree(plain::chaser),
+                flatbt::bevy::MindPlugin::for_tree(plain::sniper),
+                flatbt::bevy::MindPlugin::for_tree(plain::coward),
+            ));
+        }
+        let world = app.world_mut();
+        for index in 0..24 {
+            world.spawn((
+                Transform::from_translation(scatter(index * 7919).extend(0.0)),
+                Cover,
+            ));
+        }
+        for index in 0..agents {
+            let body = agent_body(index);
+            match Mind::nth(index) {
+                arena::Mind::Chaser => world.spawn((
+                    body,
+                    plain::Fighter::default(),
+                    plain::Agent::for_tree(plain::chaser),
+                )),
+                arena::Mind::Sniper => world.spawn((
+                    body,
+                    plain::Fighter::default(),
+                    plain::Agent::for_tree(plain::sniper),
+                )),
+                arena::Mind::Coward => world.spawn((
+                    body,
+                    plain::Fighter::default(),
+                    plain::Agent::for_tree(plain::coward),
+                )),
+            };
+        }
+        return app;
+    }
+
     if std::env::var_os("HANDROLLED").is_some() {
         app.add_plugins((
             arena::handrolled::plugin(chaser),

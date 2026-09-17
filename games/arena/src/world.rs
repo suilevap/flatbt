@@ -58,6 +58,8 @@ pub struct Arena {
     /// The clock, so trees can pace their own revalidation.
     pub elapsed: Duration,
     pub delta: Duration,
+    /// Counted by `track_arena`, so a system can run at its own rate.
+    pub tick: u32,
 }
 
 pub fn track_arena(
@@ -65,6 +67,7 @@ pub fn track_arena(
     time: Res<Time>,
     mut arena: ResMut<Arena>,
 ) {
+    arena.tick += 1;
     arena.elapsed = time.elapsed();
     arena.delta = time.delta();
     if let Ok(transform) = player.single() {

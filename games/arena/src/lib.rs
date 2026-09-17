@@ -12,6 +12,7 @@
 
 pub mod ai;
 pub mod handrolled;
+pub mod plain;
 pub mod world;
 
 /// What an enemy runs, and what it looks like.
