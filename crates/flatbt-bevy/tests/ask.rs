@@ -1,30 +1,38 @@
-//! `ask` and `scope!` over a blackboard that is an ordinary component.
+//! Asking the world for something the blackboard does not hold yet.
 //!
-//! The question and the answer are fields, because a tree reads and writes its
-//! blackboard and nothing else. What `ask` adds is that the question is put
-//! once per invocation rather than once per tick, and that the answer arrives
-//! as a scope local -- so the nodes after it take a value, not an `Option`, and
+//! A question is an action like any other: the tree starts it, it becomes a
+//! component, a system matching that component answers, and the tree waits.
+//! What `ask` adds over a hand-written action is that the question is put once
+//! per invocation rather than once per tick, and that the answer arrives as a
+//! `scope!` local -- so the node after it takes a value, not an `Option`, and
 //! the answer does not outlive the decision that wanted it.
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use flatbt_bevy::prelude::*;
-use flatbt_nodes::ask;
+use flatbt_nodes::{Request, ask};
 use flatbt_scope::scope;
 
 #[derive(Component, Default, Debug)]
 struct Fighter {
     health: f32,
-    // The question, and the answer. Both are fields, because the tree has no
-    // other way to reach the world.
-    wants_cover: bool,
-    cover: Option<f32>,
-    // What the tree decided.
+    /// The question and its answer, in one field. `Pending` becomes the
+    /// `LookingForCover` component below; the answer comes back through the
+    /// gather like any other reading of the world.
+    cover: Request<f32>,
     move_to: Option<f32>,
 }
 
-// --- the node that consumes the local ---------------------------------------
+/// The question, as a component. Nothing that answers it mentions `Fighter`.
+#[derive(Component, Default, PartialEq, Debug)]
+struct LookingForCover;
 
+/// Where the game keeps cover.
+#[derive(Component)]
+struct Cover(f32);
+
+/// The node that consumes the answer. It takes an `f32`, so it cannot run
+/// without one.
 struct WalkTo;
 
 impl BtNode<Fighter, &f32> for WalkTo {
@@ -41,102 +49,136 @@ fn take_cover() -> impl BehaviorNode<Fighter> {
         let spot: f32;
         sequence {
             ask(
-                |f: &mut Fighter| f.wants_cover = true,
-                |f: &Fighter| f.cover,
+                |f: &mut Fighter| f.cover.ask(),
+                |f: &Fighter| f.cover.answered().copied(),
             ).with(out spot);
             WalkTo.with(spot);
         }
     }
 }
 
-/// The system that answers. An ordinary gather, at whatever rate it likes.
-fn find_cover(mut agents: Query<&mut Fighter>) {
-    for mut f in agents.iter_mut() {
-        let f = f.bypass_change_detection();
-        if f.wants_cover {
-            f.cover = Some(42.0);
-            f.wants_cover = false;
+/// The system that answers. It matches the component the question became, and
+/// runs a query no node could run for itself.
+fn find_cover(
+    mut asking: Query<(&Transform2d, &mut Fighter), With<LookingForCover>>,
+    cover: Query<&Cover>,
+) {
+    let spots: Vec<f32> = cover.iter().map(|c| c.0).collect();
+    for (at, mut fighter) in asking.iter_mut() {
+        let nearest = spots
+            .iter()
+            .copied()
+            .min_by(|a, b| (a - at.0).abs().total_cmp(&(b - at.0).abs()));
+        let fighter = fighter.bypass_change_detection();
+        match nearest {
+            Some(spot) => fighter.cover.answer(spot),
+            None => fighter.cover.clear(),
         }
     }
 }
 
-#[test]
-fn ask_puts_the_answer_in_a_scope_local_and_the_next_node_takes_a_value() {
+#[derive(Component)]
+struct Transform2d(f32);
+
+fn app() -> App {
     let mut app = App::new();
     app.add_plugins(BehaviorPlugin::for_tree(take_cover).tick_mode(|_| Tick::Resume))
-        .add_systems(Update, find_cover.after(BehaviorSystems));
+        .add_plugins(ActionComponent::<_, LookingForCover>::while_(
+            |f: &Fighter| f.cover.is_pending(),
+        ))
+        .add_systems(Update, find_cover.after(ActionSystems));
+    app.world_mut().spawn(Cover(42.0));
+    app
+}
+
+#[test]
+fn a_question_becomes_a_component_and_a_system_answers_it() {
+    let mut app = app();
     let agent = app
         .world_mut()
-        .spawn((Fighter::default(), Behavior::for_tree(take_cover)))
+        .spawn((
+            Transform2d(40.0),
+            Fighter::default(),
+            Behavior::for_tree(take_cover),
+        ))
         .id();
 
-    // Tick one: nothing is known, so it asks and waits. The gather answers
-    // after the tick.
+    // Tick one: the tree asks, the bridge inserts the component, the system
+    // answers into the blackboard.
     app.update();
-    let after = app.world().get::<Fighter>(agent).unwrap();
-    assert_eq!(after.move_to, None, "nowhere to go yet");
-    assert_eq!(after.cover, Some(42.0), "the system answered");
+    assert!(
+        app.world().get::<LookingForCover>(agent).is_some(),
+        "the question is a component while it stands"
+    );
+    assert_eq!(app.world().get::<Fighter>(agent).unwrap().move_to, None);
 
-    // Tick two: the answer is there, the action completes, and `WalkTo` gets a
-    // plain `f32` rather than an `Option`.
+    // Tick two: the answer is in, the action completes, `WalkTo` gets an `f32`,
+    // and the question component goes with the question.
     app.update();
     assert_eq!(
         app.world().get::<Fighter>(agent).unwrap().move_to,
         Some(42.0)
     );
+    assert!(app.world().get::<LookingForCover>(agent).is_none());
 }
 
-/// Asking is once per invocation, not once per tick -- which is the bug the
-/// action shape exists to prevent.
+/// Asking is once per invocation, not once per tick. That is the whole reason
+/// it is an action: a leaf returning `Running` is re-entered on every resume,
+/// so a leaf that asks would re-ask -- and with the question a component, that
+/// is an archetype move twice a frame.
 #[test]
-fn a_waiting_ask_does_not_ask_again_every_tick() {
+fn a_waiting_question_is_not_asked_again_every_tick() {
     #[derive(Resource, Default)]
-    struct Asks(u32);
+    struct Inserts(u32);
 
-    // Count the asks by never answering.
+    fn count_inserts(added: Query<(), Added<LookingForCover>>, mut inserts: ResMut<Inserts>) {
+        inserts.0 += added.iter().count() as u32;
+    }
+
     let mut app = App::new();
-    app.init_resource::<Asks>()
+    app.init_resource::<Inserts>()
         .add_plugins(BehaviorPlugin::for_tree(take_cover).tick_mode(|_| Tick::Resume))
-        .add_systems(
-            Update,
-            (|mut agents: Query<&mut Fighter>, mut asks: ResMut<Asks>| {
-                for mut f in agents.iter_mut() {
-                    if f.bypass_change_detection().wants_cover {
-                        asks.0 += 1;
-                        f.bypass_change_detection().wants_cover = false;
-                    }
-                }
-            })
-            .after(BehaviorSystems),
-        );
-    app.world_mut()
-        .spawn((Fighter::default(), Behavior::for_tree(take_cover)));
+        .add_plugins(ActionComponent::<_, LookingForCover>::while_(
+            |f: &Fighter| f.cover.is_pending(),
+        ))
+        .add_systems(Update, count_inserts.after(ActionSystems));
+    app.world_mut().spawn((
+        Transform2d(0.0),
+        Fighter::default(),
+        Behavior::for_tree(take_cover),
+    ));
 
+    // Nothing answers, so the question stands for five ticks.
     for _ in 0..5 {
         app.update();
     }
 
     assert_eq!(
-        app.world().resource::<Asks>().0,
+        app.world().resource::<Inserts>().0,
         1,
         "asked once, then waited"
     );
 }
 
-/// And the local belongs to the invocation: leaving the branch and coming back
-/// asks again rather than walking to a spot picked for an older situation.
+/// The local belongs to the invocation: leaving the branch and coming back asks
+/// again rather than acting on an answer chosen for an older situation.
 #[test]
-fn the_local_does_not_outlive_its_invocation() {
+fn the_answer_does_not_outlive_its_invocation() {
     fn hurt_only() -> impl BehaviorNode<Fighter> {
         seq((check(|f: &Fighter| f.health < 40.0), take_cover()))
     }
 
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(hurt_only))
-        .add_systems(Update, find_cover.after(BehaviorSystems));
+    app.add_plugins(BehaviorPlugin::for_tree(hurt_only).tick_mode(|_| Tick::Resume))
+        .add_plugins(ActionComponent::<_, LookingForCover>::while_(
+            |f: &Fighter| f.cover.is_pending(),
+        ))
+        .add_systems(Update, find_cover.after(ActionSystems));
+    app.world_mut().spawn(Cover(42.0));
     let agent = app
         .world_mut()
         .spawn((
+            Transform2d(40.0),
             Fighter {
                 health: 10.0,
                 ..Fighter::default()
@@ -152,19 +194,19 @@ fn the_local_does_not_outlive_its_invocation() {
         Some(42.0)
     );
 
-    // Heal, so the guard fails and the invocation ends; then clear the answer
-    // and get hurt again.
+    // Heal, so the guard fails and the invocation ends; clear what it decided.
     {
-        let mut f = app.world_mut().get_mut::<Fighter>(agent).unwrap();
-        f.health = 100.0;
-        f.cover = None;
-        f.move_to = None;
+        let mut fighter = app.world_mut().get_mut::<Fighter>(agent).unwrap();
+        fighter.health = 100.0;
+        fighter.move_to = None;
+        fighter.cover.clear();
     }
     app.update();
     app.world_mut().get_mut::<Fighter>(agent).unwrap().health = 10.0;
     app.update();
 
-    let after = app.world().get::<Fighter>(agent).unwrap();
-    assert_eq!(after.move_to, None, "it asked again rather than reusing");
-    assert!(after.cover.is_some(), "and the system is answering again");
+    assert!(
+        app.world().get::<LookingForCover>(agent).is_some(),
+        "it asked again rather than reusing the old answer"
+    );
 }

@@ -378,7 +378,7 @@ fn evaluate_every_spreads_a_population_across_the_period() {
     let evaluated = (0..1_000u32)
         .filter(|index| {
             let entity = Entity::from_raw_u32(*index).unwrap();
-            evaluate_every(period, Duration::from_millis(500), delta, entity) == EntryMode::Evaluate
+            evaluate_every(period, Duration::from_millis(500), delta, entity) == Tick::Evaluate
         })
         .count();
 
@@ -396,5 +396,32 @@ fn a_frame_longer_than_the_period_evaluates_once() {
         Duration::from_millis(250),
         Entity::from_raw_u32(7).unwrap(),
     );
-    assert_eq!(mode, EntryMode::Evaluate);
+    assert_eq!(mode, Tick::Evaluate);
+}
+
+/// The two policies differ only in what they answer between slots, which is the
+/// whole choice: resume ticks an action along, skip does not.
+#[test]
+fn act_every_skips_between_slots_where_evaluate_every_resumes() {
+    let period = Duration::from_millis(100);
+    let delta = Duration::from_millis(10);
+    let clock = Duration::from_millis(500);
+    let mut resumed = 0;
+    let mut skipped = 0;
+    for index in 0..1_000u32 {
+        let entity = Entity::from_raw_u32(index).unwrap();
+        match (
+            evaluate_every(period, clock, delta, entity),
+            act_every(period, clock, delta, entity),
+        ) {
+            (Tick::Evaluate, Tick::Evaluate) => {}
+            (Tick::Resume, Tick::Skip) => {
+                resumed += 1;
+                skipped += 1;
+            }
+            other => panic!("the two policies disagreed on a slot: {other:?}"),
+        }
+    }
+    assert_eq!(resumed, skipped);
+    assert!(resumed > 0);
 }

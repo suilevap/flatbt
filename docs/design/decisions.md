@@ -253,3 +253,40 @@ blackboard grows by 56 bytes per agent, and the drain is another pass), and a
 queue every agent writes to costs twenty times the frame. It suits the rare
 structural edit and never what an agent decides every tick, which is why it is a
 documented pattern with a number attached rather than an API that looks free.
+
+## 2026-09-18 — Bevy: decisions leave as components
+
+The blackboard is what an agent knows; what it decides now leaves as components.
+`ActionComponent::while_(|bb| bool)` and `::describing(|bb| Option<M>)` register
+one decision each, and a sync after the tick inserts, removes or updates. The
+game then writes `Query<&mut Ammo, With<Reloading>>` and nothing outside the
+tree's own module reads the blackboard.
+
+This is the answer to a design problem, not a convenience: a tree that writes
+struct fields and a game that reads them is not an ECS integration. It also
+settles what an action is -- a node never changes the world, it starts something
+and `is_in_progress` watches the world until that is done -- and `examples/guards.rs`
+and the arena's five actions are now all that shape.
+
+Measured, over 100 000 agents, one decision as a field against as a component
+(whole frame): 0.57 vs 8.06 ms when the action lasts one tick, 0.54 vs 2.05 at
+ten, 0.51 vs 1.28 at thirty, 0.49 vs 0.71 at a hundred and twenty. So the shape
+that makes it affordable is the shape that makes it correct. In `games/arena`
+the frame went from 1.7 ms with five decisions as fields to 4.7 with them as
+components; batching the inserts moved that by 0.2, which says the cost is the
+archetype moves and not the bookkeeping.
+
+Also in this round:
+
+- **`Tick::Evaluate` every tick is always correct**, and `Resume` and `Skip` are
+  optimisations that cost responsiveness and nothing else. Stated in `Tick`'s
+  docs and pinned as a property in `tests/entry.rs`, since the earlier wording
+  read as if `Skip` were a feature rather than a trade.
+- **`act_every`** joins `evaluate_every`: `Evaluate` on the agent's slot,
+  `Skip` rather than `Resume` between them, for a tree whose every action is
+  carried out by systems and has nothing to tick.
+- **`Split<In, Out>` is removed.** It worked and cost nothing, but enforcing a
+  read-only input is not the framework's business, and with the output leaving
+  as components the blackboard is input as far as the rest of the game can tell.
+- **A question is an action.** `Request::is_pending` feeds an
+  `ActionComponent`, so the system answering it matches `With<LookingForCover>`.

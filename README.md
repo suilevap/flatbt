@@ -154,10 +154,10 @@ See the [external action example](examples/external_action.rs).
 
 ## Bevy
 
-Enable the `bevy` feature. A tree's blackboard is an ordinary component: the
-game fills it with its own systems, the tree reads it and writes its decision
-back into it, and the game's own systems carry that out. The crate contributes
-one plugin and one component, and nothing else.
+Enable the `bevy` feature. A tree's blackboard is an ordinary component the game
+fills with its own systems; what the tree decides comes back out as components
+the game matches on. A node never changes the world -- it starts an action and
+waits for the world to finish it.
 
 ```toml
 flatbt = { path = "../FlatBT", features = ["bevy"] }
@@ -167,31 +167,35 @@ flatbt = { path = "../FlatBT", features = ["bevy"] }
 use bevy::prelude::*;
 use flatbt::bevy::prelude::*;
 
-// What the tree reads, and what it decides. One component, plain data.
+// What the tree may read, and what it decided.
 #[derive(Component, Default)]
 struct Guard {
     ammo: u32,
     alarm: bool,
-    fire: bool,
+    firing: bool,
     march_to: Option<f32>,
 }
 
+// What it decided, as components the game acts on.
+#[derive(Component, Default, PartialEq)]
+struct Firing;
+#[derive(Component, PartialEq)]
+struct MarchingTo(f32);
+
 fn guard_tree() -> impl BehaviorNode<Guard> {
     select((
-        seq((
-            check(|guard: &Guard| guard.alarm && guard.ammo > 0),
-            leaf(|guard: &mut Guard| {
-                guard.fire = true;
-                NodeResult::Success
-            }),
-        )),
-        leaf(patrol),
+        seq((check(|g: &Guard| g.alarm && g.ammo > 0), action(Fire))),
+        action(MarchTo),
     ))
 }
 
 app.add_plugins(BehaviorPlugin::for_tree(guard_tree))
+    .add_plugins((
+        ActionComponent::<_, Firing>::while_(|g: &Guard| g.firing),
+        ActionComponent::describing(|g: &Guard| g.march_to.map(MarchingTo)),
+    ))
     .add_systems(Update, gather.before(BehaviorSystems))
-    .add_systems(Update, carry_out.after(BehaviorSystems));
+    .add_systems(Update, (shoot, march).after(ActionSystems));
 
 commands.spawn((Ammo(2), Guard::default(), Behavior::for_tree(guard_tree)));
 ```
@@ -207,20 +211,26 @@ be exercised with no `World` at all.
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
 | `Behavior::tick` | The tick itself, for a game that registers its own system |
 | `BehaviorNode<C>` | What a tree over blackboard `C` is; also names a subtree |
+| `ActionComponent` | Turns one standing decision into a component systems match on |
+| `ActionSystems` | Set containing every such sync, for ordering game systems |
 | `Tick` | What a tick does with one agent: `Evaluate`, `Resume` or `Skip` |
-| `Split<In, Out>` | Optional blackboard whose input half a node cannot write |
-| `evaluate_every` | Periodic revalidation, staggered across agents |
+| `evaluate_every`, `act_every` | Periodic revalidation, staggered across agents |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
 ### Gather, decide, act
 
-The blackboard is not a mirror of the world, and the half a tree writes is not
-the half a gather fills. A tree that moved `post` itself would be deciding how
-far an agent walks in a tick; one that subtracted a round would be deciding what
-a shot costs. It says *what it wants*, and an ordinary system owns what that
-means. The two halves live in one component so that the tick's query stays
+The blackboard is what an agent knows: an aggregate view of the world from its
+own point of view, gathered before the tick. What it *decides* also starts as
+fields of it, because a node sees `&mut C` and nothing else — but those fields
+are a detail between the tree and its own registration, not an interface.
+`ActionComponent` carries each of them out to a component, and that is what the
+rest of the game reads.
+
+Keeping both in one component is why the tick's query stays
 `(&mut Behavior<C, F>, &mut C)` — disjoint per entity, which is why
-`.parallel()` needs no further declaration.
+`.parallel()` needs no further declaration. Using the blackboard to pass a value
+between two nodes is fine; using it as the way the game learns what an agent is
+doing is what `ActionComponent` exists to replace.
 
 Filling it is the game's, deliberately. A real gather is several systems at
 several rates: one for what is cheap enough every tick, another for a raycast,
@@ -233,25 +243,53 @@ app.add_systems(Update, (gather_cheap, gather_visibility).before(BehaviorSystems
    .add_systems(Update, carry_out.after(BehaviorSystems));
 ```
 
-### Keeping the input read-only
+### Decisions come back out as components
 
-The tick takes `&mut C`, so a blackboard is mutable in full and "the tree only
-reads the top half" is a convention. `Split<In, Out>` makes it a rule: `In` is
-reachable by `Deref` and nothing else, and writing goes through `out()`.
+A node sees `&mut C`, so what a tree decides starts life as a field. That is
+fine between nodes and poor as an interface to the rest of the game: an ECS
+matches on components, not on somebody's struct field. `ActionComponent` carries
+each standing decision across, one line per decision:
 
 ```rust,ignore
-type Fighter = Split<Sensed, Orders>;
-
-check(|f: &Fighter| f.ammo > 0)                     // Deref reaches the input
-leaf(|f: &mut Fighter| { f.out().shoot = true; .. }) // and this is the only write
+app.add_plugins(BehaviorPlugin::for_tree(guard_tree).tick_mode(pace))
+   .add_plugins((
+       ActionComponent::describing(|g: &Guard| g.march_to.map(MarchingTo)),
+       ActionComponent::<_, Reloading>::while_(|g: &Guard| g.reloading),
+       ActionComponent::<_, Firing>::while_(|g: &Guard| g.firing),
+   ));
 ```
 
-It costs nothing — one component, the same two-term query, the same layout — and
-everything FlatBT ships composes over it unchanged. The gather still needs
-`&mut In`, and a Rust type cannot tell a gather system from a node, so
-`sensed_mut()` is public; what the split buys is that no node reaches the input
-by accident, since there is no `DerefMut`. It is optional: a blackboard with no
-meaningful split stays a plain component with flat field names.
+After that the game is ordinary Bevy, and nothing outside the tree's own module
+reads `Guard`:
+
+```rust,ignore
+fn refill(mut guards: Query<&mut Ammo, With<Reloading>>) { /* ... */ }
+fn march(mut guards: Query<(&MarchingTo, &mut Post)>) { /* ... */ }
+```
+
+This is also what an action *is*. A node never changes the world: it starts
+something, the component appears, a system does the work, and
+`is_in_progress` watches the world until it is done. So `Reload` does not
+subtract from the magazine and does not decide how long reloading takes — it
+says "reloading" and waits for `refill` to say otherwise.
+
+**What it costs.** Adding or removing a component moves the entity between
+archetypes, so the price follows how often a decision *changes*, not how many
+agents there are. Over 100 000 agents, whole frame, one decision left as a field
+against the same decision as a component:
+
+| an action lasts | as a field | as a component |
+| --- | --- | --- |
+| 1 tick | 0.57 ms | 8.06 ms |
+| 10 ticks | 0.54 ms | 2.05 ms |
+| 30 ticks | 0.51 ms | 1.28 ms |
+| 120 ticks | 0.49 ms | 0.71 ms |
+
+An instantaneous decision is ruinous as a component and fine as a field — and it
+usually means the action wants writing as a `BtAction` that spans ticks rather
+than a leaf that re-decides. In `games/arena`, five registered decisions over
+100 000 fighters that change their minds constantly cost about 0.5-0.8 ms of
+frame each; at a thousand agents, tens of microseconds.
 
 ### Asking the world
 
@@ -300,24 +338,17 @@ enough"); and a `&dyn` that would hide those lifetimes is blocked by `T: 'static
 
 ### Commands from a node
 
-There are none, and that is measured rather than assumed. `Commands` borrows the
-world and would put lifetimes back into every node signature, but `CommandQueue`
-is `'static`, so a game that wants real ECS commands from a tree puts one in its
-blackboard and drains it after the tick — about twenty lines, and
-`crates/flatbt-bevy/tests/commands.rs` is a working copy. Over 200 000 agents:
+There are none, and `ActionComponent` is why: a decision that has to reach the
+world reaches it as a component, which is the ECS's own way of saying an entity
+is in a state. `Commands` in a node would also put lifetimes back into every
+signature, since it borrows the world.
 
-| blackboard | serial tick | whole frame |
-| --- | --- | --- |
-| a `bool` field, carried out by a system | 0.77-0.84 ms | 0.94-1.00 ms |
-| a queue nothing writes to | 1.30-1.33 ms | 1.90-1.98 ms |
-| a queue 1 agent in 100 writes to | 1.40-1.46 ms | 2.16-2.26 ms |
-| a queue every agent writes to | 4.82-4.84 ms | 19.2-19.4 ms |
-
-Carrying an unused queue costs 70% of the tick, because the blackboard grows by
-56 bytes per agent and the drain is another pass. Using one everywhere costs
-twenty times the frame. So it suits the rare structural edit — a spawn, a
-despawn, a handful per frame — and never what an agent decides every tick, which
-is a field and a system.
+For the structural edits that are not a state — spawning a projectile, despawning
+a corpse — the game does that in the system that matches the component, where it
+has the `Commands` it needs anyway. A `CommandQueue` in the blackboard is the
+unsupported alternative, kept as a worked example with its price in
+`crates/flatbt-bevy/tests/commands.rs`: an unused queue costs 70% of the tick
+over 200 000 agents, and one every agent writes to costs twenty times the frame.
 
 ### What lives where
 

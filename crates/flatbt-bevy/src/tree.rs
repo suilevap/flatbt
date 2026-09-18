@@ -80,19 +80,29 @@ where
 
 /// What a tick does with one agent, decided from its blackboard.
 ///
-/// [`Skip`](Tick::Skip) is the one a tree cannot express for itself. A guard at
-/// the root does not hold a suspended tree still: `Resume` re-enters the active
-/// child directly, so a child above it is never consulted, and `seq` continues
-/// its active child on `Evaluate` too. Even a `select`, which does rescan, runs
-/// its standing branch when the candidate above fails -- failing a candidate is
-/// how a tree *redirects*, not how it stops. So "do not run this agent at all"
-/// has to be said before the tree is entered.
+/// **[`Evaluate`](Tick::Evaluate) every tick is always correct.** The other two
+/// are optimisations, and a tree that breaks under one of them is a tree with a
+/// bug: `Resume` costs an agent the chance to change its mind, and `Skip` costs
+/// it the tick entirely, so both make an agent less responsive and neither
+/// makes it behave differently once it does run. `tests/entry.rs` pins that as
+/// a property -- the same population, run three ways, reaching the same place.
 ///
-/// It matters when the work is elsewhere. An agent whose action is being
-/// carried out by ordinary systems over the next hundred frames has nothing to
-/// decide until that ends, and reconsidering it every frame is the cost the
-/// whole population pays. Over 200 000 agents on a 4-core Xeon, with nine in
-/// ten having nothing to decide:
+/// [`Resume`](Tick::Resume) continues down the path a suspended invocation
+/// chose, so a `select` does not rescan and a `choose!` does not re-pick.
+///
+/// [`Skip`](Tick::Skip) does not enter the tree at all and leaves the suspended
+/// invocation exactly as it was. It is the only one of the three that a guard
+/// inside the tree cannot approximate, which is worth knowing when reaching for
+/// a guard instead: once a tree is suspended, no entry mode consults a child
+/// above the one it is in -- `Resume` re-enters the active child directly,
+/// `seq` continues its active child on `Evaluate` too, and a `select` that does
+/// rescan keeps running its standing branch when the candidate above it fails.
+/// Failing a candidate redirects a tree; it does not hold one still.
+///
+/// It is worth reaching for when the work is elsewhere: an agent whose action
+/// is being carried out by systems matching an
+/// [`ActionComponent`](crate::ActionComponent) has nothing to decide until that
+/// ends. Over 200 000 agents with nine in ten in that state, serial tick:
 ///
 /// | | serial tick |
 /// | --- | --- |
@@ -100,10 +110,6 @@ where
 /// | nine in ten fail a guard at the root | 1.49-1.50 ms |
 /// | nine in ten are `Skip`ped | 0.62-0.63 ms |
 ///
-/// And the guard row is the optimistic one: it only works at all for an agent
-/// entering as `Evaluate` with nothing suspended below the guard.
-///
-/// See `tests/entry.rs` for what each variant does to a suspended invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tick {
     /// Do not enter the tree. The suspended invocation is left exactly as it

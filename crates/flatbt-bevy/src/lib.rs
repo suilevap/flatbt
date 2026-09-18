@@ -83,14 +83,16 @@
 //! library can guess. [`BehaviorPlugin`] registers a tick and nothing else, and
 //! [`Behavior::tick`] is public for a game that wants to register its own.
 //!
-//! [`Split`] is the one shape it does offer, and it is optional: a blackboard
-//! whose input half a node can read and cannot write, so "the tree only reads
-//! this part" is a rule rather than a comment.
+//! What it does offer is the way back out. A node sees `&mut C`, so a decision
+//! starts life as a field, which is fine between nodes and poor as an interface
+//! to the rest of the game. [`ActionComponent`] carries one across, so an
+//! action the tree started is an ordinary component the game matches on:
+//! `Query<&mut Ammo, With<Reloading>>` rather than somebody's struct field.
 //!
-//! There is no way to issue an ECS command from a node. `Commands` borrows the
-//! world and would put lifetimes back into every signature; `CommandQueue` does
-//! not, so a game that needs one puts it in its own blackboard and drains it
-//! after the tick. `tests/commands.rs` is a working copy, with what it costs.
+//! A node cannot issue an ECS command directly: `Commands` borrows the world
+//! and would put lifetimes back into every signature. [`ActionComponent`] is
+//! the supported way across, and `tests/commands.rs` keeps a working copy of
+//! the unsupported one -- a `CommandQueue` in the blackboard -- with its price.
 //!
 //! [`BehaviorPlugin::parallel`] spreads agents across the task pool: a tree
 //! touches one component, its own blackboard, which is disjoint per entity.
@@ -108,14 +110,14 @@
 
 #![forbid(unsafe_code)]
 
+mod acts;
 mod plugin;
-mod split;
 mod stagger;
 mod tree;
 
 pub mod prelude;
 
+pub use acts::{ActionComponent, ActionSystems};
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
-pub use split::Split;
-pub use stagger::evaluate_every;
+pub use stagger::{act_every, evaluate_every};
 pub use tree::{Behavior, BehaviorNode, BehaviorTree, Tick, TickFn, TreeBuilder};

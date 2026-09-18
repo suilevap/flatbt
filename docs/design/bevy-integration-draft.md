@@ -171,7 +171,7 @@ About 210 lines of code, and about 540 with its documentation. Attribution:
 | Plugins, tick systems | Bevy scheduling. |
 | `evaluate_every` | Nothing. It is a policy, and it is a free function a game could have written; it ships because staggering is easy to get subtly wrong. |
 | `Tick::Skip` | Nothing in Rust; it is here because a tree cannot express it, as above. |
-| `Split<In, Out>` | Nothing. Forty lines a game could write, and it ships only because private fields cross a module boundary and a hand-rolled version in the game's own module would not. |
+| `ActionComponent` | Nothing in Rust either. It is here because a node sees only `&mut C`, so without it every game writes the same sync system, and most would instead leave the decision a field and make the blackboard an interface. |
 
 Everything else is the game's. `Behavior::tick` is public, so a game that wants
 its own tick system — a different query, its own parallel strategy, a tick that
@@ -256,39 +256,70 @@ exactly whose decision it is. Pinned by
 `crates/flatbt-core/tests/resume.rs` and
 `crates/flatbt-bevy/tests/behavior.rs`.
 
-## Keeping the input read-only
+## Decisions leave as components
 
-The tick takes `&mut C`, so a blackboard is mutable in full and "the tree only
-reads the top half" is a convention. `Split<In, Out>` makes it a rule: `In` is
-reachable by `Deref` and nothing else, writing goes through `out()`, and both
-fields are private, so the rule crosses the module boundary rather than resting
-on a comment. Its `compile_fail` doctest is the proof.
+The blackboard is what an agent knows — an aggregate view of the world from its
+own point of view. What it *decides* also starts as fields of the same
+component, because a node sees `&mut C` and nothing else. Leaving it there is
+what this design got wrong for two rounds: a tree that writes fields and a game
+that reads them is not an ECS integration, it is a struct with a schedule around
+it. An ECS matches on components.
 
-It costs nothing measurable — one component, the same two-term query, the same
-layout — and every constructor FlatBT ships composes over it unchanged, which
-`crates/flatbt-bevy/tests/split.rs` exercises node by node. What it does not do
-is tell a gather system from a node: the gather needs `&mut In`, and no Rust
-type can distinguish the caller, so `sensed_mut()` is public. The guarantee is
-that no node reaches the input by accident.
+`ActionComponent` carries each standing decision across, one registration per
+decision. `while_(|bb| bool)` for a marker, `describing(|bb| Option<M>)` for one
+that carries a value; the sync runs after the tick, inserts where the decision
+appeared, removes where it went, and `set_if_neq`s where it changed. After that
+the game is ordinary Bevy — `Query<&mut Ammo, With<Reloading>>` — and nothing
+outside the tree's own module reads the blackboard.
 
-It is optional on purpose. A blackboard with no meaningful split reads better as
-a plain component with flat field names, and `Split` is generic, so it appears
-in query types.
+This also settles what an *action* is. A node never changes the world: it starts
+something, the component appears, a system does the work, and `is_in_progress`
+watches the world until it is done. `Reload` does not subtract from a magazine
+and does not know how long reloading takes; it says "reloading" and waits for
+`refill` to say otherwise. The three actions in `examples/guards.rs` are all
+that shape, and the arena's five are too.
 
-Considered and rejected for the same job:
+### What it costs
 
-- **Two components**, `&C` and `&mut O` in the tick's query. This is the shape
-  the ECS suggests, and it cannot be had: `BtNode<C>` fixes one context type, so
-  a node seeing both means a struct holding two borrows, which brings back the
-  higher-ranked bound that shape 1 was abandoned for.
-- **The output as the root's `params`.** `BtNode<C, P>` already carries `P` down
-  through every control node, and `P` is documented as the place for
-  update-local borrows, so the mechanism works — a `&mut Out` does reach a leaf.
-  It fails on two counts: `update` and `BtState` in core fix the root's `P` to
-  `()`, so it needs a core change; and `leaf` and `check` are generic over `P`
-  and ignore it, so the two most common nodes cannot reach the output at all and
-  every write becomes a hand-written `BtNode` naming both types. `scope!` also
-  owns `P` for its locals, so the two would collide inside a scope.
+An insert or a remove moves the entity between archetypes, so the price follows
+how often a decision *changes*, not how many agents there are. Over 100 000
+agents, whole frame, one decision as a field against the same decision as a
+component:
+
+| an action lasts | as a field | as a component |
+| --- | --- | --- |
+| 1 tick | 0.57 ms | 8.06 ms |
+| 10 ticks | 0.54 ms | 2.05 ms |
+| 30 ticks | 0.51 ms | 1.28 ms |
+| 120 ticks | 0.49 ms | 0.71 ms |
+
+Fourteen times worse at one tick, half again at 120. So the shape that makes
+this affordable is the same shape that makes it correct: actions that span
+ticks. A decision retaken every tick belongs in a field, and usually means the
+node wants writing as a `BtAction` rather than a leaf that re-decides.
+
+In `games/arena`, five registered decisions over 100 000 fighters that change
+their minds constantly cost about 0.5-0.8 ms of frame each — the whole frame
+went from 1.7 ms with the decisions as fields to 4.7 ms with them as components.
+Batching the inserts (`Commands::try_insert_batch`) moved that by 0.2 ms, which
+says the cost is the archetype moves themselves and not the bookkeeping. At a
+thousand agents it is tens of microseconds.
+
+That is a real bill, and it is the one being paid for the game's systems being
+ordinary. A game that cannot afford it leaves the decision a field and reads the
+blackboard, which the crate does not prevent and does not help with.
+
+### Rejected for the same job
+
+- **A node holding `Commands`.** Borrows the world, so every node signature
+  grows lifetimes — this is shape 1 again. It also gets the cost wrong: see
+  *Commands, and what they cost* below.
+- **`Split<In, Out>`**, a blackboard whose input half a node could not write.
+  Built, measured free, and removed: it enforces a discipline the framework has
+  no business enforcing, and it made the blackboard generic in every query type
+  for a guarantee that a comment gives as well. What replaced it is better —
+  with the output leaving as components, the blackboard is *only* input as far
+  as the rest of the game can tell.
 
 ## Commands, and what they cost
 
@@ -313,10 +344,13 @@ everywhere costs twenty times the frame. So a queue suits the rare structural
 edit — a spawn, a despawn, an archetype move, a handful per frame — and never
 what an agent decides every tick, which is a field and a system.
 
-This is why the crate ships no command channel rather than an opt-in one: an
-opt-in the game can write in twenty lines, whose cost depends entirely on how
-the game uses it, is better as a documented pattern with a price than as an API
-that looks free.
+This is why the crate ships no command channel: for a decision that is a
+*state*, `ActionComponent` is both cheaper and the thing an ECS actually wants,
+and for a structural edit that is not — spawning a projectile, despawning a
+corpse — the game does it in the system that matches the component, where it has
+`Commands` to hand anyway. What is left over is an opt-in the game can write in
+twenty lines, whose cost depends entirely on how it is used; better as a
+documented pattern with a price than as an API that looks free.
 
 ## Asking the world
 
@@ -332,10 +366,15 @@ component and read a `CoverTarget` back, which made it Bevy's; with the question
 and the answer both fields, `ask` is two closures over `C` and knows nothing
 about the ECS. An ordinary system is what connects the fields to the world.
 
-`Request<T>` puts both in one field — `Idle`, `Pending`, `Answered(T)` — so a
-question costs one field rather than two loose flags, and the system answering
-it matches on `Pending` instead of re-deriving *when* an answer is wanted. That
-condition then lives once, in the tree that decided it.
+`Request<T>` puts both in one field — `Idle`, `Pending`, `Answered(T)` — and
+`ActionComponent::while_(|bb| bb.cover.is_pending())` makes the question a
+component like any other action. So the system that answers is
+`Query<.., With<LookingForCover>>`, which is how it should read: asking *is* an
+action, and the condition for it lives once, in the tree that decided it.
+
+The answer comes back through the gather, as a reading of the world like any
+other. It cannot be a `scope!` local, because a local lives in the invocation
+state, whose type no system can name.
 
 ### Why a node cannot simply run the query itself
 

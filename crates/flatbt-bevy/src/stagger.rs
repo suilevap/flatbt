@@ -1,41 +1,65 @@
-//! An optional policy for [`BehaviorPlugin::entry_mode`], not part of the
-//! integration proper: it takes a clock and an entity and returns a mode.
+//! Optional policies for [`BehaviorPlugin::tick_mode`], not part of the
+//! integration proper: they take a clock and an entity and return a [`Tick`].
 //!
-//! [`BehaviorPlugin::entry_mode`]: crate::BehaviorPlugin::entry_mode
+//! [`BehaviorPlugin::tick_mode`]: crate::BehaviorPlugin::tick_mode
 
 use core::time::Duration;
 
 use bevy_ecs::prelude::*;
-use flatbt_core::EntryMode;
 
-/// [`EntryMode::Evaluate`] on the one tick where this agent's slice of `period`
-/// elapses, [`EntryMode::Resume`] on every other.
+use crate::Tick;
+
+/// [`Tick::Evaluate`] on the one tick where this agent's slice of `period`
+/// elapses, [`Tick::Resume`] on every other.
 ///
-/// Nothing here is privileged: `entry_mode` returns a mode and this returns a
-/// mode, so a game that wants a different policy writes its own and never
-/// mentions this one. It is here because staggering is the answer most often
-/// wanted, and because getting it wrong -- putting a whole population on one
-/// frame -- is easy.
+/// Nothing here is privileged: `tick_mode` returns a `Tick` and so does this, so
+/// a game wanting a different policy writes its own and never mentions this one.
+/// It is here because staggering is the answer most often wanted, and because
+/// getting it wrong -- putting a whole population on one frame -- is easy.
 ///
-/// A population that reconsiders on a timer would otherwise do it on the same
-/// frame and spike. Each agent's slot is derived from its [`Entity`], so the
-/// work spreads across the period and nothing is stored per agent. Pass the
-/// clock the snapshot already carries.
+/// Each agent's slot is derived from its [`Entity`], so the work spreads across
+/// the period and nothing is stored per agent. A tick longer than `period`
+/// still evaluates once, never twice.
 ///
-/// A tick longer than `period` still evaluates once, never twice.
+/// Every tick between slots still *resumes*, so an action in progress keeps
+/// being ticked. Use [`act_every`] instead when there is nothing to tick.
 pub fn evaluate_every(
     period: Duration,
     elapsed: Duration,
     delta: Duration,
     entity: Entity,
-) -> EntryMode {
+) -> Tick {
+    stagger(period, elapsed, delta, entity, Tick::Resume)
+}
+
+/// [`Tick::Evaluate`] on this agent's slot, [`Tick::Skip`] on every other tick.
+///
+/// For a tree whose work happens entirely outside it -- every action it starts
+/// is carried out by systems matching an [`ActionComponent`](crate::ActionComponent),
+/// and no node needs a tick of its own to make progress. Then there is nothing
+/// to resume into between slots, and skipping is free.
+///
+/// Wrong for a tree with an action that advances on its own, since skipping
+/// stops it advancing. If unsure, use [`evaluate_every`]: resuming does the
+/// same thing and costs a tick.
+pub fn act_every(period: Duration, elapsed: Duration, delta: Duration, entity: Entity) -> Tick {
+    stagger(period, elapsed, delta, entity, Tick::Skip)
+}
+
+fn stagger(
+    period: Duration,
+    elapsed: Duration,
+    delta: Duration,
+    entity: Entity,
+    between: Tick,
+) -> Tick {
     let period = nanos(period);
     if period == 0 {
-        return EntryMode::Evaluate;
+        return Tick::Evaluate;
     }
     let delta = nanos(delta);
     if delta >= period {
-        return EntryMode::Evaluate;
+        return Tick::Evaluate;
     }
     // A multiplicative hash, so entities spawned together -- consecutive
     // indices -- land in different slots rather than sharing one.
@@ -46,9 +70,9 @@ pub fn evaluate_every(
     // than the two divisions the quotients would take: this runs once per agent
     // per tick, and a constant period folds it into a multiply.
     if nanos(elapsed).saturating_add(phase) % period < delta {
-        EntryMode::Evaluate
+        Tick::Evaluate
     } else {
-        EntryMode::Resume
+        between
     }
 }
 

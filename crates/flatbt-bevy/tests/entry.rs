@@ -1,5 +1,8 @@
-//! What each [`Tick`] does to an agent, and why `Skip` is not something a tree
-//! can do for itself.
+//! What each [`Tick`] does to an agent.
+//!
+//! The property that matters is first: `Evaluate` every tick is always correct,
+//! and the other two only cost responsiveness. The rest pins why `Skip` is not
+//! something a guard inside the tree can do instead.
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -227,6 +230,89 @@ fn a_run_condition_does_stop_the_tick_but_takes_the_whole_population() {
         app.world().get::<Agent>(agent).unwrap().guard_ran,
         1,
         "without re-entering from the root"
+    );
+}
+
+// --- the property: all three modes agree on where an agent ends up ----------
+
+#[derive(Component, Default, Debug, PartialEq)]
+struct Work {
+    done: u32,
+    started: u32,
+    /// Written by a gather, so the tick mode does not gate on the progress it
+    /// is gating -- which deadlocks, and is worth remembering.
+    frame: u32,
+}
+
+/// Three steps of work, then done. Nothing here depends on how often it is
+/// entered, which is what makes the property hold.
+struct ThreeSteps;
+
+impl BtNode<Work> for ThreeSteps {
+    type State = u32;
+
+    fn update(&self, step: &mut u32, work: &mut Work, _: (), mode: EntryMode) -> NodeResult {
+        if *step == 0 && mode == EntryMode::Evaluate {
+            work.started += 1;
+        }
+        *step += 1;
+        work.done += 1;
+        if *step < 3 {
+            NodeResult::Running
+        } else {
+            NodeResult::Success
+        }
+    }
+}
+
+fn steps() -> impl BehaviorNode<Work> {
+    select((seq((check(|_: &Work| true), ThreeSteps)),))
+}
+
+/// `Evaluate` every tick is the answer that cannot be wrong. `Resume` and
+/// `Skip` are optimisations: they change how many ticks an agent needs, never
+/// where it gets to.
+#[test]
+fn every_tick_mode_reaches_the_same_place_given_enough_ticks() {
+    fn count_frames(mut agents: Query<&mut Work>) {
+        for mut work in agents.iter_mut() {
+            work.bypass_change_detection().frame += 1;
+        }
+    }
+
+    fn run(mode: fn(&Work) -> Tick, ticks: u32) -> Work {
+        let mut app = App::new();
+        app.add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(mode))
+            .add_systems(Update, count_frames.before(BehaviorSystems));
+        let agent = app
+            .world_mut()
+            .spawn((Work::default(), Behavior::for_tree(steps)))
+            .id();
+        for _ in 0..ticks {
+            app.update();
+        }
+        app.world_mut().entity_mut(agent).take::<Work>().unwrap()
+    }
+
+    // Three ticks of work, whichever way the agent is entered.
+    assert_eq!(run(|_| Tick::Evaluate, 3).done, 3);
+    assert_eq!(run(|_| Tick::Resume, 3).done, 3);
+
+    // `Skip` every other tick needs twice as many ticks, and gets there.
+    assert_eq!(
+        run(
+            |work: &Work| {
+                if work.frame.is_multiple_of(2) {
+                    Tick::Evaluate
+                } else {
+                    Tick::Skip
+                }
+            },
+            6
+        )
+        .done,
+        3,
+        "skipping costs ticks, not progress"
     );
 }
 

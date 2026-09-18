@@ -48,34 +48,29 @@ impl<C: Component<Mutability = Mutable>, F: TreeBuilder<C>> BehaviorPlugin<C, F>
 
     /// Decides, per agent per tick, whether the tree is entered at all and how.
     ///
-    /// Reconsidering from the root is the default, because it is the answer
-    /// that cannot be wrong: a tree that only ever resumes never leaves the
-    /// branch it is in, so `select` never rescans and `choose!` never re-picks.
-    /// [`Tick::Resume`] is an optimisation, correct exactly when the standing
-    /// decision is known to still hold -- and worth measuring before reaching
-    /// for, because a tree whose invocations end each tick has nothing to
-    /// resume into.
-    ///
-    /// [`Tick::Skip`] does not enter the tree at all and leaves the suspended
-    /// invocation untouched. It is the one a guard at the root cannot do for
-    /// itself; see [`Tick`].
+    /// Defaults to [`Tick::Evaluate`], which is the answer that is always
+    /// correct: the other two are optimisations that cost an agent
+    /// responsiveness and never change what it does once it runs. Reach for
+    /// them when a profile says to, and expect the tree to behave the same
+    /// under all three -- see [`Tick`].
     ///
     /// The answer comes from the blackboard, so anything it needs -- a clock, a
     /// staggered slot, a perception flag, whose turn it is -- is gathered like
-    /// everything else. See [`evaluate_every`](crate::evaluate_every).
+    /// everything else. See [`evaluate_every`](crate::evaluate_every) and
+    /// [`act_every`](crate::act_every).
     ///
     /// ```
     /// # use bevy_ecs::prelude::*;
     /// # use flatbt_bevy::prelude::*;
     /// # #[derive(Component, Default)]
-    /// # struct Guard { busy: bool, alarm_changed: bool }
+    /// # struct Guard { acting: bool, alarm_changed: bool }
     /// # fn patrol() -> impl BehaviorNode<Guard> { check(|_: &Guard| true) }
     /// BehaviorPlugin::for_tree(patrol).tick_mode(|guard: &Guard| {
-    ///     if guard.busy {
-    ///         // A system outside the tree is carrying out what it decided.
-    ///         Tick::Skip
-    ///     } else if guard.alarm_changed {
+    ///     if guard.alarm_changed {
     ///         Tick::Evaluate
+    ///     } else if guard.acting {
+    ///         // Systems are carrying out what it decided; nothing to add.
+    ///         Tick::Skip
     ///     } else {
     ///         Tick::Resume
     ///     }
