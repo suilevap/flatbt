@@ -27,7 +27,7 @@ impl BtNode<usize> for Pending {
 
     fn update(&self, state: &mut PendingState, _: &mut usize, _: (), _: EntryMode) -> NodeResult {
         state.0.get_or_insert_with(|| self.0.clone());
-        NodeResult::Running
+        NodeResult::RUNNING
     }
 }
 
@@ -56,11 +56,11 @@ fn rejected_static_candidate_drops_its_state_without_resetting_saved_branch() {
             }),
         )),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut calls = 0;
     assert_eq!(
         update(&tree, &mut state, &mut calls, EntryMode::Resume),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     assert_eq!(drops.load(Ordering::Relaxed), 1);
     assert_eq!(
@@ -79,7 +79,7 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
         type State = [u64; 32];
 
         fn update(&self, _: &mut Self::State, _: &mut (), _: (), _: EntryMode) -> NodeResult {
-            NodeResult::Running
+            NodeResult::RUNNING
         }
     }
     fn state_size<N: BtNode<()>>(_: &N) -> usize {
@@ -101,7 +101,7 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
 #[test]
 fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
     struct Observe;
-    impl BtNode<Vec<u32>, &u32> for Observe {
+    impl BtNode<Vec<u32>, (), &u32> for Observe {
         type State = ();
 
         fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: EntryMode) -> NodeResult {
@@ -119,7 +119,7 @@ fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
             }).with(value);
         }
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut trace = Vec::new();
     assert_eq!(
         update(&tree, &mut state, &mut trace, EntryMode::Resume),

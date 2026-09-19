@@ -51,6 +51,10 @@ name = "scoped_params_manual"
 required-features = ["scope", "action"]
 
 [[test]]
+name = "act"
+required-features = ["action", "choose"]
+
+[[test]]
 name = "action"
 required-features = ["action"]
 

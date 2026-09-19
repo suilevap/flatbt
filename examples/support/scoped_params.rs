@@ -12,7 +12,7 @@ pub struct World {
 }
 
 pub struct LookAt;
-impl BtNode<World, &Vector2> for LookAt {
+impl BtNode<World, (), &Vector2> for LookAt {
     type State = ();
 
     fn update(
@@ -28,7 +28,7 @@ impl BtNode<World, &Vector2> for LookAt {
 }
 
 pub struct Walk;
-impl BtAction<World, &Vector2> for Walk {
+impl BtAction<World, (), &Vector2> for Walk {
     type State = usize;
 
     fn start(&self, _: &mut World, _: &Vector2) -> Option<usize> {

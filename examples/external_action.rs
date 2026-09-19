@@ -18,11 +18,11 @@ fn main() {
             frames: 12,
         }),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut agent = Agent::default();
     assert_eq!(
         update(&root, &mut state, &mut agent, EntryMode::Evaluate),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     let mut bt_updates = 1;
     println!("frame 0: BT starts patrol");

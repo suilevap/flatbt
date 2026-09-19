@@ -23,7 +23,7 @@ fn main() {
             action(Walk).with(walk_pos);
         }
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = World {
         next_patrol: Vector2(10.0, 20.0),
         visible_door: Vector2(90.0, 80.0),
@@ -33,13 +33,13 @@ fn main() {
     };
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     // Initializers ran once. Their values survive changes to the world.
     world.next_patrol = Vector2(-1.0, -1.0);
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Evaluate),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),

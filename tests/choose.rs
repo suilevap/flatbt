@@ -4,7 +4,11 @@ use std::sync::{
 };
 
 use EntryMode::{Evaluate, Resume};
-use NodeResult::{Failure, Running, Success};
+use NodeResult::{Failure, Success};
+
+/// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
+#[allow(non_upper_case_globals)]
+const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::{BtNode, BtState, EntryMode, NodeResult, choose, leaf, select, seq, update};
 
 #[derive(Default)]
@@ -65,7 +69,7 @@ fn evaluate_changes_candidates_while_resume_keeps_the_saved_choice() {
         0 => probe("a", &a),
         _ => probe("b", &b),
     });
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
     assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
@@ -108,7 +112,7 @@ fn nested_selection_replaces_only_the_selected_inner_state() {
         )),
         _ => leaf(|_: &mut Context| Success),
     });
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
     ctx.inner = true;
@@ -142,7 +146,7 @@ fn terminal_choice_is_forwarded_without_fallback_and_releases_the_old_state() {
                 Success
             }),
         });
-        let mut state = BtState::new(&tree);
+        let mut state: BtState<_, _> = BtState::new(&tree);
         let mut ctx = Context::default();
         assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
         ctx.order = 1;
@@ -177,7 +181,7 @@ fn outer_rejection_drops_nested_candidates_and_preserves_the_saved_branch() {
         })),
         probe("saved", &saved),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
     assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
@@ -216,7 +220,7 @@ fn definitions_are_built_once_and_chooser_supports_guards_and_owned_captures() {
         }
     });
     assert_eq!(constructions, ["allowed", "small", "other"]);
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     for (order, result) in [(0, Failure), (2, Success), (4, Running), (3, Success)] {
         ctx.order = order;

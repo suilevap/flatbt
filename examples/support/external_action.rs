@@ -89,6 +89,10 @@ impl BtAction<Agent> for MoveExternally {
         }))
     }
 
+    /// The work happens outside the tree; this only says what the agent
+    /// is doing, which for an act-free tree is nothing.
+    fn tick(&self, _: &mut Self::State, _: &mut Agent, _: ()) {}
+
     fn is_in_progress(&self, state: &Self::State, ctx: &Agent, _: ()) -> bool {
         ctx.movement
             .as_ref()

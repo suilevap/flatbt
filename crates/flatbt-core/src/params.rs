@@ -29,7 +29,7 @@ pub trait ParamValue {
 /// ```compile_fail,E0594
 /// use flatbt_core::{BtNode, EntryMode, NodeResult};
 /// struct InvalidWriter;
-/// impl BtNode<(), &u32> for InvalidWriter {
+/// impl BtNode<(), (), &u32> for InvalidWriter {
 ///     type State = ();
 ///     fn update(&self, _: &mut (), _: &mut (), input: &u32, _: EntryMode) -> NodeResult {
 ///         *input = 10;

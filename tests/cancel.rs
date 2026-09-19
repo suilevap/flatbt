@@ -38,6 +38,10 @@ impl BtAction<bool> for ExternalAction {
         }))
     }
 
+    /// The work happens outside the tree; this only says what the agent
+    /// is doing, which for an act-free tree is nothing.
+    fn tick(&self, _: &mut Self::State, _: &mut bool, _: ()) {}
+
     fn is_in_progress(&self, _: &Self::State, running: &bool, _: ()) -> bool {
         *running
     }
@@ -58,7 +62,7 @@ fn cancellation_is_opt_in_and_completion_keeps_ordinary_destruction() {
             drops: drops.clone(),
             success,
         });
-        let mut state = BtState::new(&root);
+        let mut state: BtState<_, _> = BtState::new(&root);
         assert_eq!(
             update(&root, &mut state, &mut false, EntryMode::Resume),
             result
@@ -68,7 +72,7 @@ fn cancellation_is_opt_in_and_completion_keeps_ordinary_destruction() {
 
         assert_eq!(
             update(&root, &mut state, &mut true, EntryMode::Resume),
-            NodeResult::Running
+            NodeResult::RUNNING
         );
         state.reset();
         state.reset();

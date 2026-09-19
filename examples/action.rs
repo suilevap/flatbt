@@ -41,14 +41,14 @@ fn main() {
             steps: 1,
         }),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut agent = Agent::default();
     for frame in 1..=4 {
         let result = update(&root, &mut state, &mut agent, EntryMode::Resume);
         println!("update {frame}: {result:?} | {:?}", agent.effects);
         if frame == 3 {
             // Move completes and Fire starts and ticks in this same update.
-            assert_eq!(result, NodeResult::Running);
+            assert_eq!(result, NodeResult::RUNNING);
             assert_eq!(agent.effects, ["move", "move", "fire"]);
         }
         if frame == 4 {

@@ -23,7 +23,7 @@ fn main() {
             NodeResult::Success
         }),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut agent = Agent::default();
     for update_index in 1..=4 {
         let result = update(&tree, &mut state, &mut agent, EntryMode::Resume);

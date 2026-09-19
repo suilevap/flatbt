@@ -24,16 +24,16 @@ pub struct ScopeState<L, S> {
     locals: L,
 }
 
-impl<C, P, L, N, S> BtNode<C, P> for Scope<L, N>
+impl<C, A, P, L, N, S> BtNode<C, A, P> for Scope<L, N>
 where
     L: Default + Send + 'static,
-    N: for<'a> BtNode<C, &'a mut L, State = S>,
+    N: for<'a> BtNode<C, A, &'a mut L, State = S>,
     S: Default + Send + 'static,
 {
     type State = ScopeState<L, S>;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult {
-        BtNode::<C, &mut L>::update(&self.child, &mut state.child, ctx, &mut state.locals, mode)
+    fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult<A> {
+        BtNode::<C, A, &mut L>::update(&self.child, &mut state.child, ctx, &mut state.locals, mode)
     }
 }
 
@@ -48,10 +48,16 @@ pub fn compute<F>(init: F) -> Compute<F> {
     Compute(init)
 }
 
-impl<C, T, F: Fn(&mut C) -> T> BtNode<C, &mut Option<T>> for Compute<F> {
+impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
     type State = ();
 
-    fn update(&self, _: &mut (), ctx: &mut C, output: &mut Option<T>, _: EntryMode) -> NodeResult {
+    fn update(
+        &self,
+        _: &mut (),
+        ctx: &mut C,
+        output: &mut Option<T>,
+        _: EntryMode,
+    ) -> NodeResult<A> {
         *output = Some((self.0)(ctx));
         NodeResult::Success
     }

@@ -3,13 +3,13 @@ use std::marker::PhantomData;
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// Per-agent state bound to a borrowed root. Includes descendant state.
-pub struct BtState<'root, N: BtNode<C>, C> {
+pub struct BtState<'root, N: BtNode<C, A>, C, A = ()> {
     root_node: &'root N,
     root_state: Option<N::State>,
-    context: PhantomData<fn(&mut C)>,
+    context: PhantomData<fn(&mut C) -> A>,
 }
 
-impl<'root, N: BtNode<C>, C> BtState<'root, N, C> {
+impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
     pub fn new(root_node: &'root N) -> Self {
         Self {
             root_node,
@@ -28,15 +28,21 @@ impl<'root, N: BtNode<C>, C> BtState<'root, N, C> {
     }
 }
 
-/// Runs the root. Resume follows saved selection; Evaluate revalidates from root.
-/// Fresh state always enters as Evaluate. A different root logs an error and
-/// returns Failure without changing state or context.
-pub fn update<C, N: BtNode<C>>(
+/// Runs the root and hands back what the agent is doing.
+///
+/// Resume follows saved selection; Evaluate revalidates from root. Fresh state
+/// always enters as Evaluate. A different root logs an error and returns Failure
+/// without changing state or context.
+///
+/// [`NodeResult::Running`] carries the act; a terminal result carries none,
+/// because an agent that finished is not doing anything. Use
+/// [`NodeResult::act`] to take it.
+pub fn update<C, A, N: BtNode<C, A>>(
     root_node: &N,
-    state: &mut BtState<'_, N, C>,
+    state: &mut BtState<'_, N, C, A>,
     ctx: &mut C,
     mode: EntryMode,
-) -> NodeResult {
+) -> NodeResult<A> {
     if !std::ptr::eq(root_node, state.root_node) {
         return NodeResult::error("state belongs to a different root definition");
     }
@@ -44,19 +50,19 @@ pub fn update<C, N: BtNode<C>>(
 }
 
 /// Initializes fresh state with Evaluate; clears the slot on terminal results.
-pub(crate) fn run_node<C, N: BtNode<C>>(
+pub(crate) fn run_node<C, A, N: BtNode<C, A>>(
     node: &N,
     slot: &mut Option<N::State>,
     ctx: &mut C,
     mode: EntryMode,
-) -> NodeResult {
+) -> NodeResult<A> {
     let mode = if slot.is_none() {
         EntryMode::Evaluate
     } else {
         mode
     };
     let result = node.update(slot.get_or_insert_with(Default::default), ctx, (), mode);
-    if result != NodeResult::Running {
+    if !result.is_running() {
         *slot = None;
     }
     result

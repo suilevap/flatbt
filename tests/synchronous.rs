@@ -26,7 +26,7 @@ fn sequence_runs_in_order_and_stops_on_failure() {
     assert_eq!(
         update(
             &tree,
-            &mut BtState::new(&tree),
+            &mut BtState::<_, _>::new(&tree),
             &mut trace,
             EntryMode::Resume
         ),
@@ -46,7 +46,7 @@ fn selector_uses_nested_fallback_and_stops_on_success() {
     assert_eq!(
         update(
             &tree,
-            &mut BtState::new(&tree),
+            &mut BtState::<_, _>::new(&tree),
             &mut trace,
             EntryMode::Resume
         ),
@@ -62,7 +62,7 @@ fn selector_fails_when_all_children_fail() {
     assert_eq!(
         update(
             &tree,
-            &mut BtState::new(&tree),
+            &mut BtState::<_, _>::new(&tree),
             &mut trace,
             EntryMode::Resume
         ),
@@ -78,7 +78,7 @@ fn empty_controls_have_identity_results() {
     assert_eq!(
         update(
             &sequence,
-            &mut BtState::new(&sequence),
+            &mut BtState::<_, _>::new(&sequence),
             &mut (),
             EntryMode::Resume
         ),
@@ -87,7 +87,7 @@ fn empty_controls_have_identity_results() {
     assert_eq!(
         update(
             &selector,
-            &mut BtState::new(&selector),
+            &mut BtState::<_, _>::new(&selector),
             &mut (),
             EntryMode::Resume
         ),
@@ -98,7 +98,7 @@ fn empty_controls_have_identity_results() {
 #[test]
 fn custom_policy_has_fresh_state_after_completion() {
     let tree = control(Repeat(3), (record("repeat", Success),));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut trace = vec![];
     assert_eq!(
         update(&tree, &mut state, &mut trace, EntryMode::Resume),
@@ -151,7 +151,7 @@ fn execution_errors_fail_the_branch_and_allow_fallback() {
         leaf(|_: &mut Vec<&str>| NodeResult::error("custom leaf could not execute")),
         record("fallback", Success),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut trace = vec![];
     assert_eq!(
         update(&tree, &mut state, &mut trace, EntryMode::Resume),
