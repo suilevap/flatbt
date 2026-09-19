@@ -61,9 +61,20 @@ app.add_systems(Update, gather.before(BehaviorSystems))
 
 The act is what makes this an ECS integration rather than a struct with a
 schedule around it. An agent doing something carries its act component; an agent
-whose tree ended carries none. So `Query<(&Act, &mut Transform)>` is exactly the
-agents with a standing order and `Query<_, Without<Act>>` is exactly the idle
-ones -- no flags, nothing to clear, and no system reading the blackboard.
+whose tree ended carries none. So `Query<&Act>` is exactly the agents with a
+standing order and `Query<_, Without<Act>>` is exactly the idle ones -- no
+flags, nothing to clear, and no system reading the blackboard.
+
+### Carrying it out
+
+One system with an exhaustive `match` beats a system per variant, and the
+examples say so. A system per variant reads tidier and silently ignores an act
+nobody handled; a `match` stops compiling when a variant is added, which is the
+only check available for "every decision is carried out somewhere".
+
+An arm does not have to do the work. Delegating is often the point -- writing a
+path request for whatever owns movement, an animation state, a queued turn
+order -- and one dispatch point is a good place to decide who gets what.
 
 Since core returns the act rather than expecting a node to write it, the
 integration does not need a bridge for it: the tick *is* the bridge. Two earlier

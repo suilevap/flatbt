@@ -266,16 +266,29 @@ app.add_plugins(BehaviorPlugin::for_tree(guard_tree))
 commands.spawn((Ammo(2), Guard::default(), Behavior::for_tree(guard_tree)));
 ```
 
-Systems then match the act, and never mention the tree, the blackboard, or
-FlatBT:
+One system then carries the act out, and never mentions the tree, the
+blackboard, or FlatBT. Prefer a single exhaustive `match` over a system per
+variant: adding an act stops it compiling until it is handled, where a system
+per variant would silently ignore it.
 
 ```rust,ignore
-fn refill(mut guards: Query<(&Act, &mut Ammo)>) {
-    for (act, mut ammo) in guards.iter_mut() {
-        if *act == Act::Reloading { ammo.0 = (ammo.0 + 3).min(6); }
+fn carry_out(mut guards: Query<(&Act, &mut Ammo, &mut Destination)>) {
+    for (act, mut ammo, mut destination) in guards.iter_mut() {
+        let mut headed_for = None;
+        match act {
+            // Handed to whoever owns movement -- a path request, an animation
+            // state, whatever that subsystem reads.
+            Act::MarchingTo(target) => headed_for = Some(*target),
+            Act::Firing => ammo.0 = ammo.0.saturating_sub(1),
+            Act::Reloading => ammo.0 = (ammo.0 + 3).min(6),
+        }
+        destination.set_if_neq(Destination(headed_for));
     }
 }
 ```
+
+An arm need not do the work: delegating is often the point, and the act is a
+good place to decide who gets it.
 
 | API | Behavior |
 | --- | --- |
@@ -290,9 +303,9 @@ fn refill(mut guards: Query<(&Act, &mut Ammo)>) {
 ### The act is the interface
 
 An agent doing something carries its act component; an agent whose tree ended
-carries none. So `Query<(&Act, &mut Transform)>` is exactly the agents with a
-standing order, and `Query<&Name, (With<Guard>, Without<Act>)>` is exactly the
-idle ones — no flags, and nothing to clear.
+carries none. So `Query<&Act>` is exactly the agents with a standing order, and
+`Query<&Name, (With<Guard>, Without<Act>)>` is exactly the idle ones — no flags,
+and nothing to clear.
 
 An act that only *changes* is written in place with `set_if_neq`, so an agent
 that keeps doing the same kind of thing never moves archetype. Only appearing

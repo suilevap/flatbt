@@ -196,15 +196,45 @@ fn guard_tree() -> impl BehaviorNode<Guard, Act> {
     ))
 }
 
-// --- the systems that do the work --------------------------------------------
-//
-// Each matches the act the tree put there, and none of them mentions the tree,
-// the blackboard, or FlatBT. Every number here -- how far a step is, what a
-// shot costs, how fast a magazine fills -- belongs to the game.
+// --- carrying the act out ----------------------------------------------------
 
-fn march(mut guards: Query<(&Act, &Name, &mut Post)>) {
-    for (act, name, mut post) in guards.iter_mut() {
-        let Act::MarchingTo(target) = act else {
+/// Where a guard is headed, or nowhere. Written by `carry_out`, read by
+/// `movement` -- an act that belongs to another system is handed over rather
+/// than acted on here.
+#[derive(Component, Default, Debug, PartialEq)]
+struct Destination(Option<f32>);
+
+/// One system, one exhaustive `match`. Adding a variant to `Act` stops this
+/// compiling until it is handled, which is the point: with a system per variant
+/// a new act is silently ignored.
+///
+/// What each arm does is the game's. Some acts are done here; `MarchingTo` is
+/// delegated, because moving is somebody else's job -- in a real game that arm
+/// would write a path request, an animation state, or whatever the subsystem
+/// that owns movement reads.
+fn carry_out(mut guards: Query<(&Act, &Name, &mut Ammo, &mut Destination)>) {
+    for (act, name, mut ammo, mut destination) in guards.iter_mut() {
+        // Standing still unless this tick says otherwise. `set_if_neq` keeps a
+        // repeated order from marking the component changed.
+        let mut headed_for = None;
+        match act {
+            Act::MarchingTo(target) => headed_for = Some(*target),
+            Act::Firing if ammo.0 > 0 => {
+                ammo.0 -= 1;
+                println!("  {} fires ({} left)", name.0, ammo.0);
+            }
+            Act::Firing => {}
+            Act::Reloading => ammo.0 = (ammo.0 + 3).min(6),
+        }
+        destination.set_if_neq(Destination(headed_for));
+    }
+}
+
+/// The subsystem `MarchingTo` was handed to. It knows how far a step is; no
+/// tree and no act ever did.
+fn movement(mut guards: Query<(&Destination, &Name, &mut Post)>) {
+    for (destination, name, mut post) in guards.iter_mut() {
+        let Some(target) = destination.0 else {
             continue;
         };
         let step = (target - post.0).clamp(-1.0, 1.0);
@@ -215,27 +245,14 @@ fn march(mut guards: Query<(&Act, &Name, &mut Post)>) {
     }
 }
 
-fn shoot(mut guards: Query<(&Act, &Name, &mut Ammo)>) {
-    for (act, name, mut ammo) in guards.iter_mut() {
-        if *act != Act::Firing || ammo.0 == 0 {
-            continue;
-        }
-        ammo.0 -= 1;
-        println!("  {} fires ({} left)", name.0, ammo.0);
-    }
-}
+/// An agent with no act is deciding nothing, which a query can see directly:
+/// there is no idle flag to keep in step.
+/// The guards with nothing to do: a blackboard and no act.
+type Idle<'w, 's> = Query<'w, 's, (&'static Name, &'static mut Destination), Without<Act>>;
 
-fn refill(mut guards: Query<(&Act, &mut Ammo)>) {
-    for (act, mut ammo) in guards.iter_mut() {
-        if *act == Act::Reloading {
-            ammo.0 = (ammo.0 + 3).min(6);
-        }
-    }
-}
-
-/// An agent with no act is deciding nothing, which a query can see directly.
-fn report_idle(idle: Query<&Name, (With<Guard>, Without<Act>)>) {
-    for name in idle.iter() {
+fn stand_easy(mut idle: Idle) {
+    for (name, mut destination) in idle.iter_mut() {
+        destination.set_if_neq(Destination(None));
         println!("  {} stands easy", name.0);
     }
 }
@@ -252,7 +269,9 @@ fn main() {
     .add_systems(Update, gather.before(BehaviorSystems))
     .add_systems(
         Update,
-        (march, shoot, refill, report_idle).after(BehaviorSystems),
+        (carry_out, stand_easy, movement)
+            .chain()
+            .after(BehaviorSystems),
     );
 
     // One tree, many agents: each carries only its own invocation state.
@@ -260,6 +279,7 @@ fn main() {
         Name("Ada"),
         Post(0.0),
         Ammo(1),
+        Destination::default(),
         Guard::default(),
         Behavior::for_tree(guard_tree),
     ));
@@ -267,6 +287,7 @@ fn main() {
         Name("Brun"),
         Post(6.0),
         Ammo(0),
+        Destination::default(),
         Guard::default(),
         Behavior::for_tree(guard_tree),
     ));
