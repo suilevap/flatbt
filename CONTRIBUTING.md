@@ -14,6 +14,9 @@ sh scripts/check-features.sh
 The feature script checks defaults, explicit feature combinations, and direct
 crates in separate Cargo invocations.
 
+`flatbt-bevy` pulls in `bevy_ecs` and `bevy_app` 0.19 and needs Rust 1.95 or
+later. The other crates have no dependencies.
+
 ## Project conventions
 
 See [AGENTS.md](AGENTS.md). Keep code and documentation in English. Document

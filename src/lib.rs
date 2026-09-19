@@ -42,13 +42,18 @@
 //! ```
 //!
 //! Includes `choose`, `scope`, and `action` by default. Set `default-features = false`
-//! for core only, then enable individual features as needed.
+//! for core only, then enable individual features as needed. The `bevy` feature
+//! adds the Bevy ECS integration, re-exported here as `flatbt::bevy`.
 
 #![forbid(unsafe_code)]
 
 pub mod prelude;
 
 pub use flatbt_core::*;
+
+/// Bevy ECS integration: the agent component, the tree resource, the tick plugin.
+#[cfg(feature = "bevy")]
+pub use flatbt_bevy as bevy;
 
 /// Optional nodes and policies.
 #[cfg(any(feature = "action", feature = "choose"))]

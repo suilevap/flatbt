@@ -1,0 +1,14 @@
+//! Authoring APIs for Bevy trees.
+//!
+//! FlatBT's tree authoring API plus the Bevy types. The constructors are
+//! FlatBT's own and need no Bevy-specific replacement.
+
+pub use flatbt_core::{
+    BtChildren, BtControl, BtNode, Check, ControlNode, ControlOp, ControlState, EntryMode, Leaf,
+    NodeResult, Selector, Sequence, check, control, leaf, select, seq,
+};
+
+pub use crate::{
+    Behavior, BehaviorNode, BehaviorPlugin, BehaviorSystems, BehaviorTree, Tick, TreeBuilder,
+    act_every, evaluate_every,
+};
