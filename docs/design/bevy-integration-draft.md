@@ -48,8 +48,8 @@ typed view of the agent. Reifying it would add the cost without buying anything.
 
 **The blackboard is an ordinary component, and so is the decision.** A tree over
 `C` deciding `A` is ticked by a system whose query is
-`(Entity, &mut Behavior<C, A, F>, &mut C, Option<&mut A>)`, and nothing in the
-crate says what is in either component.
+`(Entity, &mut Behavior<C, A, F>, Option<&mut C>, Option<&mut A>)`, and nothing
+in the crate says what is in either component.
 
 Three systems, in the order Bevy already states:
 
@@ -96,12 +96,59 @@ archetype every time; over 100 000 constantly re-deciding agents that cost
 0.5-0.8 ms of frame per registered decision. One act component whose *value*
 changes costs a comparison.
 
+In the parallel tick each batch keeps its own arriving/leaving lists and hands
+them over in `Drop`, which `for_each_init` runs when the batch ends. So the
+shared lock is taken once per batch that had a structural change, and not at all
+by a batch where every agent kept doing what it was doing. Taking it per agent
+would have made the first frame of a population -- when every act appears at
+once -- a queue on one mutex.
+
+### The act's lifetime, and who ends it
+
+An act outlives the tick that wrote it: the systems carrying it out run
+afterwards, and a `Skip`ped agent keeps its order for as many ticks as it is
+skipped. So "the tree stopped deciding" has to be an event someone raises, and
+the tick cannot raise it for an agent that has left its query.
+
+An entity is an agent while it has both a `Behavior` and its blackboard:
+
+- **the blackboard goes** -- the agent is still in the tick's query, which is why
+  the query takes `Option<&mut C>`. It decides nothing, so its act is removed and
+  its suspended invocation is dropped: that invocation was suspended reading a
+  world this agent no longer has.
+- **the `Behavior` goes**, by removal, by despawn, or by being replaced with
+  another tree -- the act is released by `Behavior`'s own `on_remove` hook. A
+  system watching `RemovedComponents` would have been the ordinary Bevy answer,
+  but it only runs when its schedule runs, and the tick may live in a schedule
+  the game runs itself -- a turn phase that may not come for minutes. A hook runs
+  where the removal happened.
+
+The hook looks the act type up by `TypeId` rather than naming it, so it costs
+nothing for a tree that decides nothing (`A = ()` is not a component, so there is
+nothing to release).
+
+`Behavior`'s type cannot be written down -- a builder's return type is opaque --
+so `remove::<Behavior<Guard, Act, _>>()` and a query over it cannot be spelled at
+all. `BehaviorCommands` (`stop_behavior`, `restart_behavior`, on both
+`EntityCommands` and `EntityWorldMut`) takes the builder instead, which is how
+the tree is named everywhere else.
+
 ### The blackboard, and why it is still `&mut`
 
 Core takes `&mut C`, so the tick does too, even though a tree that reports its
 decisions has no reason to write it. Leaving it mutable keeps the blackboard
 usable for passing a value between two nodes, which is allowed and not
 encouraged. The act is the supported way out.
+
+The tick reads and writes it through `bypass_change_detection`, which is a
+compromise worth stating plainly rather than a detail: **a node's write to the
+blackboard is invisible to `Changed<C>`.** It is visible to later nodes and to
+the next tick, and nothing else. The alternative is worse -- the blackboard is
+rewritten by the gather every tick anyway, so honouring change detection would
+mark the whole population changed every frame and drag every system filtering on
+`Changed<C>` along with it. The rule that follows is the same one the act exists
+for: the blackboard is the tree's input, and anything the world should notice is
+an act. `tests/behavior.rs` pins it.
 
 Filling it is the game's, deliberately: a real gather is several systems at
 several rates -- one for what is cheap, another for a raycast, another for a

@@ -9,6 +9,6 @@ pub use flatbt_core::{
 };
 
 pub use crate::{
-    Behavior, BehaviorNode, BehaviorPlugin, BehaviorSystems, BehaviorTree, Tick, TreeBuilder,
-    act_every, evaluate_every,
+    Behavior, BehaviorCommands, BehaviorNode, BehaviorPlugin, BehaviorSystems, BehaviorTree, Tick,
+    TreeBuilder, act_every, evaluate_every,
 };

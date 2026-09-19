@@ -1,6 +1,9 @@
+use core::any::TypeId;
 use core::marker::PhantomData;
 
+use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
 use flatbt_core::{BtNode, EntryMode, NodeResult};
 
 /// A tree that can drive agents whose blackboard is `C` and whose decisions are
@@ -52,11 +55,16 @@ where
 ///     Firing,
 /// }
 ///
+/// // The condition that ends the act sits in the node reporting it: while a
+/// // node is running, nothing above it is consulted again. See [`Behavior`].
 /// fn shoot(rounds: u32) -> impl BehaviorNode<Guard, Act> {
-///     seq((
-///         check(move |guard: &Guard| guard.ammo >= rounds),
-///         leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
-///     ))
+///     leaf(move |guard: &mut Guard| {
+///         if guard.ammo >= rounds {
+///             NodeResult::Running(Act::Firing)
+///         } else {
+///             NodeResult::Failure
+///         }
+///     })
 /// }
 ///
 /// // Two names for the same tree type, each with its own configuration.
@@ -203,10 +211,13 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
 /// }
 ///
 /// fn shoot() -> impl BehaviorNode<Guard, Act> {
-///     seq((
-///         check(|guard: &Guard| guard.ammo > 0),
-///         leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
-///     ))
+///     leaf(|guard: &mut Guard| {
+///         if guard.ammo > 0 {
+///             NodeResult::Running(Act::Firing)
+///         } else {
+///             NodeResult::Failure
+///         }
+///     })
 /// }
 ///
 /// # let mut world = World::new();
@@ -218,7 +229,26 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
 /// different archetypes and are ticked by their own system. To write the type
 /// out, name the builder as a function pointer:
 /// `Behavior::for_tree(shoot as fn() -> _)`.
+///
+/// # Starting, stopping, changing
+///
+/// This component is what makes an entity an agent, so it is also the switch:
+///
+/// - **insert** it (with the blackboard) and the tree starts on the next tick;
+/// - **remove** it -- or despawn the entity -- and the agent stops. Its
+///   standing act is taken back as the component goes -- a removal hook does
+///   it, so it does not wait for a tick that may never come -- and nothing
+///   keeps carrying out the last order the tree gave.
+/// - **replace** it with a `Behavior` for another tree and the same happens:
+///   the old act is released, and the new tree decides from scratch.
+/// - [`restart`](Self::restart) drops the suspended invocation without stopping
+///   the agent, so the next tick enters from the root.
+///
+/// Removing the *blackboard* while leaving this component is not a way to pause
+/// an agent: an agent with no blackboard is not running the tree, so it decides
+/// nothing, and the tick releases its act and drops its invocation.
 #[derive(Component)]
+#[component(on_remove = release_act::<A>)]
 pub struct Behavior<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> {
     state: Option<<F::Tree as BehaviorNode<C, A>>::Data>,
     // Only the builder's type is needed; the value it was named by is not kept,
@@ -247,6 +277,23 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
             state: None,
             builder: PhantomData,
         }
+    }
+
+    /// Drops the suspended invocation, so the next tick enters from the root.
+    ///
+    /// The agent keeps running this tree -- this only forgets where it was, for
+    /// a game that changes an agent's situation so thoroughly that continuing
+    /// the current action would be wrong. The act is left to the next tick,
+    /// which decides it again and removes it if the fresh invocation decides
+    /// nothing. To stop the agent instead of restarting it, remove the
+    /// component.
+    pub fn restart(&mut self) {
+        self.state = None;
+    }
+
+    /// Whether an invocation is suspended in this agent, waiting to be resumed.
+    pub fn is_running(&self) -> bool {
+        self.state.is_some()
     }
 
     /// Runs one update and hands back what the agent is now doing.
@@ -301,5 +348,129 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> c
         f.debug_struct("Behavior")
             .field("running", &self.state.is_some())
             .finish()
+    }
+}
+
+/// Takes back an agent's standing act when it stops running its tree.
+///
+/// Registered as [`Behavior`]'s removal hook, so it runs the moment the
+/// component goes -- by `remove`, by `despawn`, or by being swapped for another
+/// tree -- whatever schedule that happened in, and whether or not the tick
+/// system ever runs again. The tick cannot do this itself: an agent that
+/// stopped is no longer in its query, and an act component outlives the tick
+/// that wrote it by design, since the systems carrying it out run afterwards.
+/// Without this, removing a `Behavior` would leave the last order standing and
+/// the world would go on obeying it.
+///
+/// `A` need not be a component at all -- a tree that decides nothing has no act
+/// to release -- so the act type is looked up rather than named.
+fn release_act<A: Send + Sync + 'static>(mut world: DeferredWorld, ctx: HookContext) {
+    let Some(act) = world.components().get_id(TypeId::of::<A>()) else {
+        return;
+    };
+    let entity = ctx.entity;
+    if !world
+        .get_entity(entity)
+        .is_ok_and(|agent| agent.contains_id(act))
+    {
+        return;
+    }
+    world.commands().queue(move |world: &mut World| {
+        // The entity is gone when the `Behavior` went with it in a despawn.
+        if let Ok(mut agent) = world.get_entity_mut(entity) {
+            agent.remove_by_id(act);
+        }
+    });
+}
+
+/// Stopping and restarting an agent, by naming its tree.
+///
+/// A `Behavior`'s type cannot be written down -- a builder's return type is
+/// opaque, so `remove::<Behavior<Guard, Act, _>>()` is not something a game can
+/// spell. These name the tree the way everything else does, by its builder, and
+/// are implemented for both [`EntityCommands`] and [`EntityWorldMut`]:
+///
+/// ```
+/// # use bevy_ecs::prelude::*;
+/// # use flatbt_bevy::prelude::*;
+/// # #[derive(Component, Default)]
+/// # struct Guard { ammo: u32 }
+/// # #[derive(Component, Clone, Copy, PartialEq)]
+/// # enum Act { Firing }
+/// # fn shoot() -> impl BehaviorNode<Guard, Act> {
+/// #     leaf(|_: &mut Guard| NodeResult::Running(Act::Firing))
+/// # }
+/// fn disarm(mut commands: Commands, downed: Query<Entity, With<Act>>) {
+///     for agent in downed.iter() {
+///         // The tree stops and the standing act goes with it.
+///         commands.entity(agent).stop_behavior(shoot);
+///     }
+/// }
+/// ```
+///
+/// Starting an agent needs nothing new: insert `Behavior::for_tree(shoot)`.
+pub trait BehaviorCommands {
+    /// Stops this agent running the tree named by `tree`, releasing its act.
+    ///
+    /// Removing the component is all this does -- the release is
+    /// [`Behavior`]'s own removal hook, so it happens however the component
+    /// goes.
+    fn stop_behavior<C, A, F>(&mut self, tree: F) -> &mut Self
+    where
+        C: Send + Sync + 'static,
+        A: Send + Sync + 'static,
+        F: TreeBuilder<C, A>;
+
+    /// Drops this agent's suspended invocation, so its next tick enters the
+    /// tree named by `tree` from the root. See [`Behavior::restart`].
+    fn restart_behavior<C, A, F>(&mut self, tree: F) -> &mut Self
+    where
+        C: Send + Sync + 'static,
+        A: Send + Sync + 'static,
+        F: TreeBuilder<C, A>;
+}
+
+impl BehaviorCommands for EntityCommands<'_> {
+    fn stop_behavior<C, A, F>(&mut self, _tree: F) -> &mut Self
+    where
+        C: Send + Sync + 'static,
+        A: Send + Sync + 'static,
+        F: TreeBuilder<C, A>,
+    {
+        self.try_remove::<Behavior<C, A, F>>()
+    }
+
+    fn restart_behavior<C, A, F>(&mut self, tree: F) -> &mut Self
+    where
+        C: Send + Sync + 'static,
+        A: Send + Sync + 'static,
+        F: TreeBuilder<C, A>,
+    {
+        self.queue(move |mut agent: EntityWorldMut| {
+            agent.restart_behavior::<C, A, F>(tree);
+        })
+    }
+}
+
+impl BehaviorCommands for EntityWorldMut<'_> {
+    fn stop_behavior<C, A, F>(&mut self, _tree: F) -> &mut Self
+    where
+        C: Send + Sync + 'static,
+        A: Send + Sync + 'static,
+        F: TreeBuilder<C, A>,
+    {
+        self.remove::<Behavior<C, A, F>>()
+    }
+
+    fn restart_behavior<C, A, F>(&mut self, _tree: F) -> &mut Self
+    where
+        C: Send + Sync + 'static,
+        A: Send + Sync + 'static,
+        F: TreeBuilder<C, A>,
+    {
+        if let Some(mut behavior) = self.get_mut::<Behavior<C, A, F>>() {
+            behavior.restart();
+        }
+        self
     }
 }

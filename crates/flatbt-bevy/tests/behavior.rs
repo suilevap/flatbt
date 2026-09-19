@@ -5,6 +5,7 @@ use core::time::Duration;
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::ScheduleLabel;
 use flatbt_bevy::prelude::*;
 
 /// What a guard knows. The tree reads it; the gather writes it.
@@ -105,7 +106,7 @@ fn the_act_goes_when_the_decision_does() {
 }
 
 #[test]
-fn an_agent_without_the_blackboard_is_skipped() {
+fn an_agent_without_the_blackboard_decides_nothing() {
     let mut app = app(shoot);
     let bare = app.world_mut().spawn(Behavior::for_tree(shoot)).id();
 
@@ -113,6 +114,256 @@ fn an_agent_without_the_blackboard_is_skipped() {
 
     assert!(app.world().get::<Guard>(bare).is_none());
     assert!(app.world().get::<Act>(bare).is_none());
+}
+
+// --- starting, stopping, changing --------------------------------------------
+
+fn firing_agent(app: &mut App) -> Entity {
+    let agent = app
+        .world_mut()
+        .spawn((
+            Guard {
+                ammo: 9,
+                alarm: true,
+            },
+            Behavior::for_tree(shoot),
+        ))
+        .id();
+    app.update();
+    assert_eq!(app.world().get::<Act>(agent), Some(&Act::Firing));
+    agent
+}
+
+/// An act outlives the tick that wrote it -- the systems carrying it out run
+/// afterwards -- so stopping an agent has to take it back. The tick cannot:
+/// once the `Behavior` is gone the agent is not in its query any more.
+#[test]
+fn stopping_an_agent_takes_back_its_act() {
+    let mut app = app(shoot);
+    let agent = firing_agent(&mut app);
+
+    app.world_mut().entity_mut(agent).stop_behavior(shoot);
+
+    assert_eq!(
+        app.world().get::<Act>(agent),
+        None,
+        "the order went with the component that was giving it"
+    );
+}
+
+/// And it goes there and then, not on some next tick -- which may never come,
+/// in a schedule the game runs itself.
+#[test]
+fn the_act_goes_without_waiting_for_another_tick() {
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(shoot).in_schedule(TurnPhase));
+    let agent = app
+        .world_mut()
+        .spawn((
+            Guard {
+                ammo: 9,
+                alarm: true,
+            },
+            Behavior::for_tree(shoot),
+        ))
+        .id();
+    app.world_mut().run_schedule(TurnPhase);
+    assert_eq!(app.world().get::<Act>(agent), Some(&Act::Firing));
+
+    app.world_mut().entity_mut(agent).stop_behavior(shoot);
+
+    assert_eq!(app.world().get::<Act>(agent), None);
+}
+
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TurnPhase;
+
+/// Stopping from a system is the same thing through `Commands`.
+#[test]
+fn an_agent_can_be_stopped_from_a_system() {
+    fn stand_down(mut commands: Commands, agents: Query<Entity, With<Act>>) {
+        for agent in agents.iter() {
+            commands.entity(agent).stop_behavior(shoot);
+        }
+    }
+
+    let mut app = app(shoot);
+    let agent = firing_agent(&mut app);
+    app.add_systems(Update, stand_down.after(BehaviorSystems));
+
+    app.update();
+
+    assert_eq!(app.world().get::<Act>(agent), None);
+    assert!(
+        app.world().get::<Guard>(agent).is_some(),
+        "the agent is still there -- it is just not running a tree"
+    );
+}
+
+/// Swapping one tree for another goes through the same door: the old act is
+/// released as the old `Behavior` goes, and the new tree decides from scratch.
+#[test]
+fn changing_an_agent_to_another_tree_replaces_its_act() {
+    let mut app = App::new();
+    app.add_plugins((
+        BehaviorPlugin::for_tree(shoot),
+        BehaviorPlugin::for_tree(hoard),
+    ));
+    let agent = firing_agent(&mut app);
+
+    app.world_mut()
+        .entity_mut(agent)
+        .stop_behavior(shoot)
+        .insert(Behavior::for_tree(hoard));
+    app.update();
+
+    assert_eq!(app.world().get::<Act>(agent), Some(&Act::Loading));
+}
+
+#[test]
+fn despawning_an_agent_that_was_doing_something_is_quiet() {
+    let mut app = app(shoot);
+    let agent = firing_agent(&mut app);
+
+    app.world_mut().entity_mut(agent).despawn();
+    app.update();
+
+    assert!(app.world().get_entity(agent).is_err());
+}
+
+// --- an agent is a behavior *and* a blackboard --------------------------------
+
+/// Records the mode it was entered with, which is how these tests see whether
+/// an invocation was resumed or started again.
+#[derive(Component, Default, Debug)]
+struct Trace(Vec<EntryMode>);
+
+struct Remember;
+
+impl BtNode<Trace, Act> for Remember {
+    type State = ();
+
+    fn update(&self, _: &mut (), trace: &mut Trace, _: (), mode: EntryMode) -> NodeResult<Act> {
+        trace.0.push(mode);
+        NodeResult::Running(Act::Firing)
+    }
+}
+
+fn remembering() -> impl BehaviorNode<Trace, Act> {
+    seq((Remember,))
+}
+
+fn traced_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(remembering).tick_mode(|_| Tick::Resume));
+    app
+}
+
+fn modes(app: &App, agent: Entity) -> Vec<EntryMode> {
+    app.world().get::<Trace>(agent).unwrap().0.clone()
+}
+
+/// An agent that keeps its `Behavior` but loses its blackboard is not running
+/// the tree either: it has nothing to decide from, so it decides nothing, and
+/// the invocation it was suspended in goes with the world it was reading.
+#[test]
+fn an_agent_that_loses_its_blackboard_stops_deciding() {
+    let mut app = traced_app();
+    let agent = app
+        .world_mut()
+        .spawn((Trace::default(), Behavior::for_tree(remembering)))
+        .id();
+    app.update();
+    app.update();
+    assert_eq!(modes(&app, agent), [EntryMode::Evaluate, EntryMode::Resume]);
+    assert_eq!(app.world().get::<Act>(agent), Some(&Act::Firing));
+
+    let trace = app.world_mut().entity_mut(agent).take::<Trace>().unwrap();
+    app.update();
+    assert_eq!(app.world().get::<Act>(agent), None, "nothing to decide from");
+
+    // Hand the blackboard back: the tree starts over rather than resuming into
+    // a node that was reading a world this agent no longer had.
+    app.world_mut().entity_mut(agent).insert(trace);
+    app.update();
+    assert_eq!(
+        modes(&app, agent),
+        [EntryMode::Evaluate, EntryMode::Resume, EntryMode::Evaluate]
+    );
+}
+
+/// `restart` forgets where the invocation was without stopping the agent.
+#[test]
+fn restarting_an_agent_enters_from_the_root() {
+    let mut app = traced_app();
+    let agent = app
+        .world_mut()
+        .spawn((Trace::default(), Behavior::for_tree(remembering)))
+        .id();
+    app.update();
+    app.update();
+    assert_eq!(modes(&app, agent), [EntryMode::Evaluate, EntryMode::Resume]);
+
+    app.world_mut()
+        .entity_mut(agent)
+        .restart_behavior(remembering);
+    app.update();
+
+    assert_eq!(
+        modes(&app, agent),
+        [EntryMode::Evaluate, EntryMode::Resume, EntryMode::Evaluate],
+        "still an agent, but with nothing to resume into"
+    );
+    assert_eq!(app.world().get::<Act>(agent), Some(&Act::Firing));
+}
+
+// --- what the blackboard is, and is not --------------------------------------
+
+#[derive(Resource, Default)]
+struct Noticed(u32);
+
+/// The tick passes the blackboard with change detection bypassed, so a node
+/// writing to it -- which is how nodes leave notes for each other -- does not
+/// mark it changed. A pinned compromise, not an accident: the gather rewrites
+/// the blackboard every tick anyway, and marking a whole population changed
+/// every frame would drag the rest of the engine along. The tree's output is
+/// the act; the blackboard is its input.
+#[test]
+fn a_node_writing_to_the_blackboard_does_not_mark_it_changed() {
+    fn tally() -> impl BehaviorNode<Guard, Act> {
+        leaf(|guard: &mut Guard| {
+            guard.ammo += 1;
+            NodeResult::Running(Act::Loading)
+        })
+    }
+
+    fn notice(changed: Query<(), Changed<Guard>>, mut noticed: ResMut<Noticed>) {
+        noticed.0 += changed.iter().count() as u32;
+    }
+
+    let mut app = app(tally);
+    app.init_resource::<Noticed>()
+        .add_systems(Update, notice.after(BehaviorSystems));
+    let agent = app
+        .world_mut()
+        .spawn((Guard::default(), Behavior::for_tree(tally)))
+        .id();
+
+    // The first frame sees the blackboard as changed because it was just added.
+    app.update();
+    app.world_mut().resource_mut::<Noticed>().0 = 0;
+    app.update();
+
+    assert_eq!(
+        app.world().get::<Guard>(agent).unwrap().ammo,
+        2,
+        "the write itself lands, and the next tick reads it back"
+    );
+    assert_eq!(
+        app.world().resource::<Noticed>().0,
+        0,
+        "but no `Changed<Guard>` filter saw it"
+    );
 }
 
 // --- an act that changes without the component moving ------------------------
@@ -265,10 +516,13 @@ fn two_trees_over_one_blackboard_each_get_their_own_tick() {
 #[test]
 fn builders_sharing_a_tree_type_stay_separate() {
     fn armed(rounds: u32) -> impl BehaviorNode<Guard, Act> {
-        seq((
-            check(move |guard: &Guard| guard.ammo >= rounds),
-            leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
-        ))
+        leaf(move |guard: &mut Guard| {
+            if guard.ammo >= rounds {
+                NodeResult::Running(Act::Firing)
+            } else {
+                NodeResult::Failure
+            }
+        })
     }
 
     fn careful() -> impl BehaviorNode<Guard, Act> {

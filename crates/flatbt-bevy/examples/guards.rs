@@ -4,6 +4,9 @@
 //! tree that decides what each guard should be *doing*, and ordinary systems
 //! that match the act and do it. No tree here changes the world.
 //!
+//! One guard is relieved part way through, which is the other half of the
+//! contract: stopping an agent takes its standing order back with it.
+//!
 //! ```sh
 //! cargo run -p flatbt-bevy --example guards
 //! ```
@@ -283,19 +286,30 @@ fn main() {
         Guard::default(),
         Behavior::for_tree(guard_tree),
     ));
-    app.world_mut().spawn((
-        Name("Brun"),
-        Post(6.0),
-        Ammo(0),
-        Destination::default(),
-        Guard::default(),
-        Behavior::for_tree(guard_tree),
-    ));
+    let brun = app
+        .world_mut()
+        .spawn((
+            Name("Brun"),
+            Post(6.0),
+            Ammo(0),
+            Destination::default(),
+            Guard::default(),
+            Behavior::for_tree(guard_tree),
+        ))
+        .id();
 
     for tick in 1..=8 {
         if tick == 3 {
             println!("-- alarm raised --");
             app.world_mut().resource_mut::<Alarm>().raised = true;
+        }
+        if tick == 5 {
+            // Stopping an agent is removing what made it one. Brun is in the
+            // middle of marching at the intruder; the standing order goes with
+            // the `Behavior`, so `movement` stops moving him that tick and
+            // `stand_easy` picks him up instead.
+            println!("-- Brun is relieved --");
+            app.world_mut().entity_mut(brun).stop_behavior(guard_tree);
         }
         println!("tick {tick}");
         app.update();

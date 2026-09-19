@@ -294,6 +294,7 @@ good place to decide who gets it.
 | --- | --- |
 | `BehaviorPlugin::for_tree(builder)` | Builds one tree and adds its tick; `.in_schedule(..)`, `.parallel()`, `.tick_mode(..)` |
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
+| `stop_behavior(builder)`, `restart_behavior(builder)` | Stop an agent or send it back to the root, on `Commands` or `EntityWorldMut` |
 | `Behavior::tick` | The tick itself, for a game that registers its own system |
 | `BehaviorNode<C, A>` | What a tree over blackboard `C` deciding `A` is; also names a subtree |
 | `Tick` | What a tick does with one agent: `Evaluate`, `Resume` or `Skip` |
@@ -317,6 +318,35 @@ This is also what an *action* is. A node never changes the world: it starts
 something, the act appears, a system does the work, and `is_in_progress` watches
 the world until it is done. `Reload` neither fills the magazine nor knows how
 long that takes — it says `Reloading` and waits for `refill` to say otherwise.
+
+The act belongs to the tick, which also takes it back. An entity is an agent
+while it carries a `Behavior` and its blackboard; remove either and it stops
+deciding, so its standing order is released rather than left for the world to go
+on obeying:
+
+```rust,ignore
+commands.entity(guard).stop_behavior(guard_tree);   // the act goes with it
+commands.entity(guard).restart_behavior(guard_tree); // still an agent, back at the root
+```
+
+Stopping releases the act as the component goes — a removal hook, not a system —
+so it does not wait for a tick that may never come, and it holds for a despawn
+and for swapping one tree for another. An agent that keeps its `Behavior` but
+loses its blackboard is stopped too: it has nothing to decide from.
+
+These take the builder because a `Behavior`'s type cannot be written down: a
+builder's return type is opaque, so neither `remove::<Behavior<Guard, Act, _>>()`
+nor a query over it can be spelled. Naming the tree by its builder is how
+everything else here names it.
+
+### The blackboard is input
+
+Nodes get `&mut` to the blackboard — it is how they leave notes for each other —
+but the tick passes it with change detection bypassed, so those writes are
+invisible to `Changed<C>` and anything built on it. That is deliberate: a gather
+rewrites the blackboard every tick anyway, and marking a whole population changed
+every frame would drag the rest of the engine along. Anything the world should
+notice is an act.
 
 ### Gather, decide, act
 
@@ -353,9 +383,11 @@ fn careful() -> impl BehaviorNode<Guard, Act> { armed(3) }
 fn reckless() -> impl BehaviorNode<Guard, Act> { armed(1) }
 ```
 
-Spell the builder the same way at both sites. `shoot` and `shoot as fn() -> _`
-are different names for the same tree; the second is writable, so
-`Behavior<Guard, Act, fn() -> _>` can appear in a query.
+Spell the builder the same way at both sites: `shoot` and `shoot as fn() -> _`
+are different names for the same tree, and mixing them gives an agent whose tree
+no tick matches. The type itself stays unwritable either way — a builder's return
+type is opaque — which is why touching an agent's `Behavior` goes through
+`stop_behavior` and `restart_behavior` rather than a query.
 
 Only the builder's *type* selects the tree, and `Behavior` does not keep the
 value: the tree was built once at registration. A closure that captures

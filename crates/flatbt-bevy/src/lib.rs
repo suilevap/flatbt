@@ -16,7 +16,6 @@
 //! #[derive(Component, Default)]
 //! struct Guard {
 //!     ammo: u32,
-//!     reloading_for: u32,
 //! }
 //!
 //! // 2. What it decides. An order to the world, not a change to it.
@@ -27,13 +26,21 @@
 //! }
 //!
 //! // 3. A tree over the two. `Act` is declared nowhere but this signature.
+//! //
+//! // Each node that keeps the guard busy carries the condition that ends it:
+//! // while a node is running, no entry mode consults anything above it, so a
+//! // `check` over the firing leaf would never be asked a second time and the
+//! // guard would fire on an empty magazine.
 //! fn shoot() -> impl BehaviorNode<Guard, Act> {
 //!     select((
-//!         seq((
-//!             check(|guard: &Guard| guard.ammo > 0),
-//!             leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
-//!         )),
-//!         leaf(|_: &mut Guard| NodeResult::Running(Act::Loading)),
+//!         leaf(|guard: &mut Guard| match guard.ammo {
+//!             0 => NodeResult::Failure,
+//!             _ => NodeResult::Running(Act::Firing),
+//!         }),
+//!         leaf(|guard: &mut Guard| match guard.ammo {
+//!             0 => NodeResult::Running(Act::Loading),
+//!             _ => NodeResult::Success,
+//!         }),
 //!     ))
 //! }
 //!
@@ -83,6 +90,24 @@
 //! written in place, so an agent that keeps doing the same kind of thing never
 //! moves archetype.
 //!
+//! ## Who owns what
+//!
+//! **The act belongs to the tick.** It writes it, and it takes it back -- when
+//! the tree decides nothing, and when the agent stops running the tree at all.
+//! An entity is an agent while it has a [`Behavior`] and its blackboard;
+//! removing either stops it, and its standing order is released rather than
+//! left for the world to go on obeying. [`BehaviorCommands`] does both without
+//! naming a type that cannot be named. A game may read the act freely, and
+//! writing to it only lasts until the next tick.
+//!
+//! **The blackboard belongs to the game.** It is the tree's input, gathered by
+//! the game's own systems. Nodes do get `&mut` to it -- it is how they leave
+//! notes for each other -- but the tick passes it with change detection
+//! bypassed, so those writes are invisible to `Changed<C>` and to anything
+//! built on it. That is deliberate: a gather rewrites the blackboard every tick
+//! anyway, and marking a whole population changed every frame would drag the
+//! rest of the engine along. Anything the world should notice is an act.
+//!
 //! There is no way to issue an ECS command from a node. `Commands` borrows the
 //! world and would put lifetimes back into every signature; the act is the way
 //! out, and a system that needs `Commands` has them where it matches the act.
@@ -104,4 +129,6 @@ pub mod prelude;
 
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub use stagger::{act_every, evaluate_every};
-pub use tree::{Behavior, BehaviorNode, BehaviorTree, Tick, TickFn, TreeBuilder};
+pub use tree::{
+    Behavior, BehaviorCommands, BehaviorNode, BehaviorTree, Tick, TickFn, TreeBuilder,
+};
