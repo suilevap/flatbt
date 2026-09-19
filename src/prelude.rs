@@ -7,7 +7,7 @@ pub use flatbt_core::{
 };
 
 #[cfg(feature = "action")]
-pub use flatbt_nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
+pub use flatbt_nodes::{ActionNode, Ask, BtAction, BtCancel, CancelOnDrop, Request, action, ask};
 #[cfg(feature = "choose")]
 pub use flatbt_nodes::{Choose, ChooseNode, choose};
 #[cfg(feature = "scope")]
