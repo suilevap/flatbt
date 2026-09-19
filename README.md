@@ -116,6 +116,27 @@ The act is what a driver applies to the world. Nothing in the tree touches it
 after the update returns, so it is also what a driver can store, compare against
 last update's, or hand to whatever carries decisions out.
 
+Nothing constrains the act type either — it is only carried. An enum keeps the
+whole vocabulary in one place and allocates nothing; a `Box<dyn Act>` whose
+implementations apply themselves leaves the driver with no `match` at all, and a
+new kind of order becomes a new type rather than an edit to an existing file, at
+the price of an allocation per deciding update:
+
+```rust,ignore
+match update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act() {
+    Some(Act::WalkTo(to)) => guard.step_towards(to),   // enum
+    ..
+}
+
+match update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act() {
+    Some(act) => act.apply(&mut guard),                // Box<dyn Act>
+    None => {}
+}
+```
+
+The [acts](examples/acts.rs) and [acts_dyn](examples/acts_dyn.rs) examples are
+the same guard and the same tree in both forms, and print the same trace.
+
 ## Tree and state layout
 
 Full diagram: [tree and state](docs/design/tree-state.md).
@@ -240,6 +261,8 @@ cargo run --example resume
 
 | Example | Shows |
 | --- | --- |
+| [acts](examples/acts.rs) | What a tree decides, as an enum the driver matches |
+| [acts_dyn](examples/acts_dyn.rs) | The same, with the act as a trait object |
 | [synchronous](examples/synchronous.rs) | Composition and custom policy |
 | [resume](examples/resume.rs) | Wait across updates, then continue |
 | [revalidation](examples/revalidation.rs) | Preserve or preempt a saved branch |

@@ -259,3 +259,56 @@ fn a_tree_that_decides_nothing_still_runs() {
     assert_eq!(result, NodeResult::Success);
     assert_eq!(fighter.ammo, 0);
 }
+
+// --- the act need not be an enum ---------------------------------------------
+
+/// Nothing in FlatBT constrains the act type: it is only carried. So it can be
+/// a trait object whose implementations apply themselves, which costs an
+/// allocation per deciding update and buys a driver with no `match` in it.
+#[test]
+fn the_act_can_be_a_trait_object() {
+    trait Order {
+        fn apply(&self, fighter: &mut Fighter);
+    }
+
+    struct Approach(f32);
+
+    impl Order for Approach {
+        fn apply(&self, fighter: &mut Fighter) {
+            fighter.position = self.0;
+        }
+    }
+
+    struct Walk;
+
+    impl BtAction<Fighter, Box<dyn Order>> for Walk {
+        type State = ();
+
+        fn start(&self, _: &mut Fighter, _: ()) -> Option<()> {
+            Some(())
+        }
+
+        fn is_in_progress(&self, _: &(), fighter: &Fighter, _: ()) -> bool {
+            fighter.position != fighter.player
+        }
+
+        fn tick(&self, _: &mut (), fighter: &mut Fighter, _: ()) -> Box<dyn Order> {
+            Box::new(Approach(fighter.player))
+        }
+    }
+
+    let tree = seq((check(|f: &Fighter| f.ammo > 0), action(Walk)));
+    let mut state = BtState::new(&tree);
+    let mut fighter = Fighter {
+        ammo: 1,
+        player: 9.0,
+        ..Fighter::default()
+    };
+
+    // The driver applies whatever it was handed, without knowing what it is.
+    let order = update(&tree, &mut state, &mut fighter, EntryMode::Evaluate)
+        .act()
+        .expect("still walking");
+    order.apply(&mut fighter);
+    assert_eq!(fighter.position, 9.0);
+}
