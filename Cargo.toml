@@ -31,6 +31,14 @@ flatbt-nodes = { workspace = true, optional = true }
 flatbt-scope = { workspace = true, optional = true }
 
 [[example]]
+name = "acts"
+required-features = ["action"]
+
+[[example]]
+name = "acts_dyn"
+required-features = ["action"]
+
+[[example]]
 name = "action"
 required-features = ["action"]
 
