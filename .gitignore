@@ -1,3 +1,6 @@
 /target/
+# Nested crates build into their own target directory, which the anchored
+# pattern above does not reach.
+**/target/
 /.idea/
 .DS_Store
