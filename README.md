@@ -229,6 +229,253 @@ State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
 the outcome. Drop has no context argument; the handle must own cancellation access.
 See the [external action example](examples/external_action.rs).
 
+## Bevy
+
+Enable the `bevy` feature. A tree reads a blackboard component and returns what
+the agent is doing; the tick writes that into an act component, and ordinary
+systems match it and do the work. A node never changes the world.
+
+```toml
+flatbt = { path = "../FlatBT", features = ["bevy"] }
+```
+
+```rust,ignore
+use bevy::prelude::*;
+use flatbt::bevy::prelude::*;
+
+/// What the tree reads: an aggregate view of the world for this agent.
+#[derive(Component, Default)]
+struct Guard { ammo: u32, alarm: bool, reload_left: u32 }
+
+/// What it decides. An order to the world, not a change to it.
+#[derive(Component, Clone, Copy, PartialEq)]
+enum Act { MarchingTo(f32), Firing, Reloading }
+
+fn guard_tree() -> impl BehaviorNode<Guard, Act> {
+    select((
+        seq((check(alarm_raised), action(FireAt))),
+        seq((check(|g: &Guard| g.ammo == 0), action(Reload))),
+        action(MarchTo { where_to: |g: &Guard| g.intruder }),
+    ))
+}
+
+app.add_plugins(BehaviorPlugin::for_tree(guard_tree))
+    .add_systems(Update, gather.before(BehaviorSystems))
+    .add_systems(Update, (march, shoot, refill).after(BehaviorSystems));
+
+commands.spawn((Ammo(2), Guard::default(), Behavior::for_tree(guard_tree)));
+```
+
+One system then carries the act out, and never mentions the tree, the
+blackboard, or FlatBT. Prefer a single exhaustive `match` over a system per
+variant: adding an act stops it compiling until it is handled, where a system
+per variant would silently ignore it.
+
+```rust,ignore
+fn carry_out(mut guards: Query<(&Act, &mut Ammo, &mut Destination)>) {
+    for (act, mut ammo, mut destination) in guards.iter_mut() {
+        let mut headed_for = None;
+        match act {
+            // Handed to whoever owns movement -- a path request, an animation
+            // state, whatever that subsystem reads.
+            Act::MarchingTo(target) => headed_for = Some(*target),
+            Act::Firing => ammo.0 = ammo.0.saturating_sub(1),
+            Act::Reloading => ammo.0 = (ammo.0 + 3).min(6),
+        }
+        destination.set_if_neq(Destination(headed_for));
+    }
+}
+```
+
+An arm need not do the work: delegating is often the point, and the act is a
+good place to decide who gets it.
+
+| API | Behavior |
+| --- | --- |
+| `BehaviorPlugin::for_tree(builder)` | Builds one tree and adds its tick; `.in_schedule(..)`, `.parallel()`, `.tick_mode(..)` |
+| `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
+| `stop_behavior(builder)`, `restart_behavior(builder)` | Stop an agent or send it back to the root, on `Commands` or `EntityWorldMut` |
+| `Behavior::tick` | The tick itself, for a game that registers its own system |
+| `BehaviorNode<C, A>` | What a tree over blackboard `C` deciding `A` is; also names a subtree |
+| `Tick` | What a tick does with one agent: `Evaluate`, `Resume` or `Skip` |
+| `evaluate_every`, `act_every` | Periodic revalidation, staggered across agents |
+| `BehaviorSystems` | Set containing every tick, for ordering game systems |
+
+### The act is the interface
+
+An agent doing something carries its act component; an agent whose tree ended
+carries none. So `Query<&Act>` is exactly the agents with a standing order, and
+`Query<&Name, (With<Guard>, Without<Act>)>` is exactly the idle ones — no flags,
+and nothing to clear.
+
+An act that only *changes* is written in place with `set_if_neq`, so an agent
+that keeps doing the same kind of thing never moves archetype. Only appearing
+and disappearing costs an insert or a remove, and those are batched. That is
+what makes this affordable: a standing `MarchingTo(x)` that follows a moving
+target is a value write per tick, not an archetype move.
+
+This is also what an *action* is. A node never changes the world: it starts
+something, the act appears, a system does the work, and `is_in_progress` watches
+the world until it is done. `Reload` neither fills the magazine nor knows how
+long that takes — it says `Reloading` and waits for `refill` to say otherwise.
+
+The act belongs to the tick, which also takes it back. An entity is an agent
+while it carries a `Behavior` and its blackboard; remove either and it stops
+deciding, so its standing order is released rather than left for the world to go
+on obeying:
+
+```rust,ignore
+commands.entity(guard).stop_behavior(guard_tree);   // the act goes with it
+commands.entity(guard).restart_behavior(guard_tree); // still an agent, back at the root
+```
+
+Stopping releases the act as the component goes — a removal hook, not a system —
+so it does not wait for a tick that may never come, and it holds for a despawn
+and for swapping one tree for another. An agent that keeps its `Behavior` but
+loses its blackboard is stopped too: it has nothing to decide from.
+
+These take the builder because a `Behavior`'s type cannot be written down: a
+builder's return type is opaque, so neither `remove::<Behavior<Guard, Act, _>>()`
+nor a query over it can be spelled. Naming the tree by its builder is how
+everything else here names it.
+
+### The blackboard is input
+
+Nodes get `&mut` to the blackboard — it is how they leave notes for each other —
+but the tick passes it with change detection bypassed, so those writes are
+invisible to `Changed<C>` and anything built on it. That is deliberate: a gather
+rewrites the blackboard every tick anyway, and marking a whole population changed
+every frame would drag the rest of the engine along. Anything the world should
+notice is an act.
+
+### Gather, decide, act
+
+Filling the blackboard is the game's, deliberately. A real gather is several
+systems at several rates: one for what is cheap enough every tick, another for a
+raycast, another for a path query that only agents already in combat should pay
+for. Ordering them is what Bevy is for:
+
+```rust,ignore
+app.add_systems(Update, (gather_cheap, gather_visibility).before(BehaviorSystems))
+   .add_systems(Update, find_cover.before(BehaviorSystems).run_if(on_timer(..)))
+   .add_systems(Update, carry_out.after(BehaviorSystems));
+```
+
+There is no way to issue an ECS command from a node: `Commands` borrows the
+world and would put lifetimes back into every node signature. The act is the way
+out, and a system that needs `Commands` has them where it matches the act.
+
+### What lives where
+
+A tree is an immutable definition, so it is built once into a resource. The
+component holds only what is per-agent: the saved state of a suspended
+invocation, sized exactly for that tree. Nothing is allocated, nothing is
+reference counted, and dispatch stays static.
+
+The builder function is the tree's name. It appears once at registration, where
+it is called, and once per agent, where it only fixes the type; none of the three
+type parameters is ever written out. Identity is the builder rather than the tree
+type, so two builders may return the same tree type with different node
+configuration and stay separate:
+
+```rust,ignore
+fn careful() -> impl BehaviorNode<Guard, Act> { armed(3) }
+fn reckless() -> impl BehaviorNode<Guard, Act> { armed(1) }
+```
+
+Spell the builder the same way at both sites: `shoot` and `shoot as fn() -> _`
+are different names for the same tree, and mixing them gives an agent whose tree
+no tick matches. The type itself stays unwritable either way — a builder's return
+type is opaque — which is why touching an agent's `Behavior` goes through
+`stop_behavior` and `restart_behavior` rather than a query.
+
+Only the builder's *type* selects the tree, and `Behavior` does not keep the
+value: the tree was built once at registration. A closure that captures
+configuration therefore configures nothing at the agent. Vary a tree with a
+second builder function, not with captured values.
+
+An agent whose tree was never registered ticks under no system and matches no
+query — as with any component whose system is missing, nothing happens.
+
+### Ticking
+
+`BehaviorPlugin::for_tree(builder)` builds the tree and adds its tick when the
+app is built, so the tick is in place before any agent exists and any schedule
+will do: `First` through `Last`, `FixedUpdate`, or one the game runs itself. It
+also carries that tree's ordering, run conditions and `.parallel()`.
+
+What a tick does with one agent is the blackboard's answer, per agent per tick:
+
+```rust,ignore
+BehaviorPlugin::for_tree(guard_tree).tick_mode(|guard: &Guard| {
+    if guard.alarm_changed { Tick::Evaluate }
+    else if guard.walking { Tick::Skip }
+    else { Tick::Resume }
+})
+```
+
+`Evaluate` is the default because it is the answer that cannot be wrong. The
+other two are optimisations that cost an agent responsiveness and never change
+what it does once it runs — a tree that breaks under one of them has a bug.
+
+`Skip` does not enter the tree at all and leaves both the suspended invocation
+and the standing act alone, so the systems carrying that act out keep seeing it.
+It is the one thing a guard inside the tree cannot do: once a tree is suspended,
+no entry mode consults a child above the one it is in.
+
+For a tree that should rethink periodically, `evaluate_every` answers on a period
+without putting the whole population on one frame; each agent's slot comes from
+its `Entity`, so nothing is stored. `act_every` is the same with `Skip` between
+slots, for a tree whose every action is carried out by systems.
+
+### Turn based, and stopping
+
+Nothing here assumes a frame loop. Register the tick in whatever schedule the
+turn runs in with `in_schedule`, and gate whose turn it is with `Tick::Skip`:
+
+```rust,ignore
+BehaviorPlugin::for_tree(fighter)
+    .in_schedule(TurnPhase)
+    .tick_mode(|agent: &Agent| if agent.has_turn { Tick::Resume } else { Tick::Skip })
+```
+
+A turn spanning several ticks needs no extra state: the invocation waits exactly
+where it was, and so does the act. Stopping every tree at once is a run
+condition on the set, which freezes both the same way:
+
+```rust,ignore
+app.configure_sets(Update, BehaviorSystems.run_if(not(paused)));
+```
+
+`.parallel()` spreads agents across the task pool and accepts the same trees. It
+needs `bevy_ecs`'s `multi_threaded` feature, which the full `bevy` crate
+enables. Two *different* trees overlap only if their blackboards and acts
+differ, since Bevy schedules on declared component access rather than on which
+entities match.
+
+### Authoring
+
+Trees are written with FlatBT's own API, with no Bevy-specific constructors:
+`seq`, `select`, `check`, `leaf`, `choose!`, `scope!`, `action` and custom
+`BtNode`s all take a plain blackboard and act as written. A subtree is a function
+returning a node, so it composes into any tree by being called:
+
+```rust,ignore
+fn fire_at_intruder() -> impl BehaviorNode<Guard, Act> { /* ... */ }
+```
+
+A custom node names both directly, with no lifetimes to carry:
+
+```rust,ignore
+impl BtNode<Guard, Act> for Reload { /* ... */ }
+```
+
+Tree state must be `Sync`, which Bevy requires of every component.
+
+```sh
+cargo run -p flatbt-bevy --example guards
+```
+
 ## Custom nodes
 
 Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and
@@ -296,6 +543,7 @@ flatbt = { path = "../FlatBT", default-features = false, features = ["choose", "
 | `choose` | `choose!`, `ChooseNode`, `Choose` |
 | `scope` | `flatbt::scope`: local storage, bindings, `scope!` |
 | `action` | `BtAction`, `action`, cancellation helpers |
+| `bevy` | `flatbt::bevy`: blackboard and act components, tick plugin |
 
 Features are independent. Cargo combines features enabled by all consumers.
 Core APIs are always available. Direct dependencies are also supported:
@@ -305,7 +553,10 @@ Core APIs are always available. Direct dependencies are also supported:
 flatbt-core = { path = "../FlatBT/crates/flatbt-core" }
 flatbt-nodes = { path = "../FlatBT/crates/flatbt-nodes", features = ["choose", "action"] }
 flatbt-scope = { path = "../FlatBT/crates/flatbt-scope" }
+flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
 ```
+
+`flatbt-bevy` targets Bevy 0.19 and requires Rust 1.95.
 
 ### Tuple limits
 
