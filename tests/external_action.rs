@@ -1,4 +1,8 @@
-use NodeResult::{Failure, Running, Success};
+use NodeResult::{Failure, Success};
+
+/// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
+#[allow(non_upper_case_globals)]
+const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::{BtState, EntryMode, NodeResult, action, check, select, seq, update};
 
 #[path = "../examples/support/external_action.rs"]
@@ -17,7 +21,7 @@ fn external_progress_needs_no_bt_ticks_and_completion_advances_the_sequence() {
             frames: 1,
         }),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut agent = Agent::default();
     assert_eq!(
         update(&root, &mut state, &mut agent, EntryMode::Resume),
@@ -60,7 +64,7 @@ fn preemption_cannot_cancel_the_replacement_and_reset_stops_external_work() {
             frames: 5,
         }),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut agent = Agent::default();
     assert_eq!(
         update(&root, &mut state, &mut agent, EntryMode::Resume),
@@ -98,7 +102,7 @@ fn externally_removed_work_is_not_reported_as_success() {
         name: "move",
         frames: 2,
     });
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut agent = Agent::default();
     assert_eq!(
         update(&root, &mut state, &mut agent, EntryMode::Resume),

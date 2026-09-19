@@ -4,7 +4,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use NodeResult::{Failure, Running, Success};
+use NodeResult::{Failure, Success};
+
+/// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
+#[allow(non_upper_case_globals)]
+const Running: NodeResult = NodeResult::RUNNING;
 
 use flatbt::{BtNode, EntryMode, NodeResult, leaf, select, seq};
 
@@ -24,7 +28,7 @@ fn evaluate_preserves_sequence_progress_but_rescans_selector() {
     }
 
     let sequence = seq((leaf(gate), wait_frames(1)));
-    let mut state = BtState::new(&sequence);
+    let mut state: BtState<_, _> = BtState::new(&sequence);
     let mut ctx = Context {
         gate_open: true,
         checks: 0,
@@ -41,7 +45,7 @@ fn evaluate_preserves_sequence_progress_but_rescans_selector() {
     assert_eq!(ctx.checks, 1);
 
     let selector = select((leaf(gate), wait_frames(1)));
-    let mut state = BtState::new(&selector);
+    let mut state: BtState<_, _> = BtState::new(&selector);
     let mut ctx = Context {
         gate_open: false,
         checks: 0,
@@ -124,7 +128,7 @@ fn failed_candidate_preserves_existing_state_for_evaluate() {
             drops: old_drops.clone(),
         },
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     assert_eq!(
         update(&tree, &mut state, &mut ctx, EntryMode::Resume),
@@ -169,7 +173,7 @@ fn higher_priority_running_candidate_preempts_and_drops_old_path() {
             drops: old_drops.clone(),
         },
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     assert_eq!(
         update(&tree, &mut state, &mut ctx, EntryMode::Resume),

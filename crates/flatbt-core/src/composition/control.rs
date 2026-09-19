@@ -71,9 +71,10 @@ pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Chi
     ControlNode { policy, children }
 }
 
-impl<C, A: ParamValue, P: BtControl<C>, Children, S> BtNode<C, A> for ControlNode<P, Children>
+impl<C, A, Params: ParamValue, P: BtControl<C>, Children, S> BtNode<C, A, Params>
+    for ControlNode<P, Children>
 where
-    Children: for<'a> BtChildren<C, <A::Shape as ParamShape>::Value<'a>, State = S>,
+    Children: for<'a> BtChildren<C, A, <Params::Shape as ParamShape>::Value<'a>, State = S>,
     S: Default + Send + 'static,
 {
     type State = ControlState<P::State, S>;
@@ -82,9 +83,9 @@ where
         &self,
         state: &mut Self::State,
         ctx: &mut C,
-        params: A,
+        params: Params,
         mode: EntryMode,
-    ) -> NodeResult {
+    ) -> NodeResult<A> {
         let mut params = params.into_value();
         let active_child_index = self.children.active_child_index(&state.children);
         let mut op = match (mode, active_child_index) {
@@ -108,10 +109,11 @@ where
                         &mut state.children,
                         child_index,
                         ctx,
-                        A::Shape::reborrow(&mut params),
+                        Params::Shape::reborrow(&mut params),
                         mode,
                     ) {
-                        NodeResult::Running => return NodeResult::Running,
+                        // The act comes from whichever child actually ran.
+                        running @ NodeResult::Running(_) => return running,
                         NodeResult::Success => self.policy.child_succeeded(
                             &mut state.inner,
                             ctx,

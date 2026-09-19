@@ -116,15 +116,15 @@ pub trait WithParams: Sized {
 
 impl<N> WithParams for N {}
 
-impl<C, L: 'static, N, B, S> BtNode<C, &mut L> for Bound<N, B>
+impl<C, A, L: 'static, N, B, S> BtNode<C, A, &mut L> for Bound<N, B>
 where
     B: ParamBinding<L>,
-    N: for<'a> BtNode<C, B::Params<'a>, State = S>,
+    N: for<'a> BtNode<C, A, B::Params<'a>, State = S>,
     S: Default + Send + 'static,
 {
     type State = S;
 
-    fn update(&self, state: &mut S, ctx: &mut C, locals: &mut L, mode: EntryMode) -> NodeResult {
+    fn update(&self, state: &mut S, ctx: &mut C, locals: &mut L, mode: EntryMode) -> NodeResult<A> {
         let Some(params) = self.binding.get(locals) else {
             return NodeResult::error(format_args!(
                 "bound input is unavailable for {}",
@@ -142,10 +142,10 @@ pub fn no_params<N>(node: N) -> WithoutParams<N> {
     WithoutParams(node)
 }
 
-impl<C, P, N: BtNode<C>> BtNode<C, P> for WithoutParams<N> {
+impl<C, A, P, N: BtNode<C, A>> BtNode<C, A, P> for WithoutParams<N> {
     type State = N::State;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult {
+    fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult<A> {
         self.0.update(state, ctx, (), mode)
     }
 }

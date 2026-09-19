@@ -8,7 +8,11 @@ use flatbt::{BtNode, EntryMode, NodeResult, check, control, leaf, select, seq};
 
 #[path = "../examples/support/mod.rs"]
 mod support;
-use NodeResult::{Failure, Running, Success};
+use NodeResult::{Failure, Success};
+
+/// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
+#[allow(non_upper_case_globals)]
+const Running: NodeResult = NodeResult::RUNNING;
 use support::Repeat;
 
 #[path = "../examples/support/wait_frames.rs"]
@@ -28,7 +32,7 @@ fn sequence_resumes_wait_and_fires_in_the_completion_update() {
             Success
         }),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut trace = vec![];
     for _ in 0..3 {
         assert_eq!(
@@ -66,7 +70,7 @@ fn selector_resumes_selected_branch_without_rescanning_priority() {
         }),
         wait_frames(1),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context::default();
     assert_eq!(
         update(&tree, &mut state, &mut ctx, EntryMode::Resume),
@@ -124,7 +128,7 @@ impl BtNode<Vec<EntryMode>> for SuspendOnce {
 fn repeated_child_gets_fresh_state_after_terminal_result() {
     let drops = Arc::new(AtomicUsize::new(0));
     let tree = control(Repeat(2), (SuspendOnce(drops.clone()),));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut modes = vec![];
     assert_eq!(
         update(&tree, &mut state, &mut modes, EntryMode::Resume),
@@ -156,8 +160,8 @@ fn repeated_child_gets_fresh_state_after_terminal_result() {
 fn separate_instances_own_and_drop_their_suspended_state() {
     let drops = Arc::new(AtomicUsize::new(0));
     let tree = seq((SuspendOnce(drops.clone()),));
-    let mut first = BtState::new(&tree);
-    let mut second = BtState::new(&tree);
+    let mut first: BtState<_, _> = BtState::new(&tree);
+    let mut second: BtState<_, _> = BtState::new(&tree);
     let mut modes = vec![];
     assert_eq!(
         update(&tree, &mut first, &mut modes, EntryMode::Resume),
@@ -193,7 +197,7 @@ fn failure_after_suspension_releases_path_and_runs_fallback() {
             Success
         }),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut modes = vec![];
     assert_eq!(
         update(&tree, &mut state, &mut modes, EntryMode::Resume),
@@ -243,7 +247,7 @@ fn a_resumed_branch_that_fails_falls_through_below_it_not_back_above() {
             Success
         }),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = World::default();
 
     assert_eq!(
@@ -314,7 +318,7 @@ fn composed_state_drops_descendants_before_parents() {
         },
     };
     let mut trace = Trace::default();
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     assert_eq!(
         update(&tree, &mut state, &mut trace, EntryMode::Resume),
         Running
@@ -332,7 +336,7 @@ fn composed_state_drops_descendants_before_parents() {
 fn wrong_root_is_rejected_without_losing_the_saved_continuation() {
     let root = wait_frames(1);
     let other_root = wait_frames(5);
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     assert_eq!(
         update(&root, &mut state, &mut (), EntryMode::Resume),
         Running

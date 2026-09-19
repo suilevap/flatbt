@@ -37,7 +37,7 @@ fn main() {
             }),
         )),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut agent = Agent::default();
     for (update_index, urgent, mode) in [
         (1, false, EntryMode::Resume),

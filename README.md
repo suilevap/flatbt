@@ -33,7 +33,7 @@ let tree = seq((
     }),
 ));
 
-let mut state = BtState::new(&tree);
+let mut state: BtState<_, _> = BtState::new(&tree);
 let mut ammo = 1;
 assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
 assert_eq!(ammo, 0);
@@ -61,6 +61,60 @@ wants it can re-enter with `Evaluate` when a resumed update fails.
 A completed child can be followed by another child in the same update.
 During revalidation, a failed candidate preserves the old branch; a new Running
 candidate replaces it and drops its state.
+
+## What a tree decides
+
+An update says whether the invocation ended, and if it did not, what the agent
+is now *doing*. That is the payload of `Running`:
+
+```rust
+enum NodeResult<A = ()> { Success, Failure, Running(A) }
+```
+
+So an act cannot exist without something running, and nothing can run without
+saying what it is doing — both by type, not by convention. A tree that finished
+is not doing anything, and `Success` carries nothing.
+
+```rust
+#[derive(Debug, PartialEq)]
+enum Act { MoveTo(f32), Reloading }
+
+fn fighter() -> impl BtNode<Fighter, Act> {          // `Act` unifies; never written out
+    select((
+        seq((check(|f: &Fighter| f.ammo == 0), action(Reload))),
+        action(Chase),
+    ))
+}
+
+let doing = update(&tree, &mut state, &mut fighter, EntryMode::Evaluate).act();
+assert_eq!(doing, Some(Act::MoveTo(120.0)));
+```
+
+An action says it in `tick`, which is asked on every update it is still in
+progress — so a long action follows a moving target, restating where it is going
+without ending:
+
+```rust
+impl BtAction<Fighter, Act> for Chase {
+    type State = ();
+    fn start(&self, _: &mut Fighter, _: ()) -> Option<()> { Some(()) }
+    fn is_in_progress(&self, _: &(), f: &Fighter, _: ()) -> bool { !f.arrived() }
+    fn tick(&self, _: &mut (), f: &mut Fighter, _: ()) -> Act { Act::MoveTo(f.player) }
+}
+```
+
+Nodes that never occupy the agent never name the act type: `check` stays generic
+over it, and so does any node that only succeeds or fails. The type therefore
+unifies from the nodes that do decide, and appears in the tree's signature
+without being declared anywhere else.
+
+A tree whose nodes decide nothing uses the default act type, `()`. Say so where
+the state is made — `BtState<_, _>` — and write `NodeResult::RUNNING` for a
+running update that has nothing to report.
+
+The act is what a driver applies to the world. Nothing in the tree touches it
+after the update returns, so it is also what a driver can store, compare against
+last update's, or hand to whatever carries decisions out.
 
 ## Tree and state layout
 
@@ -134,13 +188,16 @@ See the [macro example](examples/scoped_params.rs) and
 ```text
 start → None         → Failure
 start → Some(state)  → is_in_progress
-    true             → tick → Running
+    true             → tick → Running(act)
     false            → complete → Success/Failure
 ```
 
 Later updates query progress without restarting. State needs `Send + 'static`,
-but not `Default`. Tick defaults to no work. All callbacks run inline and may
-execute on a branch later rejected. Effects are not rolled back.
+but not `Default`. `tick` both does inline work and returns the act — required
+rather than defaulted, because an action is what occupies the agent and being
+busy without saying with what is what this design removes. For a tree that
+decides nothing the act type is `()` and the body is empty. All callbacks run
+inline and may execute on a branch later rejected. Effects are not rolled back.
 
 For external work, `start` submits a request, `is_in_progress` observes it, and
 `complete` handles its outcome. The external system advances independently;
@@ -153,8 +210,10 @@ See the [external action example](examples/external_action.rs).
 
 ## Custom nodes
 
-Implement `BtNode<C, P = ()>`. Keep configuration in the definition and mutable
-invocation data in `State: Default + Send + 'static`.
+Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and
+mutable invocation data in `State: Default + Send + 'static`.
+`A` is what the node reports the agent is doing while it runs; a node that never
+runs stays generic over it and never names it.
 `P` carries parameters separately from context; the root supplies `()`.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 

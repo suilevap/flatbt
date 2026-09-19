@@ -31,11 +31,11 @@ impl<F, Children> ChooseNode<F, Children> {
 }
 
 // A local wrapper permits an inherent constructor across the crate boundary.
-impl<C, P, F, Children> BtNode<C, P> for ChooseNode<F, Children>
+impl<C, A, P, F, Children> BtNode<C, A, P> for ChooseNode<F, Children>
 where
-    ControlNode<Choose<F>, Children>: BtNode<C, P>,
+    ControlNode<Choose<F>, Children>: BtNode<C, A, P>,
 {
-    type State = <ControlNode<Choose<F>, Children> as BtNode<C, P>>::State;
+    type State = <ControlNode<Choose<F>, Children> as BtNode<C, A, P>>::State;
 
     fn update(
         &self,
@@ -43,7 +43,7 @@ where
         ctx: &mut C,
         params: P,
         mode: EntryMode,
-    ) -> NodeResult {
+    ) -> NodeResult<A> {
         self.0.update(state, ctx, params, mode)
     }
 }
@@ -61,7 +61,7 @@ where
 ///     }),
 ///     _ => check(|value: &usize| *value > 0),
 /// });
-/// let mut state = BtState::new(&tree);
+/// let mut state: BtState<_, _> = BtState::new(&tree);
 /// let mut value = 0;
 /// assert_eq!(update(&tree, &mut state, &mut value, EntryMode::Resume), NodeResult::Success);
 /// assert_eq!(value, 1);

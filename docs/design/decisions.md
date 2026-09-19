@@ -133,3 +133,44 @@ nothing.
 
 Pinned by `a_resumed_branch_that_fails_falls_through_below_it_not_back_above`
 in `tests/resume.rs`.
+
+## 2026-09-19 — A tree returns what the agent is doing
+
+`NodeResult` gains the act: `enum NodeResult<A = ()> { Success, Failure, Running(A) }`,
+and `BtNode<C, A = (), P = ()>` threads it. An update now says whether the
+invocation ended, and if it did not, what the agent is now doing.
+
+The shape is the point. An act cannot exist without something running, and
+nothing can run without saying what it is doing -- both by type rather than by
+convention, which is why the act is the payload of `Running` rather than a
+second return value or an out-parameter. "Busy with nothing" and "decided
+something, then failed" both stop being representable.
+
+`BtAction::tick` returns the act and is no longer defaulted, for the same
+reason: an action is what occupies the agent. It is asked on every update the
+action is still in progress, which is what lets a long action follow a moving
+target -- restating where it is going without ending. That is the two-level
+split the design wanted: `Act::MoveTo(pos)` is the low-level order, and a
+`Chase`/`TakeCover` action is the standing intent that keeps rewriting it.
+
+The act type unifies from the nodes that decide. `check` never names it, nor
+does any node that only succeeds or fails, so `fn fighter() -> impl BtNode<Fighter, Act>`
+declares `Act` nowhere but there. No associated type and no registry: all nodes
+of a tree already agree on `C`, and `A` rides the same inference.
+
+Costs, accepted:
+
+- A node that keeps the agent busy in a deciding tree must produce an act. A
+  waiting node needs an `Act::Idle` or similar. This was weighed as a feature:
+  an agent that is waiting is still doing something, and now it has to say so.
+- `Running` carries a value, so a tree that decides nothing writes
+  `NodeResult::RUNNING` (32 sites) and names its state as `BtState<_, _>` to pin
+  the default act type, since nothing else in such a tree mentions it.
+- `Option<A>` is copied up the stack through each control node rather than
+  written through a `&mut`. Chosen deliberately: the act is conceptually part of
+  the result, and an act type is a small enum.
+
+This lands before the Bevy integration and independently of it. What it unlocks
+there: the tick query becomes `(&mut Behavior, &Bb, &mut Act)` -- a read-only
+blackboard and the decision as its own component -- so the `ActionComponent`
+bridge and the `Split` wrapper both stop being needed.

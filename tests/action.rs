@@ -1,6 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use NodeResult::{Failure, Running, Success};
+use NodeResult::{Failure, Success};
+
+/// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
+#[allow(non_upper_case_globals)]
+const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::{BtAction, BtState, EntryMode, NodeResult, action, check, leaf, select, seq, update};
 
 type Trace = Arc<Mutex<Vec<String>>>;
@@ -90,7 +94,7 @@ fn task(name: &'static str, steps: Option<usize>, succeeds: bool) -> impl flatbt
 #[test]
 fn rejected_start_fails_without_progress_completion_or_tick() {
     let root = task("rejected", None, true);
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut ctx = Context::default();
     assert_eq!(
         update(&root, &mut state, &mut ctx, EntryMode::Resume),
@@ -105,7 +109,7 @@ fn rejected_start_fails_without_progress_completion_or_tick() {
 fn initially_finished_action_completes_immediately_with_either_terminal_result() {
     for succeeds in [true, false] {
         let root = task("instant", Some(0), succeeds);
-        let mut state = BtState::new(&root);
+        let mut state: BtState<_, _> = BtState::new(&root);
         let mut ctx = Context::default();
         assert_eq!(
             update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
@@ -135,7 +139,7 @@ fn completion_advances_sequence_and_ticks_next_action_in_the_same_update() {
         }),
         task("fire", Some(1), true),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut ctx = Context::default();
     assert_eq!(
         update(&root, &mut state, &mut ctx, EntryMode::Resume),
@@ -180,7 +184,7 @@ fn speculative_completion_loses_or_new_action_preempts_without_ticking_old_actio
             )),
             task("move", Some(3), true),
         ));
-        let mut state = BtState::new(&root);
+        let mut state: BtState<_, _> = BtState::new(&root);
         let mut ctx = Context::default();
         assert_eq!(
             update(&root, &mut state, &mut ctx, EntryMode::Resume),
@@ -243,7 +247,7 @@ fn rejecting_a_running_candidate_does_not_undo_its_inline_tick() {
         Reject(task("candidate", Some(2), true)),
         leaf(|_: &mut Context| Running),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut ctx = Context::default();
     assert_eq!(
         update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
@@ -266,7 +270,7 @@ fn rejecting_a_running_candidate_does_not_undo_its_inline_tick() {
 #[test]
 fn reset_and_drop_cancel_uncompleted_state_once_without_extra_updates() {
     let root = seq((task("work", Some(1), true),));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut ctx = Context::default();
     state.reset();
     assert_eq!(
@@ -303,7 +307,7 @@ fn terminal_revalidation_cancels_the_old_running_branch() {
         check(|ctx: &Context| ctx.urgent),
         task("move", Some(3), true),
     ));
-    let mut state = BtState::new(&root);
+    let mut state: BtState<_, _> = BtState::new(&root);
     let mut ctx = Context::default();
     assert_eq!(
         update(&root, &mut state, &mut ctx, EntryMode::Resume),

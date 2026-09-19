@@ -17,7 +17,7 @@
 /// use flatbt_core::{BtNode, BtState, EntryMode, NodeResult, update};
 /// use flatbt_scope::scope;
 /// struct Observe;
-/// impl BtNode<Vec<u32>, &u32> for Observe {
+/// impl BtNode<Vec<u32>, (), &u32> for Observe {
 ///     type State = ();
 ///     fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: EntryMode) -> NodeResult {
 ///         ctx.push(*input);
@@ -32,7 +32,7 @@
 ///         Observe.with(walk_pos);
 ///     }
 /// };
-/// let mut state = BtState::new(&tree);
+/// let mut state: BtState<_, _> = BtState::new(&tree);
 /// let mut trace = Vec::new();
 /// assert_eq!(update(&tree, &mut state, &mut trace, EntryMode::Resume), NodeResult::Success);
 /// assert_eq!(trace, [90, 10]);
@@ -44,7 +44,7 @@
 /// use flatbt_core::{BtNode, BtState, EntryMode, NodeResult};
 /// use flatbt_scope::scope;
 /// struct TwoOutputs;
-/// impl BtNode<(), (&mut Option<u32>, &mut Option<u32>)> for TwoOutputs {
+/// impl BtNode<(), (), (&mut Option<u32>, &mut Option<u32>)> for TwoOutputs {
 ///     type State = ();
 ///     fn update(&self, _: &mut (), _: &mut (), _: (&mut Option<u32>, &mut Option<u32>), _: EntryMode) -> NodeResult {
 ///         NodeResult::Success

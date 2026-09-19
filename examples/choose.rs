@@ -38,28 +38,28 @@ fn main() {
                 }),
             )),
         }),
-        Order::Idle => leaf(|_: &mut Blackboard| NodeResult::Running),
+        Order::Idle => leaf(|_: &mut Blackboard| NodeResult::RUNNING),
     });
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut bb = Blackboard {
         order: Order::Move,
         close_range: false,
     };
     assert_eq!(
         update(&tree, &mut state, &mut bb, EntryMode::Resume),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
 
     bb.order = Order::Attack;
     // Resume continues movement despite the changed order.
     assert_eq!(
         update(&tree, &mut state, &mut bb, EntryMode::Resume),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     // Evaluate selects attack and replaces the movement state.
     assert_eq!(
         update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     assert_eq!(
         update(&tree, &mut state, &mut bb, EntryMode::Resume),
@@ -69,7 +69,7 @@ fn main() {
     bb.order = Order::Idle;
     assert_eq!(
         update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
-        NodeResult::Running
+        NodeResult::RUNNING
     );
     state.reset();
 }

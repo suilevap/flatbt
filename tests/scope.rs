@@ -1,4 +1,8 @@
-use NodeResult::{Failure, Running, Success};
+use NodeResult::{Failure, Success};
+
+/// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
+#[allow(non_upper_case_globals)]
+const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::scope::{Read, WithParams, Write, bind, no_params, params, read, scope, write};
 use flatbt::{BtNode, BtState, EntryMode, NodeResult, action, leaf, select, seq, update};
 
@@ -39,8 +43,8 @@ fn named_bindings_distinguish_equal_types_and_survive_producer_and_consumer_susp
         no_params(wait::wait_frames(1)),
         action(Walk).with(read(|s: &PatrolLocals| s.walk_pos.as_ref())),
     )));
-    let mut first = BtState::new(&tree);
-    let mut second = BtState::new(&tree);
+    let mut first: BtState<_, _> = BtState::new(&tree);
+    let mut second: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut first, &mut world, EntryMode::Resume),
@@ -95,7 +99,7 @@ fn the_same_node_accepts_a_different_field_and_an_unrelated_scope_layout() {
             ),
         ))),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
@@ -107,7 +111,7 @@ fn the_same_node_accepts_a_different_field_and_an_unrelated_scope_layout() {
 #[test]
 fn a_node_can_request_an_input_and_a_different_output_of_the_same_type() {
     struct Offset;
-    impl BtNode<World, (&Vector2, &mut Option<Vector2>)> for Offset {
+    impl BtNode<World, (), (&Vector2, &mut Option<Vector2>)> for Offset {
         type State = ();
         fn update(
             &self,
@@ -133,7 +137,7 @@ fn a_node_can_request_an_input_and_a_different_output_of_the_same_type() {
         ),
         bind(LookAt, read(|s: &PatrolLocals| s.door_pos.as_ref())),
     )));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
@@ -151,7 +155,7 @@ fn missing_input_fails_the_branch_without_calling_the_consumer() {
             Success
         }),
     ));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
@@ -164,7 +168,7 @@ fn missing_input_fails_the_branch_without_calling_the_consumer() {
 #[test]
 fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
     struct Increment;
-    impl BtNode<(), &mut usize> for Increment {
+    impl BtNode<(), (), &mut usize> for Increment {
         type State = ();
         fn update(&self, _: &mut (), _: &mut (), value: &mut usize, _: EntryMode) -> NodeResult {
             *value += 1;
@@ -172,7 +176,7 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
         }
     }
     struct AssertTwo;
-    impl BtNode<(), &usize> for AssertTwo {
+    impl BtNode<(), (), &usize> for AssertTwo {
         type State = ();
         fn update(&self, _: &mut (), _: &mut (), value: &usize, _: EntryMode) -> NodeResult {
             assert_eq!(*value, 2);
@@ -186,7 +190,7 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
             bind(AssertTwo, read(|n: &usize| Some(n))),
         )),
     )));
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     assert_eq!(
         update(&tree, &mut state, &mut (), EntryMode::Resume),
         Running
@@ -200,7 +204,7 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
 #[test]
 fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
     struct Offset(f32);
-    impl BtNode<World, (&Vector2, &mut Option<Vector2>)> for Offset {
+    impl BtNode<World, (), (&Vector2, &mut Option<Vector2>)> for Offset {
         type State = ();
         fn update(
             &self,
@@ -214,7 +218,7 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
         }
     }
     struct Compare;
-    impl BtNode<World, (&Vector2, &Vector2)> for Compare {
+    impl BtNode<World, (), (&Vector2, &Vector2)> for Compare {
         type State = ();
         fn update(
             &self,
@@ -240,7 +244,7 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
             action(Walk).with(walk_pos);
         }
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
@@ -275,7 +279,7 @@ fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_c
         log: Log,
     }
     struct Pending;
-    impl BtNode<Context, &Resource> for Pending {
+    impl BtNode<Context, (), &Resource> for Pending {
         type State = Option<Resource>;
         fn update(
             &self,
@@ -310,7 +314,7 @@ fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_c
         done: false,
         log: log.clone(),
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     assert_eq!(
         update(&tree, &mut state, &mut ctx, EntryMode::Resume),
         Running
@@ -369,6 +373,7 @@ fn bindings_support_more_than_three_ordered_inputs_and_outputs() {
     impl
         BtNode<
             World,
+            (),
             (
                 &Vector2,
                 &Vector2,
@@ -411,7 +416,7 @@ fn bindings_support_more_than_three_ordered_inputs_and_outputs() {
             LookAt.with(second);
         }
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),
@@ -425,7 +430,7 @@ fn bindings_support_more_than_three_ordered_inputs_and_outputs() {
 }
 
 struct GetNextPatrolPos;
-impl BtNode<World, &mut Option<Vector2>> for GetNextPatrolPos {
+impl BtNode<World, (), &mut Option<Vector2>> for GetNextPatrolPos {
     type State = ();
 
     fn update(
@@ -442,7 +447,7 @@ impl BtNode<World, &mut Option<Vector2>> for GetNextPatrolPos {
 }
 
 struct GetVisibleDoorPos;
-impl BtNode<World, &mut Option<Vector2>> for GetVisibleDoorPos {
+impl BtNode<World, (), &mut Option<Vector2>> for GetVisibleDoorPos {
     type State = bool;
 
     fn update(
@@ -455,7 +460,7 @@ impl BtNode<World, &mut Option<Vector2>> for GetVisibleDoorPos {
         // Suspend before producing the value.
         if !*started {
             *started = true;
-            return NodeResult::Running;
+            return NodeResult::RUNNING;
         }
         *output = Some(world.visible_door);
         world.selections += 1;
@@ -476,7 +481,7 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
         ctx.next
     }
     struct Visit;
-    impl BtNode<Context, &u32> for Visit {
+    impl BtNode<Context, (), &u32> for Visit {
         type State = usize;
         fn update(
             &self,
@@ -504,7 +509,7 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
             sequence { Visit.with(b); }
         }
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut ctx = Context {
         next: 1,
         prefer_first: false,
@@ -556,7 +561,7 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
 #[test]
 fn action_callbacks_reborrow_mixed_parameters_without_copying_the_output() {
     struct Double;
-    impl flatbt::BtAction<Vec<u32>, (&u32, &mut Option<u32>)> for Double {
+    impl flatbt::BtAction<Vec<u32>, (), (&u32, &mut Option<u32>)> for Double {
         type State = bool;
         fn start(
             &self,
@@ -593,7 +598,7 @@ fn action_callbacks_reborrow_mixed_parameters_without_copying_the_output() {
         let output: u32;
         sequence { action(Double).with(input, out output); }
     };
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut trace = Vec::new();
     assert_eq!(
         update(&tree, &mut state, &mut trace, EntryMode::Resume),
@@ -636,7 +641,7 @@ fn scope_keeps_constructor_arguments_and_node_expressions_as_ordinary_rust() {
         }
     };
     assert_eq!(constructions.get(), 1);
-    let mut state = BtState::new(&tree);
+    let mut state: BtState<_, _> = BtState::new(&tree);
     let mut world = world();
     assert_eq!(
         update(&tree, &mut state, &mut world, EntryMode::Resume),

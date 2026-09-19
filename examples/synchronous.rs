@@ -65,7 +65,7 @@ fn main() {
     ] {
         let result = update(
             &tree,
-            &mut BtState::new(&tree),
+            &mut BtState::<_, _>::new(&tree),
             &mut agent,
             EntryMode::Resume,
         );
