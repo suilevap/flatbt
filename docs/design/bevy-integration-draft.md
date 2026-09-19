@@ -48,8 +48,8 @@ typed view of the agent. Reifying it would add the cost without buying anything.
 
 **The blackboard is an ordinary component, and so is the decision.** A tree over
 `C` deciding `A` is ticked by a system whose query is
-`(Entity, &mut Behavior<C, A, F>, Option<&mut C>, Option<&mut A>)`, and nothing
-in the crate says what is in either component.
+`(Entity, &mut Behavior<C, A, F>, &mut C, Option<&mut A>)`, and nothing in the
+crate says what is in either component.
 
 Three systems, in the order Bevy already states:
 
@@ -87,8 +87,9 @@ gone. What is left is one plugin, one component pair, and the tick.
 - **Changed:** written in place with `set_if_neq`. No archetype move, which is
   the common case -- a standing `MarchingTo(x)` that follows a moving target is
   a value write per tick.
-- **Appeared:** queued and inserted as a batch.
-- **Gone:** the component is removed.
+- **Appeared** or **gone:** a command, since both are structural. The parallel
+  tick takes one through `ParallelCommands`, whose queues are per thread, so
+  nothing is shared and nothing is locked.
 
 That ordering matters for cost. An earlier design made each decision its own
 marker component, so an agent that switched between firing and reloading moved
@@ -96,12 +97,12 @@ archetype every time; over 100 000 constantly re-deciding agents that cost
 0.5-0.8 ms of frame per registered decision. One act component whose *value*
 changes costs a comparison.
 
-In the parallel tick each batch keeps its own arriving/leaving lists and hands
-them over in `Drop`, which `for_each_init` runs when the batch ends. So the
-shared lock is taken once per batch that had a structural change, and not at all
-by a batch where every agent kept doing what it was doing. Taking it per agent
-would have made the first frame of a population -- when every act appears at
-once -- a queue on one mutex.
+An earlier round buffered the structural changes per batch and inserted them with
+`try_insert_batch`, which meant a shared list behind a mutex in the parallel
+tick. Nothing measured said the batching was worth that: structural changes are
+the rare case by construction, so `ParallelCommands` is both simpler and
+lock-free. If a load test ever shows the mass-arrival frame wanting batched
+inserts, it comes back with a number behind it.
 
 ### The act's lifetime, and who ends it
 
@@ -110,18 +111,19 @@ afterwards, and a `Skip`ped agent keeps its order for as many ticks as it is
 skipped. So "the tree stopped deciding" has to be an event someone raises, and
 the tick cannot raise it for an agent that has left its query.
 
-An entity is an agent while it has both a `Behavior` and its blackboard:
+Stopping an agent is removing its `Behavior`, and the act is released by that
+component's own `on_remove` hook -- so it holds for a plain removal, for a
+despawn, and for swapping one tree for another. A system watching
+`RemovedComponents` would have been the ordinary Bevy answer, but it only runs
+when its schedule runs, and the tick may live in a schedule the game runs itself,
+a turn phase that may not come for minutes. A hook runs where the removal
+happened.
 
-- **the blackboard goes** -- the agent is still in the tick's query, which is why
-  the query takes `Option<&mut C>`. It decides nothing, so its act is removed and
-  its suspended invocation is dropped: that invocation was suspended reading a
-  world this agent no longer has.
-- **the `Behavior` goes**, by removal, by despawn, or by being replaced with
-  another tree -- the act is released by `Behavior`'s own `on_remove` hook. A
-  system watching `RemovedComponents` would have been the ordinary Bevy answer,
-  but it only runs when its schedule runs, and the tick may live in a schedule
-  the game runs itself -- a turn phase that may not come for minutes. A hook runs
-  where the removal happened.
+Taking the *blackboard* away instead is not a second way to stop an agent: it
+then matches no tick query and keeps its last order. Covering that case cost an
+`Option<&mut C>` on the hot query and a rule about what happens to a suspended
+invocation, to recover from a state a game has no reason to put an agent in.
+One way to stop, stated, beats recovering from every way.
 
 The hook looks the act type up by `TypeId` rather than naming it, so it costs
 nothing for a tree that decides nothing (`A = ()` is not a component, so there is

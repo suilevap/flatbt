@@ -1,9 +1,8 @@
-use std::sync::{Mutex, PoisonError};
-
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::component::Mutable;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
+use bevy_ecs::system::ParallelCommands;
 
 use crate::{Behavior, BehaviorTree, Tick, TickFn, TreeBuilder};
 
@@ -162,176 +161,109 @@ where
 /// act component at all -- "doing nothing" is the absence of the component, not
 /// a variant of it. An act that merely *changes* is written in place, so an
 /// agent that keeps doing the same kind of thing never moves archetype.
-///
-/// The blackboard is `Option<&mut C>` so that an agent that lost it is still
-/// visited: it is not running the tree, and the tick has to take back whatever
-/// it was last told to do.
 type Agents<'w, 's, C, A, F> = Query<
     'w,
     's,
     (
         Entity,
         &'static mut Behavior<C, A, F>,
-        Option<&'static mut C>,
+        &'static mut C,
         Option<&'static mut A>,
     ),
 >;
-
-/// One agent, as the tick query hands it over.
-type Agent<'w, C, A, F> = (
-    Entity,
-    Mut<'w, Behavior<C, A, F>>,
-    Option<Mut<'w, C>>,
-    Option<Mut<'w, A>>,
-);
 
 /// Ticks every agent running the tree named by `F`, in query order.
 fn tick_behaviors<C, A, F>(
     tree: Res<BehaviorTree<C, A, F>>,
     mut agents: Agents<C, A, F>,
-    mut changes: Local<Changes<A>>,
     mut commands: Commands,
 ) where
     C: Component<Mutability = Mutable>,
     A: Component<Mutability = Mutable> + PartialEq,
     F: TreeBuilder<C, A>,
 {
-    for agent in agents.iter_mut() {
-        tick_agent(&tree, agent, &mut changes);
+    for (entity, behavior, bb, held) in agents.iter_mut() {
+        apply(tick_agent(&tree, behavior, bb, held), entity, &mut commands);
     }
-    changes.flush(&mut commands);
 }
 
 /// Ticks every agent running the tree named by `F` across the task pool.
 fn tick_behaviors_parallel<C, A, F>(
     tree: Res<BehaviorTree<C, A, F>>,
     mut agents: Agents<C, A, F>,
-    mut commands: Commands,
+    commands: ParallelCommands,
 ) where
     C: Component<Mutability = Mutable>,
     A: Component<Mutability = Mutable> + PartialEq,
     F: TreeBuilder<C, A>,
 {
-    let shared = Mutex::new(Changes::new());
-    agents.par_iter_mut().for_each_init(
-        || Batch {
-            local: Changes::new(),
-            shared: &shared,
-        },
-        |batch, agent| tick_agent(&tree, agent, &mut batch.local),
-    );
-    let mut changes = shared.into_inner().unwrap_or_else(PoisonError::into_inner);
-    changes.flush(&mut commands);
+    agents
+        .par_iter_mut()
+        .for_each(|(entity, behavior, bb, held)| {
+            let change = tick_agent(&tree, behavior, bb, held);
+            // Only an act that appeared or went needs a command, and that is the
+            // rare case: an agent that keeps doing the same kind of thing had
+            // its act written in place above.
+            if !matches!(change, ActChange::Settled) {
+                commands.command_scope(|mut commands| apply(change, entity, &mut commands));
+            }
+        });
 }
 
-/// One agent's tick: enter the tree if it is running and the tick mode says to,
-/// and record what that did to its act.
+/// One agent's tick, and what it left for a command.
 fn tick_agent<C, A, F>(
     tree: &BehaviorTree<C, A, F>,
-    (entity, mut behavior, bb, held): Agent<'_, C, A, F>,
-    changes: &mut Changes<A>,
-) where
+    mut behavior: Mut<'_, Behavior<C, A, F>>,
+    mut bb: Mut<'_, C>,
+    held: Option<Mut<'_, A>>,
+) -> ActChange<A>
+where
     C: Component<Mutability = Mutable>,
     A: Component<Mutability = Mutable> + PartialEq,
     F: TreeBuilder<C, A>,
 {
-    let Some(mut bb) = bb else {
-        // No blackboard, no agent: it has nothing to decide from, so it decides
-        // nothing and the order it was last given is taken back. The invocation
-        // goes with it -- it was suspended in a world this agent no longer sees.
-        if behavior.is_running() {
-            behavior.restart();
-        }
-        if held.is_some() {
-            changes.leaving.push(entity);
-        }
-        return;
-    };
     // Whether a blackboard changed is the gather's business, not the tick's: it
     // is rewritten every tick anyway, and marking the whole population changed
     // would drag the rest of the engine along. Nodes may write to it -- it is
-    // how they talk to each other -- and those writes are *not* visible to
-    // `Changed<C>` either. The blackboard is the tree's input; its output is the
-    // act.
+    // how they leave notes for each other -- and those writes are *not* visible
+    // to `Changed<C>` either. The blackboard is the tree's input; its output is
+    // the act.
     let bb = bb.bypass_change_detection();
     let Some(mode) = tree.tick_mode()(bb).entry_mode() else {
         // Skipped: the suspended invocation and the standing act stay as they
         // are, and the systems carrying that act out keep seeing it.
-        return;
+        return ActChange::Settled;
     };
-    let decided = behavior.tick(tree.get(), bb, mode);
-    match (decided, held) {
+    match (behavior.tick(tree.get(), bb, mode), held) {
         // The common case by far: still doing something, so the component is
         // already there and only its contents can change.
         (Some(act), Some(mut held)) => {
             held.set_if_neq(act);
+            ActChange::Settled
         }
-        (Some(act), None) => changes.arriving.push((entity, act)),
-        (None, Some(_)) => changes.leaving.push(entity),
-        (None, None) => {}
+        (Some(act), None) => ActChange::Appeared(act),
+        (None, Some(_)) => ActChange::Gone,
+        (None, None) => ActChange::Settled,
     }
 }
 
-/// The acts a tick cannot write in place: one an agent did not have, and one an
-/// agent stopped having. Both are structural, so both go through a command.
-struct Changes<A> {
-    arriving: Vec<(Entity, A)>,
-    leaving: Vec<Entity>,
+/// What a tick left for a command: an act appearing or going is a structural
+/// change, which a tick cannot make itself.
+enum ActChange<A> {
+    /// Written in place, or nothing to write.
+    Settled,
+    Appeared(A),
+    Gone,
 }
 
-impl<A> Changes<A> {
-    fn new() -> Self {
-        Self {
-            arriving: Vec::new(),
-            leaving: Vec::new(),
+fn apply<A: Component>(change: ActChange<A>, entity: Entity, commands: &mut Commands) {
+    match change {
+        ActChange::Settled => {}
+        ActChange::Appeared(act) => {
+            commands.entity(entity).try_insert(act);
         }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.arriving.is_empty() && self.leaving.is_empty()
-    }
-
-    fn append(&mut self, other: &mut Self) {
-        self.arriving.append(&mut other.arriving);
-        self.leaving.append(&mut other.leaving);
-    }
-}
-
-impl<A: Component> Changes<A> {
-    fn flush(&mut self, commands: &mut Commands) {
-        if !self.arriving.is_empty() {
-            commands.try_insert_batch(core::mem::take(&mut self.arriving));
-        }
-        for entity in self.leaving.drain(..) {
+        ActChange::Gone => {
             commands.entity(entity).try_remove::<A>();
         }
-    }
-}
-
-/// `Local<Changes<A>>` keeps the serial tick's buffers allocated between runs.
-impl<A> Default for Changes<A> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// One parallel batch's changes, handed to the shared list when the batch ends.
-///
-/// The lock is taken in `drop` rather than per agent: `for_each_init` builds one
-/// of these per batch and drops it when that batch is done, so a batch that
-/// changed nothing -- the common case, since most agents keep doing what they
-/// were doing -- never takes it at all.
-struct Batch<'a, A> {
-    local: Changes<A>,
-    shared: &'a Mutex<Changes<A>>,
-}
-
-impl<A> Drop for Batch<'_, A> {
-    fn drop(&mut self) {
-        if self.local.is_empty() {
-            return;
-        }
-        let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
-        shared.append(&mut self.local);
     }
 }

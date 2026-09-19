@@ -319,10 +319,9 @@ something, the act appears, a system does the work, and `is_in_progress` watches
 the world until it is done. `Reload` neither fills the magazine nor knows how
 long that takes — it says `Reloading` and waits for `refill` to say otherwise.
 
-The act belongs to the tick, which also takes it back. An entity is an agent
-while it carries a `Behavior` and its blackboard; remove either and it stops
-deciding, so its standing order is released rather than left for the world to go
-on obeying:
+The act belongs to the tick, which also takes it back. An agent is stopped by
+removing its `Behavior`, and its standing order is released rather than left for
+the world to go on obeying:
 
 ```rust,ignore
 commands.entity(guard).stop_behavior(guard_tree);   // the act goes with it
@@ -331,8 +330,9 @@ commands.entity(guard).restart_behavior(guard_tree); // still an agent, back at 
 
 Stopping releases the act as the component goes — a removal hook, not a system —
 so it does not wait for a tick that may never come, and it holds for a despawn
-and for swapping one tree for another. An agent that keeps its `Behavior` but
-loses its blackboard is stopped too: it has nothing to decide from.
+and for swapping one tree for another. Taking an agent's *blackboard* away is not
+a way to stop it: nothing ticks it then, and it keeps the last order it was
+given.
 
 These take the builder because a `Behavior`'s type cannot be written down: a
 builder's return type is opaque, so neither `remove::<Behavior<Guard, Act, _>>()`

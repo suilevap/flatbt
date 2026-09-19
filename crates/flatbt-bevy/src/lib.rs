@@ -94,11 +94,11 @@
 //!
 //! **The act belongs to the tick.** It writes it, and it takes it back -- when
 //! the tree decides nothing, and when the agent stops running the tree at all.
-//! An entity is an agent while it has a [`Behavior`] and its blackboard;
-//! removing either stops it, and its standing order is released rather than
-//! left for the world to go on obeying. [`BehaviorCommands`] does both without
-//! naming a type that cannot be named. A game may read the act freely, and
-//! writing to it only lasts until the next tick.
+//! Stopping is removing the [`Behavior`], which releases the standing order
+//! rather than leaving it for the world to go on obeying;
+//! [`BehaviorCommands::stop_behavior`] does that without naming a type that
+//! cannot be named. A game may read the act freely, and writing to it only
+//! lasts until the next tick.
 //!
 //! **The blackboard belongs to the game.** It is the tree's input, gathered by
 //! the game's own systems. Nodes do get `&mut` to it -- it is how they leave

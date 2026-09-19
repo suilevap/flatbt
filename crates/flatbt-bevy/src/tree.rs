@@ -124,15 +124,6 @@ pub enum Tick {
     Evaluate,
 }
 
-impl From<EntryMode> for Tick {
-    fn from(mode: EntryMode) -> Self {
-        match mode {
-            EntryMode::Resume => Tick::Resume,
-            EntryMode::Evaluate => Tick::Evaluate,
-        }
-    }
-}
-
 impl Tick {
     /// The entry mode, or `None` when the agent is not entered at all.
     pub fn entry_mode(self) -> Option<EntryMode> {
@@ -244,9 +235,10 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
 /// - [`restart`](Self::restart) drops the suspended invocation without stopping
 ///   the agent, so the next tick enters from the root.
 ///
-/// Removing the *blackboard* while leaving this component is not a way to pause
-/// an agent: an agent with no blackboard is not running the tree, so it decides
-/// nothing, and the tick releases its act and drops its invocation.
+/// An entity carrying this without a blackboard is ticked by nothing, and
+/// keeps whatever act it last had: stopping an agent is
+/// [`stop_behavior`](BehaviorCommands::stop_behavior), not taking its
+/// blackboard away.
 #[derive(Component)]
 #[component(on_remove = release_act::<A>)]
 pub struct Behavior<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> {
@@ -289,11 +281,6 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     /// component.
     pub fn restart(&mut self) {
         self.state = None;
-    }
-
-    /// Whether an invocation is suspended in this agent, waiting to be resumed.
-    pub fn is_running(&self) -> bool {
-        self.state.is_some()
     }
 
     /// Runs one update and hands back what the agent is now doing.

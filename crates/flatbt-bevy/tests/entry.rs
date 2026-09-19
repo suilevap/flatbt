@@ -178,9 +178,8 @@ fn a_run_condition_stops_the_tick_and_freezes_what_agents_are_doing() {
 }
 
 #[test]
-fn tick_converts_from_an_entry_mode() {
-    assert_eq!(Tick::from(EntryMode::Resume), Tick::Resume);
-    assert_eq!(Tick::from(EntryMode::Evaluate), Tick::Evaluate);
+fn skip_is_the_one_tick_that_does_not_enter_the_tree() {
     assert_eq!(Tick::Skip.entry_mode(), None);
     assert_eq!(Tick::Resume.entry_mode(), Some(EntryMode::Resume));
+    assert_eq!(Tick::Evaluate.entry_mode(), Some(EntryMode::Evaluate));
 }

@@ -60,7 +60,7 @@ enum Act {
 
 fn gather(mut guards: Query<(&Name, &Post, &Ammo, &mut Guard)>, alarm: Res<Alarm>) {
     for (name, post, ammo, mut guard) in guards.iter_mut() {
-        *guard.bypass_change_detection() = Guard {
+        *guard = Guard {
             name: name.0,
             post: post.0,
             ammo: ammo.0,

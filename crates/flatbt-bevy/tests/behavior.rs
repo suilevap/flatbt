@@ -106,7 +106,7 @@ fn the_act_goes_when_the_decision_does() {
 }
 
 #[test]
-fn an_agent_without_the_blackboard_decides_nothing() {
+fn an_agent_without_the_blackboard_is_skipped() {
     let mut app = app(shoot);
     let bare = app.world_mut().spawn(Behavior::for_tree(shoot)).id();
 
@@ -261,35 +261,6 @@ fn traced_app() -> App {
 
 fn modes(app: &App, agent: Entity) -> Vec<EntryMode> {
     app.world().get::<Trace>(agent).unwrap().0.clone()
-}
-
-/// An agent that keeps its `Behavior` but loses its blackboard is not running
-/// the tree either: it has nothing to decide from, so it decides nothing, and
-/// the invocation it was suspended in goes with the world it was reading.
-#[test]
-fn an_agent_that_loses_its_blackboard_stops_deciding() {
-    let mut app = traced_app();
-    let agent = app
-        .world_mut()
-        .spawn((Trace::default(), Behavior::for_tree(remembering)))
-        .id();
-    app.update();
-    app.update();
-    assert_eq!(modes(&app, agent), [EntryMode::Evaluate, EntryMode::Resume]);
-    assert_eq!(app.world().get::<Act>(agent), Some(&Act::Firing));
-
-    let trace = app.world_mut().entity_mut(agent).take::<Trace>().unwrap();
-    app.update();
-    assert_eq!(app.world().get::<Act>(agent), None, "nothing to decide from");
-
-    // Hand the blackboard back: the tree starts over rather than resuming into
-    // a node that was reading a world this agent no longer had.
-    app.world_mut().entity_mut(agent).insert(trace);
-    app.update();
-    assert_eq!(
-        modes(&app, agent),
-        [EntryMode::Evaluate, EntryMode::Resume, EntryMode::Evaluate]
-    );
 }
 
 /// `restart` forgets where the invocation was without stopping the agent.
@@ -575,7 +546,7 @@ fn builders_sharing_a_tree_type_stay_separate() {
 fn what_the_tree_sees_is_whatever_the_game_gathered() {
     fn raise_alarm(mut guards: Query<&mut Guard>) {
         for mut guard in guards.iter_mut() {
-            guard.bypass_change_detection().alarm = true;
+            guard.alarm = true;
         }
     }
 
