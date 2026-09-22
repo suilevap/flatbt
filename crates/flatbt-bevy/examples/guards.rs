@@ -79,7 +79,7 @@ fn gather(mut guards: Query<(&Name, &Post, &Ammo, &mut Guard)>, alarm: Res<Alarm
 /// minds. `Skip` pays off because a guard walking somewhere it already chose
 /// has nothing to decide until it arrives -- `march` is doing the walking, and
 /// the standing act is left in place for it.
-fn pace(guard: &Guard) -> Tick {
+fn pace(guard: &Guard, _: TickAt) -> Tick {
     if guard.alarm_changed {
         Tick::Evaluate
     } else {

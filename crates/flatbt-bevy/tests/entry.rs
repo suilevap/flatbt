@@ -46,7 +46,7 @@ fn count_frames(mut agents: Query<&mut Work>) {
     }
 }
 
-fn run(mode: fn(&Work) -> Tick, ticks: u32) -> Work {
+fn run(mode: flatbt_bevy::TickFn<Work>, ticks: u32) -> Work {
     let mut app = App::new();
     app.add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(mode))
         .add_systems(Update, count_frames.before(BehaviorSystems));
@@ -65,11 +65,11 @@ fn run(mode: fn(&Work) -> Tick, ticks: u32) -> Work {
 /// where it gets to.
 #[test]
 fn every_tick_mode_reaches_the_same_place_given_enough_ticks() {
-    assert_eq!(run(|_| Tick::Evaluate, 3).done, 3);
-    assert_eq!(run(|_| Tick::Resume, 3).done, 3);
+    assert_eq!(run(|_, _| Tick::Evaluate, 3).done, 3);
+    assert_eq!(run(|_, _| Tick::Resume, 3).done, 3);
     assert_eq!(
         run(
-            |work: &Work| {
+            |work: &Work, _| {
                 if work.frame.is_multiple_of(2) {
                     Tick::Evaluate
                 } else {
@@ -89,7 +89,7 @@ fn every_tick_mode_reaches_the_same_place_given_enough_ticks() {
 #[test]
 fn skip_leaves_the_standing_act_in_place() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(|work: &Work| {
+    app.add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(|work: &Work, _| {
         if work.awake { Tick::Resume } else { Tick::Skip }
     }));
     let agent = app
@@ -134,7 +134,7 @@ fn skip_leaves_the_standing_act_in_place() {
 #[test]
 fn skip_before_the_first_tick_leaves_the_agent_with_nothing() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(|_| Tick::Skip));
+    app.add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(|_, _| Tick::Skip));
     let agent = app
         .world_mut()
         .spawn((Work::default(), Behavior::for_tree(steps)))
@@ -156,7 +156,7 @@ fn a_run_condition_stops_the_tick_and_freezes_what_agents_are_doing() {
 
     let mut app = App::new();
     app.init_resource::<Paused>()
-        .add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(|_| Tick::Resume))
+        .add_plugins(BehaviorPlugin::for_tree(steps).tick_mode(|_, _| Tick::Resume))
         .configure_sets(
             Update,
             BehaviorSystems.run_if(|paused: Res<Paused>| !paused.0),

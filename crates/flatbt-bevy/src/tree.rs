@@ -1,5 +1,6 @@
 use core::any::TypeId;
 use core::marker::PhantomData;
+use core::time::Duration;
 
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
@@ -135,8 +136,21 @@ impl Tick {
     }
 }
 
-/// What a tick does with one agent, given its blackboard.
-pub type TickFn<C> = fn(&C) -> Tick;
+/// Which agent a tick is for, and when it falls.
+///
+/// The clock is Bevy's `Time`, which inside `FixedUpdate` is the fixed clock.
+/// Both durations are zero when the app has no `Time` resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TickAt {
+    pub entity: Entity,
+    /// Time elapsed since startup.
+    pub elapsed: Duration,
+    /// Time since the previous tick of this schedule.
+    pub delta: Duration,
+}
+
+/// What a tick does with one agent, given its blackboard and when it falls.
+pub type TickFn<C> = fn(&C, TickAt) -> Tick;
 
 /// The one tree named by `F`, built once and shared by every agent running it.
 ///

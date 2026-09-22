@@ -404,10 +404,12 @@ app is built, so the tick is in place before any agent exists and any schedule
 will do: `First` through `Last`, `FixedUpdate`, or one the game runs itself. It
 also carries that tree's ordering, run conditions and `.parallel()`.
 
-What a tick does with one agent is the blackboard's answer, per agent per tick:
+What a tick does with one agent is `tick_mode`'s answer, per agent per tick. It
+receives the blackboard and a `TickAt`: the agent's `Entity` and the schedule's
+`Time` (zero without one).
 
 ```rust,ignore
-BehaviorPlugin::for_tree(guard_tree).tick_mode(|guard: &Guard| {
+BehaviorPlugin::for_tree(guard_tree).tick_mode(|guard: &Guard, _| {
     if guard.alarm_changed { Tick::Evaluate }
     else if guard.walking { Tick::Skip }
     else { Tick::Resume }
@@ -428,6 +430,11 @@ without putting the whole population on one frame; each agent's slot comes from
 its `Entity`, so nothing is stored. `act_every` is the same with `Skip` between
 slots, for a tree whose every action is carried out by systems.
 
+```rust,ignore
+BehaviorPlugin::for_tree(guard_tree)
+    .tick_mode(|_, at| evaluate_every(Duration::from_millis(250), at))
+```
+
 ### Turn based, and stopping
 
 Nothing here assumes a frame loop. Register the tick in whatever schedule the
@@ -436,7 +443,7 @@ turn runs in with `in_schedule`, and gate whose turn it is with `Tick::Skip`:
 ```rust,ignore
 BehaviorPlugin::for_tree(fighter)
     .in_schedule(TurnPhase)
-    .tick_mode(|agent: &Agent| if agent.has_turn { Tick::Resume } else { Tick::Skip })
+    .tick_mode(|agent: &Agent, _| if agent.has_turn { Tick::Resume } else { Tick::Skip })
 ```
 
 A turn spanning several ticks needs no extra state: the invocation waits exactly
