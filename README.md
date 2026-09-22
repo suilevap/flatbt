@@ -491,7 +491,8 @@ fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
 suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 
 - Context mutations and ticks take effect immediately, including on failed branches.
-- `NodeResult::error` and `ControlOp::error` log to stderr and return Failure.
+- `NodeResult::error` and `ControlOp::error` report a diagnostic and return Failure.
+  Diagnostics go to stderr; `set_error_handler` sends them elsewhere.
   Ordinary Failure is silent.
 - User panics propagate. Reset state before reuse after an unwind.
 - Custom policies must terminate; there is no execution budget.

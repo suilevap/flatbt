@@ -5,4 +5,4 @@ mod node;
 
 pub use execution::{BtState, update};
 pub(crate) use node::log_error;
-pub use node::{BtNode, EntryMode, NodeResult};
+pub use node::{BtNode, EntryMode, ErrorHandler, NodeResult, set_error_handler};

@@ -1,3 +1,5 @@
+use std::sync::{PoisonError, RwLock};
+
 /// Success/Failure ends an invocation; Running preserves it.
 ///
 /// `A` is what an agent is *doing* while it runs. A node that occupies the
@@ -13,7 +15,8 @@ pub enum NodeResult<A = ()> {
 }
 
 impl<A> NodeResult<A> {
-    /// Logs to stderr and returns Failure. Use `Failure` directly for normal outcomes.
+    /// Reports a diagnostic and returns Failure. Use `Failure` directly for normal
+    /// outcomes. Diagnostics go to stderr unless [`set_error_handler`] says otherwise.
     pub fn error(message: impl std::fmt::Display) -> Self {
         log_error(message);
         Self::Failure
@@ -38,7 +41,27 @@ impl NodeResult<()> {
     pub const RUNNING: Self = Self::Running(());
 }
 
+/// Receives each diagnostic from [`NodeResult::error`] and
+/// [`ControlOp::error`](crate::ControlOp::error). Must not panic.
+pub type ErrorHandler = fn(&dyn std::fmt::Display);
+
+static ERROR_HANDLER: RwLock<ErrorHandler> = RwLock::new(write_to_stderr);
+
+/// Sends diagnostics to `handler` instead of stderr, process-wide. Use it to
+/// route them into a logger, or to observe them in tests.
+pub fn set_error_handler(handler: ErrorHandler) {
+    *ERROR_HANDLER
+        .write()
+        .unwrap_or_else(PoisonError::into_inner) = handler;
+}
+
 pub(crate) fn log_error(message: impl std::fmt::Display) {
+    // Copy the handler out so a slow or reentrant one holds no lock.
+    let handler = *ERROR_HANDLER.read().unwrap_or_else(PoisonError::into_inner);
+    handler(&message);
+}
+
+fn write_to_stderr(message: &dyn std::fmt::Display) {
     use std::io::Write;
     // Ignore stderr errors to keep diagnostics non-panicking.
     let _ = writeln!(std::io::stderr().lock(), "[flatbt] {message}");
