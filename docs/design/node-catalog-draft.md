@@ -59,15 +59,20 @@ question must be settled first.
 | `repeat(n, child)`, `retry(n, child)` | Count successes or failures inside the invocation. `Repeat` in `examples/support` becomes the catalog version. At most one restart per update (constraint 7). | P2 | S | fits |
 | `chance(p, rng, child)` | Enters the child with probability `p` on fresh entry only. | P3 | S | fits |
 
-`while_(cond, child)` cases, evaluated in this order on each update:
+`while_(cond, child)` loops a child that occupies the agent. Cases, evaluated
+in this order on each update:
 
 | Situation | Result |
 | --- | --- |
 | `cond` false on entry | Failure; the child never starts. |
-| `cond` false while the child is running | Abort the child. Result: open question, proposed Success (the loop ended). |
-| Child succeeds, `cond` still true | Restart the child, at most once per update. A second completion in the same update logs a diagnostic and fails. |
-| Child succeeds, `cond` no longer true | Failure. |
-| Child fails | Failure. |
+| `cond` false while the child is running | Abort the child; Success (the loop ended). |
+| Child succeeds after running, `cond` still true | Restart the child in the same update. |
+| Child succeeds after running, `cond` no longer true | Success (the loop ended). |
+| Child fails after running | Failure. |
+| Child completes, either way, without ever returning `Running` | Failure. A loop around an instant child would spin without an act to report (constraints 2 and 7), so it is treated as a misuse; a restart that completes instantly logs a diagnostic. |
+
+`guard` differs in two ways: it never restarts, and a condition that turns
+false fails it instead of ending it.
 
 Params: `guard` and `while_` forward scope parameters to the child, and the
 condition may read them (`Fn(&C, P) -> bool`), using the same `ParamValue`
@@ -182,8 +187,6 @@ for what shipped, and a decision-log entry.
 
 ## Open questions
 
-- `while_`: result when `cond` turns false while the child is still running.
-  Proposed Success; Failure would make it identical to `guard` in that case.
 - `while_` naming. Rust reserves `while`, so the choices are `while_`,
   `loop_while`, or `repeat_while`.
 - Should the utility scorer see scope params (`Fn(&C, P, usize)`)? That would
