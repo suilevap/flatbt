@@ -301,101 +301,40 @@ good place to decide who gets it.
 | `evaluate_every`, `act_every` | Periodic revalidation, staggered across agents |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
 
-### The act is the interface
+### Contracts
 
-An agent doing something carries its act component; an agent whose tree ended
-carries none. So `Query<&Act>` is exactly the agents with a standing order, and
-`Query<&Name, (With<Guard>, Without<Act>)>` is exactly the idle ones — no flags,
-and nothing to clear.
+- **The act is the interface.** An agent doing something carries its act
+  component; one whose tree ended carries none. `Query<&Act>` is exactly the
+  agents with a standing order, and `Without<Act>` the idle ones. A changed act
+  is written in place with `set_if_neq`; only appearing and disappearing cost an
+  insert or a remove, and those are batched.
+- **Nodes never change the world.** An action starts something, the act appears,
+  a system does the work, and `is_in_progress` watches the world until it is
+  done. A node cannot issue `Commands`; a system that needs them has them where
+  it matches the act.
+- **Stopping releases the act.** Removing the `Behavior`, by despawn or by
+  swapping trees included, takes the act back in a removal hook:
 
-An act that only *changes* is written in place with `set_if_neq`, so an agent
-that keeps doing the same kind of thing never moves archetype. Only appearing
-and disappearing costs an insert or a remove, and those are batched. That is
-what makes this affordable: a standing `MarchingTo(x)` that follows a moving
-target is a value write per tick, not an archetype move.
+  ```rust,ignore
+  commands.entity(guard).stop_behavior(guard_tree);   // the act goes with it
+  commands.entity(guard).restart_behavior(guard_tree); // still an agent, back at the root
+  ```
 
-This is also what an *action* is. A node never changes the world: it starts
-something, the act appears, a system does the work, and `is_in_progress` watches
-the world until it is done. `Reload` neither fills the magazine nor knows how
-long that takes — it says `Reloading` and waits for `refill` to say otherwise.
+  Removing the blackboard does not stop an agent: nothing ticks it, and it keeps
+  its last act.
+- **The blackboard is input.** The game fills it before `BehaviorSystems`, in as
+  many systems and at as many rates as it likes. Node writes to it bypass change
+  detection, so `Changed<C>` never sees them.
+- **The builder names the tree.** It is called once, at registration, into a
+  resource; `Behavior::for_tree` only takes its type, so a closure's captures
+  configure nothing at the agent. Vary a tree with a second builder function.
+  Spell it the same at both sites: `shoot` and `shoot as fn() -> _` name
+  different trees. A `Behavior`'s type cannot be written out, which is why
+  `stop_behavior` and `restart_behavior` take the builder.
+- **An agent costs its suspended state**, sized for its tree, with no allocation.
+  An agent whose tree was never registered is ticked by nothing.
 
-The act belongs to the tick, which also takes it back. An agent is stopped by
-removing its `Behavior`, and its standing order is released rather than left for
-the world to go on obeying:
-
-```rust,ignore
-commands.entity(guard).stop_behavior(guard_tree);   // the act goes with it
-commands.entity(guard).restart_behavior(guard_tree); // still an agent, back at the root
-```
-
-Stopping releases the act as the component goes — a removal hook, not a system —
-so it does not wait for a tick that may never come, and it holds for a despawn
-and for swapping one tree for another. Taking an agent's *blackboard* away is not
-a way to stop it: nothing ticks it then, and it keeps the last order it was
-given.
-
-These take the builder because a `Behavior`'s type cannot be written down: a
-builder's return type is opaque, so neither `remove::<Behavior<Guard, Act, _>>()`
-nor a query over it can be spelled. Naming the tree by its builder is how
-everything else here names it.
-
-### The blackboard is input
-
-Nodes get `&mut` to the blackboard — it is how they leave notes for each other —
-but the tick passes it with change detection bypassed, so those writes are
-invisible to `Changed<C>` and anything built on it. That is deliberate: a gather
-rewrites the blackboard every tick anyway, and marking a whole population changed
-every frame would drag the rest of the engine along. Anything the world should
-notice is an act.
-
-### Gather, decide, act
-
-Filling the blackboard is the game's, deliberately. A real gather is several
-systems at several rates: one for what is cheap enough every tick, another for a
-raycast, another for a path query that only agents already in combat should pay
-for. Ordering them is what Bevy is for:
-
-```rust,ignore
-app.add_systems(Update, (gather_cheap, gather_visibility).before(BehaviorSystems))
-   .add_systems(Update, find_cover.before(BehaviorSystems).run_if(on_timer(..)))
-   .add_systems(Update, carry_out.after(BehaviorSystems));
-```
-
-There is no way to issue an ECS command from a node: `Commands` borrows the
-world and would put lifetimes back into every node signature. The act is the way
-out, and a system that needs `Commands` has them where it matches the act.
-
-### What lives where
-
-A tree is an immutable definition, so it is built once into a resource. The
-component holds only what is per-agent: the saved state of a suspended
-invocation, sized exactly for that tree. Nothing is allocated, nothing is
-reference counted, and dispatch stays static.
-
-The builder function is the tree's name. It appears once at registration, where
-it is called, and once per agent, where it only fixes the type; none of the three
-type parameters is ever written out. Identity is the builder rather than the tree
-type, so two builders may return the same tree type with different node
-configuration and stay separate:
-
-```rust,ignore
-fn careful() -> impl BehaviorNode<Guard, Act> { armed(3) }
-fn reckless() -> impl BehaviorNode<Guard, Act> { armed(1) }
-```
-
-Spell the builder the same way at both sites: `shoot` and `shoot as fn() -> _`
-are different names for the same tree, and mixing them gives an agent whose tree
-no tick matches. The type itself stays unwritable either way — a builder's return
-type is opaque — which is why touching an agent's `Behavior` goes through
-`stop_behavior` and `restart_behavior` rather than a query.
-
-Only the builder's *type* selects the tree, and `Behavior` does not keep the
-value: the tree was built once at registration. A closure that captures
-configuration therefore configures nothing at the agent. Vary a tree with a
-second builder function, not with captured values.
-
-An agent whose tree was never registered ticks under no system and matches no
-query — as with any component whose system is missing, nothing happens.
+The reasoning behind each is in the crate docs: `cargo doc -p flatbt-bevy --open`.
 
 ### Ticking
 
@@ -455,22 +394,11 @@ entities match.
 
 ### Authoring
 
-Trees are written with FlatBT's own API, with no Bevy-specific constructors:
-`seq`, `select`, `check`, `leaf`, `choose!`, `scope!`, `action` and custom
-`BtNode`s all take a plain blackboard and act as written. A subtree is a function
-returning a node, so it composes into any tree by being called:
-
-```rust,ignore
-fn fire_at_intruder() -> impl BehaviorNode<Guard, Act> { /* ... */ }
-```
-
-A custom node names both directly, with no lifetimes to carry:
-
-```rust,ignore
-impl BtNode<Guard, Act> for Reload { /* ... */ }
-```
-
-Tree state must be `Sync`, which Bevy requires of every component.
+Trees use FlatBT's own API over a plain blackboard and act type: `seq`,
+`select`, `check`, `leaf`, `choose!`, `scope!`, `action` and custom `BtNode`s. A
+subtree is a function returning `impl BehaviorNode<Guard, Act>`; a custom node
+implements `BtNode<Guard, Act>`. Tree state must be `Sync`, as Bevy requires of
+every component.
 
 ```sh
 cargo run -p flatbt-bevy --example guards
