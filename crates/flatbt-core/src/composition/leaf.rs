@@ -47,3 +47,50 @@ impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
         }
     }
 }
+
+/// A child that runs only while a predicate holds.
+pub struct Guarded<F, N> {
+    predicate: F,
+    child: N,
+}
+
+/// Runs `child` while `predicate` holds; fails without entering it otherwise.
+///
+/// Checked on every update, Resume included, so it ends a running child the
+/// moment its condition stops holding. A [`check`] before it in a [`seq`] is
+/// asked only on entry: while the child runs, the sequence goes straight back
+/// to it.
+///
+/// ```
+/// use flatbt_core::{BtState, EntryMode, NodeResult, guard, leaf, update};
+///
+/// let tree = guard(|ammo: &u32| *ammo > 0, leaf(|_: &mut u32| NodeResult::RUNNING));
+/// let mut state = BtState::new(&tree);
+/// let mut ammo = 1;
+/// assert!(update(&tree, &mut state, &mut ammo, EntryMode::Resume).is_running());
+/// ammo = 0;
+/// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Failure);
+/// ```
+///
+/// [`seq`]: crate::seq
+pub fn guard<F, N>(predicate: F, child: N) -> Guarded<F, N> {
+    Guarded { predicate, child }
+}
+
+impl<C, A, P, F: Fn(&C) -> bool, N: BtNode<C, A, P>> BtNode<C, A, P> for Guarded<F, N> {
+    type State = N::State;
+
+    fn update(
+        &self,
+        state: &mut N::State,
+        ctx: &mut C,
+        params: P,
+        mode: EntryMode,
+    ) -> NodeResult<A> {
+        if (self.predicate)(ctx) {
+            self.child.update(state, ctx, params, mode)
+        } else {
+            NodeResult::Failure
+        }
+    }
+}

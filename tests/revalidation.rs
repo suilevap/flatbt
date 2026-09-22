@@ -10,7 +10,7 @@ use NodeResult::{Failure, Success};
 #[allow(non_upper_case_globals)]
 const Running: NodeResult = NodeResult::RUNNING;
 
-use flatbt::{BtNode, EntryMode, NodeResult, leaf, select, seq};
+use flatbt::{BtNode, EntryMode, NodeResult, check, guard, leaf, select, seq};
 
 #[path = "../examples/support/wait_frames.rs"]
 mod wait;
@@ -200,4 +200,29 @@ fn higher_priority_running_candidate_preempts_and_drops_old_path() {
     );
     state.reset();
     assert_eq!(new_drops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_guard_ends_its_running_child_where_a_check_before_it_is_not_asked_again() {
+    fn open(open: &bool) -> bool {
+        *open
+    }
+    for mode in [EntryMode::Resume, EntryMode::Evaluate] {
+        let checked = seq((check(open), wait_frames(1)));
+        let mut state: BtState<_, _> = BtState::new(&checked);
+        let mut gate = true;
+        assert_eq!(update(&checked, &mut state, &mut gate, mode), Running);
+        gate = false;
+        assert_eq!(update(&checked, &mut state, &mut gate, mode), Success);
+
+        let guarded = guard(open, wait_frames(1));
+        let mut state: BtState<_, _> = BtState::new(&guarded);
+        let mut gate = true;
+        assert_eq!(update(&guarded, &mut state, &mut gate, mode), Running);
+        gate = false;
+        assert_eq!(update(&guarded, &mut state, &mut gate, mode), Failure);
+        // The failure dropped the child's state, so it starts over.
+        gate = true;
+        assert_eq!(update(&guarded, &mut state, &mut gate, mode), Running);
+    }
 }

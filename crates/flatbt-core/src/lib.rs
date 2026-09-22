@@ -50,8 +50,8 @@ pub mod params;
 pub mod runtime;
 
 pub use composition::{
-    BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Leaf, Selector, Sequence,
-    check, child_state, control, leaf, select, seq,
+    BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Guarded, Leaf, Selector,
+    Sequence, check, child_state, control, guard, leaf, select, seq,
 };
 pub(crate) use runtime::log_error;
 pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update};

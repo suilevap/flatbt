@@ -27,20 +27,18 @@
 //!
 //! // 3. A tree over the two. `Act` is declared nowhere but this signature.
 //! //
-//! // Each node that keeps the guard busy carries the condition that ends it:
-//! // while a node is running, no entry mode consults anything above it, so a
-//! // `check` over the firing leaf would never be asked a second time and the
-//! // guard would fire on an empty magazine.
+//! // A `guard` is asked on every update, so firing stops as the magazine runs
+//! // dry. A `check` before the leaf in a `seq` would be asked only on entry.
 //! fn shoot() -> impl BehaviorNode<Guard, Act> {
 //!     select((
-//!         leaf(|guard: &mut Guard| match guard.ammo {
-//!             0 => NodeResult::Failure,
-//!             _ => NodeResult::Running(Act::Firing),
-//!         }),
-//!         leaf(|guard: &mut Guard| match guard.ammo {
-//!             0 => NodeResult::Running(Act::Loading),
-//!             _ => NodeResult::Success,
-//!         }),
+//!         guard(
+//!             |guard: &Guard| guard.ammo > 0,
+//!             leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
+//!         ),
+//!         guard(
+//!             |guard: &Guard| guard.ammo == 0,
+//!             leaf(|_: &mut Guard| NodeResult::Running(Act::Loading)),
+//!         ),
 //!     ))
 //! }
 //!

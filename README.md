@@ -52,12 +52,15 @@ tree. The tree must outlive its states. `update` rejects a different root.
 | --- | --- | --- |
 | `seq((...))` | Run in order; fail on first Failure. Empty sequence succeeds. | Continue the active child. |
 | `select((...))` | Try in order; stop on Success or Running. Empty selector fails. | Scan from child zero. |
+| `guard(cond, child)` | Run `child` while `cond` holds; fail otherwise. | Recheck `cond`, as on `Resume`. |
 
 `Resume` follows the saved path. Fresh invocations always receive `Evaluate`.
 A resumed child that fails hands off to the next child below it, never back to
 one above: `Resume` skips `begin()`, so the children above were never consulted
 this update, and reconsidering them is the caller's to ask for. A caller that
 wants it can re-enter with `Evaluate` when a resumed update fails.
+A `check` in a `seq` is asked only on entry; to end a running child when a
+condition stops holding, wrap the child in `guard`.
 A completed child can be followed by another child in the same update.
 During revalidation, a failed candidate preserves the old branch; a new Running
 candidate replaces it and drops its state.
@@ -253,7 +256,7 @@ enum Act { MarchingTo(f32), Firing, Reloading }
 
 fn guard_tree() -> impl BehaviorNode<Guard, Act> {
     select((
-        seq((check(alarm_raised), action(FireAt))),
+        guard(alarm_raised, action(FireAt)),
         seq((check(|g: &Guard| g.ammo == 0), action(Reload))),
         action(MarchTo { where_to: |g: &Guard| g.intruder }),
     ))
@@ -420,8 +423,8 @@ what it does once it runs — a tree that breaks under one of them has a bug.
 
 `Skip` does not enter the tree at all and leaves both the suspended invocation
 and the standing act alone, so the systems carrying that act out keep seeing it.
-It is the one thing a guard inside the tree cannot do: once a tree is suspended,
-no entry mode consults a child above the one it is in.
+It is the one thing no node inside the tree can do: a node can continue an
+invocation or end it, but not leave it untouched.
 
 For a tree that should rethink periodically, `evaluate_every` answers on a period
 without putting the whole population on one frame; each agent's slot comes from

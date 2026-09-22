@@ -4,8 +4,8 @@
 //! FlatBT's own and need no Bevy-specific replacement.
 
 pub use flatbt_core::{
-    BtChildren, BtControl, BtNode, Check, ControlNode, ControlOp, ControlState, EntryMode, Leaf,
-    NodeResult, Selector, Sequence, check, control, leaf, select, seq,
+    BtChildren, BtControl, BtNode, Check, ControlNode, ControlOp, ControlState, EntryMode, Guarded,
+    Leaf, NodeResult, Selector, Sequence, check, control, guard, leaf, select, seq,
 };
 
 pub use crate::{

@@ -210,3 +210,12 @@ One authoring consequence, learned from a test that failed for the right reason:
 whatever keeps an agent busy is what decides when to stop. A `check` above a
 running node is not consulted again under any entry mode, so the condition
 belongs in `is_in_progress` on the action, not in a guard above it.
+
+## 2026-09-22 — A guard is asked on every update
+
+`guard(cond, child)` puts that condition back outside the action. It checks
+`cond` on every update, `Resume` included, and fails without entering `child`
+when it does not hold, so a running child ends the moment its condition stops
+holding. Checking only on `Evaluate` was rejected: `Resume` would then keep a
+child running past its condition, and a tree must not behave differently under
+`Resume` once it runs. `check` keeps its meaning -- asked once, on entry.
