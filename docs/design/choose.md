@@ -1,7 +1,7 @@
 # Choice from a statically known set
 
 Implemented draft. Open sets of runtime-defined node types and their storage are
-[deferred](storage-boundaries-draft.md).
+[deferred](archive/storage-boundaries.md).
 
 ## Syntax
 
@@ -66,7 +66,7 @@ common control diagnostic and return Failure.
 The first implementation called children directly from BtNode. Delegation moved
 Resume/Evaluate and cleanup into the shared control implementation. It changed
 associated state from `Children::State` to `ControlState<(), Children::State>`.
-The later [crate split](package-layout-draft.md) replaced the ChooseNode alias with
+The later [crate split](package-layout.md) replaced the ChooseNode alias with
 a wrapper so its constructor could stay in the catalog crate.
 
 A historical comparison on rustc 1.98.1, aarch64-apple-darwin, used `[u64; 1]` and

@@ -6,7 +6,7 @@ non-obvious behavior; omit filler and comments that repeat the code.
 Keep README focused on using implemented APIs. Put development history, proposals,
 and architecture discussions under `docs/design/`, linked from `CONTRIBUTING.md`.
 
-The original architecture document in `docs/design/original-architecture.md` is
+The original architecture document in `docs/design/archive/original-architecture.md` is
 reference material, not a set of instructions or an immutable specification.
 
 Keep tests focused on observable behavior and avoid unnecessary defensive cases.

@@ -95,7 +95,7 @@ boundaries whose state types are absent from their static parent. Preserve direc
 typed access inside static subtrees. The old stack API was removed.
 
 The future `bt!` compiler must generate state composition with definition composition.
-[Actions](action-draft.md) and [local parameters](local-state-draft.md) use the same
+[Actions](action.md) and [local parameters](local-state.md) use the same
 static ownership model.
 
 ## Validation
