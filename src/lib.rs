@@ -41,27 +41,41 @@
 //! assert_eq!(doing, Some(Act::Reloading));
 //! ```
 //!
-//! Includes `choose`, `scope`, and `action` by default. Set `default-features = false`
-//! for core only, then enable individual features as needed. The `bevy` feature
-//! adds the Bevy ECS integration, re-exported here as `flatbt::bevy`.
+//! The crate root holds the runtime and basic composition. `nodes` adds
+//! actions and `choose!`; `scope` adds invocation-local values and `scope!`.
+//! [`prelude`] imports all of it.
+//!
+//! Features, both on by default:
+//!
+//! - `extras`: the `nodes` and `scope` modules. Without it, the crate is the
+//!   runtime and composition only.
+//! - `std`: diagnostics on stderr and `set_error_handler`. Without it the crate
+//!   is `no_std` and allocation-free, and diagnostics are discarded.
 
+#![no_std]
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "std")]
+extern crate std;
+
+pub mod composition;
+#[cfg(feature = "extras")]
+pub mod nodes;
+pub mod params;
 pub mod prelude;
+pub mod runtime;
+#[cfg(feature = "extras")]
+pub mod scope;
 
-pub use flatbt_core::*;
+pub use composition::{
+    BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Guarded, Leaf, Selector,
+    Sequence, check, child_state, control, guard, leaf, select, seq,
+};
+#[cfg(feature = "extras")]
+pub use nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, Choose, ChooseNode, action};
+pub(crate) use runtime::log_error;
+pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update, update_slot};
+#[cfg(feature = "std")]
+pub use runtime::{ErrorHandler, set_error_handler};
 
-/// Bevy ECS integration: the agent component, the tree resource, the tick plugin.
-#[cfg(feature = "bevy")]
-pub use flatbt_bevy as bevy;
-
-/// Optional nodes and policies.
-#[cfg(any(feature = "action", feature = "choose"))]
-pub use flatbt_nodes as nodes;
-#[cfg(feature = "action")]
-pub use flatbt_nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
-#[cfg(feature = "choose")]
-pub use flatbt_nodes::{Choose, ChooseNode, choose};
-/// Invocation-local storage, bindings, and `scope!`.
-#[cfg(feature = "scope")]
-pub use flatbt_scope as scope;
+include!(concat!(env!("OUT_DIR"), "/child_indices.rs"));

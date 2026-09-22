@@ -56,9 +56,9 @@ reset before reusing state after an unwind.
 
 ## Generation
 
-[Core build script](../../crates/flatbt-core/build.rs) generates names and inputs
+[Build script](../../build.rs) generates names and inputs
 for tuple enums, dispatch, and child indices. Implementations remain in
-[children.rs](../../crates/flatbt-core/src/composition/children.rs); generated input
+[children.rs](../../src/composition/children.rs); generated input
 is written to Cargo's OUT_DIR. No handwritten name table or identifier-concatenation
 dependency.
 

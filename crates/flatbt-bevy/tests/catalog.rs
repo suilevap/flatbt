@@ -7,8 +7,6 @@
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use flatbt_bevy::prelude::*;
-use flatbt_nodes::{BtAction, action, choose};
-use flatbt_scope::scope;
 
 #[derive(Component, Default, PartialEq, Debug)]
 struct Guard {

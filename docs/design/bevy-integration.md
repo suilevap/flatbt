@@ -1,6 +1,6 @@
 # Bevy integration
 
-Status: implemented as `flatbt-bevy`, re-exported by the `bevy` feature of `flatbt`.
+Status: implemented as the `flatbt-bevy` crate, which depends on `flatbt`.
 
 ## Goal
 
@@ -309,7 +309,7 @@ failure rescan from the top inside the control node was implemented (as
 things, and the point of `Resume` is that it is an honest resume from the same
 place. One retry at the root is the caller asking for reconsideration, which is
 exactly whose decision it is. Pinned by
-`crates/flatbt-core/tests/resume.rs` and
+`tests/resume.rs` and
 `crates/flatbt-bevy/tests/behavior.rs`.
 
 ## The bridge that is no longer needed
@@ -398,7 +398,7 @@ before it was understood.
 
 A catalog node that packages this -- put the question once, wait, and hand the
 answer to a `scope!` local so the node after it takes a value rather than an
-`Option` -- belongs in `flatbt-nodes` rather than here, because with the
+`Option` -- belongs in `flatbt::nodes` rather than here, because with the
 question and the answer both plain data it knows nothing about the ECS. Not in
 this crate's scope.
 

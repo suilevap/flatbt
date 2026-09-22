@@ -1,5 +1,5 @@
-use flatbt_core::params::{ParamShape, ParamValue};
-use flatbt_core::{BtNode, EntryMode, NodeResult};
+use crate::params::{ParamShape, ParamValue};
+use crate::{BtNode, EntryMode, NodeResult};
 
 /// Inline lifecycle: start, query progress, tick while Running, then complete.
 /// All callbacks may run on rejected candidates; effects are not rolled back.

@@ -1,9 +1,0 @@
-[package]
-name = "flatbt-scope"
-version.workspace = true
-edition.workspace = true
-publish.workspace = true
-description = "Invocation-local storage and parameter bindings for FlatBT"
-
-[dependencies]
-flatbt-core.workspace = true

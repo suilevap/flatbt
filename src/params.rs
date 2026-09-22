@@ -2,7 +2,7 @@
 //! Unit, references, and tuples are supported. Implement these traits for custom
 //! parameter structs that must be borrowed across successive calls.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 /// Lifetime-indexed view, independent of its source scope.
 /// Tuple shapes are generated through `FLATBT_MAX_PARAMS` (default 32).
@@ -27,7 +27,7 @@ pub trait ParamValue {
 /// Shared input shape. Its view prevents direct mutation:
 ///
 /// ```compile_fail,E0594
-/// use flatbt_core::{BtNode, EntryMode, NodeResult};
+/// use flatbt::{BtNode, EntryMode, NodeResult};
 /// struct InvalidWriter;
 /// impl BtNode<(), (), &u32> for InvalidWriter {
 ///     type State = ();

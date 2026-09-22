@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut};
 
 /// State-owned cancellation. Implementations own their token/sender; no context
 /// is supplied. Cancellation may only enqueue a request. Must not panic.

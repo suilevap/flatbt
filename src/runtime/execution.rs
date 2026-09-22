@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::{BtNode, EntryMode, NodeResult};
 
@@ -43,7 +43,7 @@ pub fn update<C, A, N: BtNode<C, A>>(
     ctx: &mut C,
     mode: EntryMode,
 ) -> NodeResult<A> {
-    if !std::ptr::eq(root_node, state.root_node) {
+    if !core::ptr::eq(root_node, state.root_node) {
         return NodeResult::error("state belongs to a different root definition");
     }
     update_slot(root_node, &mut state.root_state, ctx, mode)
@@ -57,7 +57,7 @@ pub fn update<C, A, N: BtNode<C, A>>(
 /// clears it. The caller must pair each slot with one root.
 ///
 /// ```
-/// use flatbt_core::{BtNode, EntryMode, NodeResult, leaf, update_slot};
+/// use flatbt::{BtNode, EntryMode, NodeResult, leaf, update_slot};
 ///
 /// fn tree() -> impl BtNode<u32> {
 ///     leaf(|n: &mut u32| {

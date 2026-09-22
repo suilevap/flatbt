@@ -14,8 +14,8 @@
 /// Parameter tuple limit: `FLATBT_MAX_PARAMS`.
 ///
 /// ```
-/// use flatbt_core::{BtNode, BtState, EntryMode, NodeResult, update};
-/// use flatbt_scope::scope;
+/// use flatbt::{BtNode, BtState, EntryMode, NodeResult, update};
+/// use flatbt::scope::scope;
 /// struct Observe;
 /// impl BtNode<Vec<u32>, (), &u32> for Observe {
 ///     type State = ();
@@ -41,8 +41,8 @@
 /// Two exclusive parameters cannot borrow the same slot:
 ///
 /// ```compile_fail,E0499
-/// use flatbt_core::{BtNode, BtState, EntryMode, NodeResult};
-/// use flatbt_scope::scope;
+/// use flatbt::{BtNode, BtState, EntryMode, NodeResult};
+/// use flatbt::scope::scope;
 /// struct TwoOutputs;
 /// impl BtNode<(), (), (&mut Option<u32>, &mut Option<u32>)> for TwoOutputs {
 ///     type State = ();
@@ -61,84 +61,84 @@
 macro_rules! __flatbt_scope {
     (@locals [$locals:ident $value:ident] [$($fields:tt)*] [$($init:tt)*];
         let $field:ident: $ty:ty = $callback:expr; $($rest:tt)*) => {
-        $crate::scope!(@locals [$locals $value]
+        $crate::__flatbt_scope!(@locals [$locals $value]
             [$($fields)* $field: ::core::option::Option<$ty>,]
-            [$($init)* $crate::bind($crate::compute($callback),
-                $crate::write(|$value: &mut $locals| &mut $value.$field)),]; $($rest)*)
+            [$($init)* $crate::scope::bind($crate::scope::compute($callback),
+                $crate::scope::write(|$value: &mut $locals| &mut $value.$field)),]; $($rest)*)
     };
     (@locals [$locals:ident $value:ident] [$($fields:tt)*] [$($init:tt)*];
         let $field:ident: $ty:ty; $($rest:tt)*) => {
-        $crate::scope!(@locals [$locals $value]
+        $crate::__flatbt_scope!(@locals [$locals $value]
             [$($fields)* $field: ::core::option::Option<$ty>,] [$($init)*]; $($rest)*)
     };
     (@locals [$locals:ident $value:ident] [$($fields:tt)*] [$($init:tt)*];
         $control:ident { $($body:tt)* } $(;)?) => {{
         #[derive(Default)]
         struct $locals { $($fields)* }
-        $crate::scope::<$locals, _>($crate::scope!(@initialized [$($init)*]
-            $crate::scope!(@children [$locals $value] $control []; $($body)*)))
+        $crate::scope::scope::<$locals, _>($crate::__flatbt_scope!(@initialized [$($init)*]
+            $crate::__flatbt_scope!(@children [$locals $value] $control []; $($body)*)))
     }};
     (@initialized [] $body:expr) => { $body };
-    (@initialized [$($init:tt)+] $body:expr) => { $crate::__private::core::seq(($($init)+ $body,)) };
+    (@initialized [$($init:tt)+] $body:expr) => { $crate::seq(($($init)+ $body,)) };
     (@children $setup:tt $control:ident [$($nodes:tt)*]; sequence { $($body:tt)* } $($rest:tt)*) => {
-        $crate::scope!(@children $setup $control
-            [$($nodes)* $crate::scope!(@children $setup sequence []; $($body)*),]; $($rest)*)
+        $crate::__flatbt_scope!(@children $setup $control
+            [$($nodes)* $crate::__flatbt_scope!(@children $setup sequence []; $($body)*),]; $($rest)*)
     };
     (@children $setup:tt $control:ident [$($nodes:tt)*]; select { $($body:tt)* } $($rest:tt)*) => {
-        $crate::scope!(@children $setup $control
-            [$($nodes)* $crate::scope!(@children $setup select []; $($body)*),]; $($rest)*)
+        $crate::__flatbt_scope!(@children $setup $control
+            [$($nodes)* $crate::__flatbt_scope!(@children $setup select []; $($body)*),]; $($rest)*)
     };
     (@children $setup:tt $control:ident $nodes:tt; ; $($rest:tt)*) => {
-        $crate::scope!(@children $setup $control $nodes; $($rest)*)
+        $crate::__flatbt_scope!(@children $setup $control $nodes; $($rest)*)
     };
-    (@children [$locals:ident $value:ident] sequence [$($nodes:tt)*];) => { $crate::__private::core::seq(($($nodes)*)) };
-    (@children [$locals:ident $value:ident] select [$($nodes:tt)*];) => { $crate::__private::core::select(($($nodes)*)) };
+    (@children [$locals:ident $value:ident] sequence [$($nodes:tt)*];) => { $crate::seq(($($nodes)*)) };
+    (@children [$locals:ident $value:ident] select [$($nodes:tt)*];) => { $crate::select(($($nodes)*)) };
     (@children $setup:tt $control:ident $nodes:tt; $($rest:tt)+) => {
-        $crate::scope!(@expression $setup $control $nodes []; $($rest)+)
+        $crate::__flatbt_scope!(@expression $setup $control $nodes []; $($rest)+)
     };
     // Only the final .with(...) binds locals; preceding Rust expressions stay opaque.
     (@expression $setup:tt $control:ident [$($nodes:tt)*] [$($node:tt)+];
         . with ($($args:tt)*) ; $($rest:tt)*) => {
-        $crate::scope!(@children $setup $control
-            [$($nodes)* $crate::scope!(@args $setup [$($node)+] []; $($args)*),]; $($rest)*)
+        $crate::__flatbt_scope!(@children $setup $control
+            [$($nodes)* $crate::__flatbt_scope!(@args $setup [$($node)+] []; $($args)*),]; $($rest)*)
     };
     (@expression $setup:tt $control:ident [$($nodes:tt)*] [$($node:tt)+]; ; $($rest:tt)*) => {
-        $crate::scope!(@children $setup $control
-            [$($nodes)* $crate::no_params($($node)+),]; $($rest)*)
+        $crate::__flatbt_scope!(@children $setup $control
+            [$($nodes)* $crate::scope::no_params($($node)+),]; $($rest)*)
     };
     (@expression $setup:tt $control:ident $nodes:tt [$($node:tt)*]; $next:tt $($rest:tt)*) => {
-        $crate::scope!(@expression $setup $control $nodes [$($node)* $next]; $($rest)*)
+        $crate::__flatbt_scope!(@expression $setup $control $nodes [$($node)* $next]; $($rest)*)
     };
     (@args $setup:tt $node:tt [$($args:tt)*]; out $field:ident $(, $($rest:tt)*)?) => {
-        $crate::scope!(@args $setup $node [$($args)* out $field,]; $($($rest)*)?)
+        $crate::__flatbt_scope!(@args $setup $node [$($args)* out $field,]; $($($rest)*)?)
     };
     (@args $setup:tt $node:tt [$($args:tt)*]; in $field:ident $(, $($rest:tt)*)?) => {
-        $crate::scope!(@args $setup $node [$($args)* in $field,]; $($($rest)*)?)
+        $crate::__flatbt_scope!(@args $setup $node [$($args)* in $field,]; $($($rest)*)?)
     };
     (@args $setup:tt $node:tt [$($args:tt)*]; $field:ident $(, $($rest:tt)*)?) => {
-        $crate::scope!(@args $setup $node [$($args)* in $field,]; $($($rest)*)?)
+        $crate::__flatbt_scope!(@args $setup $node [$($args)* in $field,]; $($($rest)*)?)
     };
-    (@args $setup:tt [$node:expr] [];) => { $crate::no_params($node) };
+    (@args $setup:tt [$node:expr] [];) => { $crate::scope::no_params($node) };
     (@args $setup:tt [$node:expr] [$($access:ident $field:ident,)+];) => {
-        $crate::scope!(@bind $setup $node; $($access $field),+)
+        $crate::__flatbt_scope!(@bind $setup $node; $($access $field),+)
     };
     (@bind [$locals:ident $value:ident] $node:expr; in $field:ident) => {
-        $crate::bind($node, $crate::read(|$value: &$locals| $value.$field.as_ref()))
+        $crate::scope::bind($node, $crate::scope::read(|$value: &$locals| $value.$field.as_ref()))
     };
     (@bind [$locals:ident $value:ident] $node:expr; out $field:ident) => {
-        $crate::bind($node, $crate::write(|$value: &mut $locals| &mut $value.$field))
+        $crate::scope::bind($node, $crate::scope::write(|$value: &mut $locals| &mut $value.$field))
     };
     (@bind [$locals:ident $value:ident] $node:expr; $($access:ident $field:ident),+) => {
-        $crate::bind($node, $crate::params::<($($crate::scope!(@shape $access),)+), _, _>(
-            |$value: &mut $locals| ::core::option::Option::Some(($($crate::scope!(@borrow $value $access $field),)+))
+        $crate::scope::bind($node, $crate::scope::params::<($($crate::__flatbt_scope!(@shape $access),)+), _, _>(
+            |$value: &mut $locals| ::core::option::Option::Some(($($crate::__flatbt_scope!(@borrow $value $access $field),)+))
         ))
     };
-    (@shape in) => { $crate::Read<_> };
-    (@shape out) => { $crate::Write<_> };
+    (@shape in) => { $crate::params::Read<_> };
+    (@shape out) => { $crate::params::Write<_> };
     (@borrow $value:ident in $field:ident) => { $value.$field.as_ref()? };
     (@borrow $value:ident out $field:ident) => { &mut $value.$field };
     (@ $($invalid:tt)*) => { compile_error!("expected local declarations, then sequence { ... } or select { ... } with node expressions ending in ; and optional .with(local, out local) bindings") };
     ($($body:tt)*) => {
-        $crate::scope!(@locals [__FlatbtLocals __flatbt_locals] [] []; $($body)*)
+        $crate::__flatbt_scope!(@locals [__FlatbtLocals __flatbt_locals] [] []; $($body)*)
     };
 }

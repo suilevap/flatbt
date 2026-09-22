@@ -1,6 +1,6 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
-use flatbt_core::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, EntryMode, NodeResult};
 
 /// Owns invocation-local data outside application context.
 pub struct Scope<L, N> {
@@ -42,7 +42,7 @@ where
 pub struct Compute<F>(F);
 
 /// Computes from context and fills the output slot.
-/// The callable is checked where the tree runs, like [`flatbt_core::leaf`], so
+/// The callable is checked where the tree runs, like [`crate::leaf`], so
 /// an initializer closure stays open to inference. Annotate its argument.
 pub fn compute<F>(init: F) -> Compute<F> {
     Compute(init)

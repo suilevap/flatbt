@@ -6,17 +6,23 @@ Run from the workspace root. The checks run offline, so fetch dependencies once
 first with `cargo fetch`. CI runs the same commands.
 
 ```sh
-cargo test --offline --workspace --all-features
-cargo clippy --offline --workspace --all-targets --all-features -- -D warnings
+cargo test --offline --workspace
+cargo clippy --offline --workspace --all-targets -- -D warnings
+# Some lints only fire in release; the Bevy integration's are worth catching.
+cargo clippy --offline --release -p flatbt-bevy --all-targets -- -D warnings
 cargo fmt --all --check
-sh scripts/check-features.sh
+# Core only, without std
+cargo clippy --offline -p flatbt --all-targets --no-default-features -- -D warnings
+cargo test --offline -p flatbt --no-default-features
 ```
 
-The feature script checks defaults, explicit feature combinations, and direct
-crates in separate Cargo invocations.
+Both features are on by default, so the two ends are all that need checking:
+every feature on, and none. CI also builds the library for
+`thumbv7em-none-eabihf` to prove it needs no `std`.
 
-`flatbt-bevy` pulls in `bevy_ecs` and `bevy_app` 0.19 and needs Rust 1.95 or
-later. The other crates have no dependencies.
+The workspace has two crates: `flatbt` (the root package) and
+`crates/flatbt-bevy`. `flatbt` has no dependencies. `flatbt-bevy` pulls in
+`bevy_ecs`, `bevy_app` and `bevy_time` 0.19 and needs Rust 1.95 or later.
 
 ## Project conventions
 

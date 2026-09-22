@@ -1,7 +1,7 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
-use flatbt_core::params::ParamShape;
-use flatbt_core::{BtNode, EntryMode, NodeResult};
+use crate::params::ParamShape;
+use crate::{BtNode, EntryMode, NodeResult};
 
 /// Projects local fields into borrowed node parameters.
 pub trait ParamBinding<L> {
@@ -128,7 +128,7 @@ where
         let Some(params) = self.binding.get(locals) else {
             return NodeResult::error(format_args!(
                 "bound input is unavailable for {}",
-                std::any::type_name::<N>()
+                core::any::type_name::<N>()
             ));
         };
         self.node.update(state, ctx, params, mode)

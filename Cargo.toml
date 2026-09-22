@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = [".", "crates/flatbt-bevy"]
 resolver = "3"
 
 [workspace.package]
@@ -8,79 +8,74 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-flatbt-core = { path = "crates/flatbt-core" }
-flatbt-nodes = { path = "crates/flatbt-nodes", default-features = false }
-flatbt-scope = { path = "crates/flatbt-scope" }
-flatbt-bevy = { path = "crates/flatbt-bevy" }
+flatbt = { path = "." }
 
 [package]
 name = "flatbt"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-description = "An experimental behavior tree runtime with optional composition helpers"
+description = "An experimental behavior tree runtime with static dispatch and inline state"
 
 [features]
-default = ["choose", "scope", "action"]
-action = ["dep:flatbt-nodes", "flatbt-nodes/action"]
-choose = ["dep:flatbt-nodes", "flatbt-nodes/choose"]
-scope = ["dep:flatbt-scope"]
-bevy = ["dep:flatbt-bevy"]
+default = ["std", "extras"]
+# Diagnostics on stderr and `set_error_handler`. Without it the crate is `no_std`.
+std = []
+# The `nodes` and `scope` modules: actions, `choose!`, `scope!`.
+extras = []
 
-[dependencies]
-flatbt-core.workspace = true
-flatbt-nodes = { workspace = true, optional = true }
-flatbt-scope = { workspace = true, optional = true }
-flatbt-bevy = { workspace = true, optional = true }
+[[example]]
+name = "action"
+required-features = ["extras"]
 
 [[example]]
 name = "acts"
-required-features = ["action"]
+required-features = ["extras"]
 
 [[example]]
 name = "acts_dyn"
-required-features = ["action"]
-
-[[example]]
-name = "action"
-required-features = ["action"]
-
-[[example]]
-name = "external_action"
-required-features = ["action"]
+required-features = ["extras"]
 
 [[example]]
 name = "choose"
-required-features = ["choose"]
+required-features = ["extras"]
+
+[[example]]
+name = "external_action"
+required-features = ["extras"]
 
 [[example]]
 name = "scoped_params"
-required-features = ["scope", "action"]
+required-features = ["extras"]
 
 [[example]]
 name = "scoped_params_manual"
-required-features = ["scope", "action"]
+required-features = ["extras"]
 
 [[test]]
 name = "act"
-required-features = ["action", "choose"]
+required-features = ["extras"]
 
 [[test]]
 name = "action"
-required-features = ["action"]
+required-features = ["extras"]
 
 [[test]]
 name = "cancel"
-required-features = ["action"]
-
-[[test]]
-name = "external_action"
-required-features = ["action"]
+required-features = ["extras"]
 
 [[test]]
 name = "choose"
-required-features = ["choose"]
+required-features = ["extras"]
+
+[[test]]
+name = "external_action"
+required-features = ["extras"]
 
 [[test]]
 name = "scope"
-required-features = ["scope", "action"]
+required-features = ["extras"]
+
+[[test]]
+name = "errors"
+required-features = ["std"]

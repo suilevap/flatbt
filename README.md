@@ -13,8 +13,10 @@ Packages are unpublished. Use a local checkout:
 flatbt = { path = "../FlatBT" }
 ```
 
-Includes core, branch choice, local scopes, and actions by default.
-Import the tree authoring API:
+One crate with no dependencies: the runtime, basic composition, actions,
+`choose!` and `scope!`. `no_std` and allocation-free with default features off;
+see [Advanced configuration](#advanced-configuration). Import the tree
+authoring API:
 
 ```rust
 use flatbt::prelude::*;
@@ -236,17 +238,17 @@ See the [external action example](examples/external_action.rs).
 
 ## Bevy
 
-Enable the `bevy` feature. A tree reads a blackboard component and returns what
+Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns what
 the agent is doing; the tick writes that into an act component, and ordinary
 systems match it and do the work. A node never changes the world.
 
 ```toml
-flatbt = { path = "../FlatBT", features = ["bevy"] }
+flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
 ```
 
 ```rust,ignore
 use bevy::prelude::*;
-use flatbt::bevy::prelude::*;
+use flatbt_bevy::prelude::*; // FlatBT's prelude plus the Bevy types
 
 /// What the tree reads: an aggregate view of the world for this agent.
 #[derive(Component, Default)]
@@ -432,7 +434,8 @@ suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_
 
 - Context mutations and ticks take effect immediately, including on failed branches.
 - `NodeResult::error` and `ControlOp::error` report a diagnostic and return Failure.
-  Diagnostics go to stderr; `set_error_handler` sends them elsewhere.
+  Diagnostics go to stderr; `set_error_handler` sends them elsewhere. Without
+  the `std` feature they are discarded.
   Ordinary Failure is silent.
 - User panics propagate. Reset state before reuse after an unwind.
 - Custom policies must terminate; there is no execution budget.
@@ -441,7 +444,7 @@ suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_
 
 ## Examples
 
-Run any example with the default features:
+Run any example:
 
 ```sh
 cargo run --example resume
@@ -463,41 +466,27 @@ cargo run --example resume
 ## Advanced configuration
 
 <details>
-<summary>Selective features, direct crates, and tuple limits</summary>
+<summary>Features, tuple limits, and Bevy requirements</summary>
 
-### Select features
+### Features
 
-Core only:
+Both on by default.
+
+| Feature | Adds |
+| --- | --- |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`) and `flatbt::scope` (`scope!`, bindings) |
+| `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
+
+Without `std` the crate is `no_std`; diagnostics are discarded, and the node
+still fails. For the runtime and composition only:
 
 ```toml
 flatbt = { path = "../FlatBT", default-features = false }
+# embedded, with the extras: features = ["extras"]
 ```
 
-Core with selected helpers:
-
-```toml
-flatbt = { path = "../FlatBT", default-features = false, features = ["choose", "scope"] }
-```
-
-| Feature | API |
-| --- | --- |
-| `choose` | `choose!`, `ChooseNode`, `Choose` |
-| `scope` | `flatbt::scope`: local storage, bindings, `scope!` |
-| `action` | `BtAction`, `action`, cancellation helpers |
-| `bevy` | `flatbt::bevy`: blackboard and act components, tick plugin |
-
-Features are independent. Cargo combines features enabled by all consumers.
-Core APIs are always available. Direct dependencies are also supported:
-
-```toml
-[dependencies]
-flatbt-core = { path = "../FlatBT/crates/flatbt-core" }
-flatbt-nodes = { path = "../FlatBT/crates/flatbt-nodes", features = ["choose", "action"] }
-flatbt-scope = { path = "../FlatBT/crates/flatbt-scope" }
-flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
-```
-
-`flatbt-bevy` targets Bevy 0.19 and requires Rust 1.95.
+`flatbt-bevy` is a separate crate so that a Bevy upgrade never forces a
+breaking release of `flatbt`. It targets Bevy 0.19 and requires Rust 1.95.
 
 ### Tuple limits
 

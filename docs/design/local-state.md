@@ -6,9 +6,8 @@ heap allocation.
 
 ## API boundary
 
-Feature `scope` exposes storage, computation, bindings, and `scope!` through
-`flatbt::scope`. `use flatbt::scope::scope;` imports both macro and function.
-Direct crate: `flatbt_scope`.
+Module `flatbt::scope` holds storage, computation, bindings, and `scope!`.
+`use flatbt::scope::scope;` imports both macro and function.
 
 Core's `flatbt::params` owns `ParamShape`, `ParamValue`, `Read`, and `Write`.
 Controls/actions use this protocol independently of scope storage. Scope also
@@ -167,6 +166,6 @@ Tests cover entry timing/order, suspension, revalidation, fresh values, callback
 reborrowing, same-type fields, producers, independent instances, missing inputs,
 shared writes, and cleanup. Compile-fail doctests cover shared access and aliasing.
 
-Run `cargo run --offline --example scoped_params --features scope,action`.
+Run `cargo run --offline --example scoped_params`.
 [scoped_params_manual.rs](../../examples/scoped_params_manual.rs) builds the same
 tree with functions and the same execution assertions.
