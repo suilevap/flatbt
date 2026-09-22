@@ -1,10 +1,11 @@
 use core::any::TypeId;
 use core::marker::PhantomData;
+use core::time::Duration;
 
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
-use flatbt_core::{BtNode, EntryMode, NodeResult};
+use flatbt_core::{BtNode, EntryMode, NodeResult, update_slot};
 
 /// A tree that can drive agents whose blackboard is `C` and whose decisions are
 /// `A`, with one state type.
@@ -132,8 +133,21 @@ impl Tick {
     }
 }
 
-/// What a tick does with one agent, given its blackboard.
-pub type TickFn<C> = fn(&C) -> Tick;
+/// Which agent a tick is for, and when it falls.
+///
+/// The clock is Bevy's `Time`, which inside `FixedUpdate` is the fixed clock.
+/// Both durations are zero when the app has no `Time` resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TickAt {
+    pub entity: Entity,
+    /// Time elapsed since startup.
+    pub elapsed: Duration,
+    /// Time since the previous tick of this schedule.
+    pub delta: Duration,
+}
+
+/// What a tick does with one agent, given its blackboard and when it falls.
+pub type TickFn<C> = fn(&C, TickAt) -> Tick;
 
 /// The one tree named by `F`, built once and shared by every agent running it.
 ///
@@ -290,38 +304,19 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     /// composed tree's state type cannot be named, so only a generic over the
     /// builder can hold it.
     pub fn tick(&mut self, tree: &F::Tree, bb: &mut C, mode: EntryMode) -> Option<A> {
-        // A fresh invocation always enters as Evaluate, whatever the caller asks
-        // for, and a terminal result drops invocation state. Same as FlatBT's
-        // own root lifetime in `update`.
-        let mode = if self.state.is_none() {
-            EntryMode::Evaluate
-        } else {
-            mode
-        };
-        match self.run(tree, bb, mode) {
+        // A fresh invocation enters as Evaluate whatever the caller asks for.
+        let resumed = self.state.is_some() && mode == EntryMode::Resume;
+        match update_slot(tree, &mut self.state, bb, mode) {
             NodeResult::Running(act) => Some(act),
             // The continuation is gone, and a resumed update never consulted
             // anything above it, so the failure says nothing about what the tree
             // would choose now. The next update would enter as Evaluate anyway
             // -- this only spares the agent a tick of doing nothing.
-            NodeResult::Failure if mode == EntryMode::Resume => {
-                self.run(tree, bb, EntryMode::Evaluate).act()
+            NodeResult::Failure if resumed => {
+                update_slot(tree, &mut self.state, bb, EntryMode::Evaluate).act()
             }
             _ => None,
         }
-    }
-
-    fn run(&mut self, tree: &F::Tree, bb: &mut C, mode: EntryMode) -> NodeResult<A> {
-        let result = tree.update(
-            self.state.get_or_insert_with(Default::default),
-            bb,
-            (),
-            mode,
-        );
-        if !result.is_running() {
-            self.state = None;
-        }
-        result
     }
 }
 
