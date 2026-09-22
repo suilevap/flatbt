@@ -104,8 +104,8 @@ ordinary `.with(..)` bindings, so `scope!` needs no macro changes.
 
 | Policy | Semantics | Pri | Size | Core fit |
 | --- | --- | --- | --- | --- |
-| `utility!(\|c: &C\| { score_a => a, score_b => b })` / `utility(scorer, children)` | Runs the child with the highest score. When it fails, rescores and tries the best **untried** child (a `u64` bitmask in policy state). Under `Evaluate` it rescores and may preempt. An optional `inertia` adds a bonus to `active_child_index`, which `begin` already receives, to prevent flip-flopping. Scores are `f32`; NaN counts as "skip". | P1 | M | fits. The macro reuses `__flatbt_child_indices` like `choose!`, and generates `Fn(&C, usize) -> f32`. |
-| `priority(...)` | Dynamic priority selector: the same machinery with integer priorities and a stable tie-break on child order. One generic policy (`S: PartialOrd`) with two constructors. | P1 | S (on top of utility) | fits |
+| `utility!(\|c: &C\| { score_a => a, score_b => b })` / `utility(scorer, children)` | Runs the child with the highest score. When it fails, rescores and tries the best **untried** child (a `u64` bitmask in policy state). Under `Evaluate` it rescores and may preempt. An optional `inertia` adds a bonus to `active_child_index`, which `begin` already receives, to prevent flip-flopping. Scores are `f32`; NaN counts as "skip". | P1 | M | fits, as its own node rather than a `BtControl` (see below). The macro reuses `__flatbt_child_indices` like `choose!`. |
+| `priority(...)` | Dynamic priority selector: the same machinery with integer priorities and a stable tie-break on child order. One generic node (`S: PartialOrd`) with two constructors. | P1 | S (on top of utility) | fits |
 | `random_select(rng, children)` | On fresh entry, picks an untried child uniformly at random. On failure, tries another untried child. Under `Evaluate`, keeps the active child, like `seq`. | P2 | S | fits (`rng: Fn(&mut C) -> u32` from context) |
 | `weighted_select(rng, weights, children)` | Weighted version. `weights: Fn(&C, usize) -> f32`. | P2 | S | fits |
 | `shuffle_seq(rng, children)` | A sequence in random order, without replacement, using the bitmask. | P2 | S | fits |
@@ -113,6 +113,24 @@ ordinary `.with(..)` bindings, so `scope!` needs no macro changes.
 | `seq_any` / `try_all` | Runs all children regardless of failures. Success if any succeeded (or if all did, for a variant). | P3 | S | fits |
 | `round_robin(memory, children)` | Continues after the child used last time. The last index lives in the blackboard, reached through `memory`. | P3 | S | fits |
 | `parallel(policy, (a, b, ..))` | All children run. Policy: all / any / race. The act comes from the first running child, or from a `merge: Fn(A, A) -> A`. | P3 | L | new children trait with generated tuple impls; shares core's tuple generator |
+
+The scorer sees the same params as the children. `BtControl` never receives
+params, so the scored selector implements `BtNode` directly over the public
+`BtChildren` trait and repeats `ControlNode`'s dispatch loop (about 40 lines)
+instead of changing core. Two levels:
+
+- **Bound params.** `utility(scorer, children).with(target)`: the scorer is
+  `Fn(&C, P, usize) -> S` with `P` reborrowed like `ControlNode` does, and the
+  children receive the same `P`. Works with the function API and the macro.
+- **All locals, inside `scope!`.** A `utility { score => node; .. }` block, next
+  to `sequence` and `select`, receives the locals `&mut L`: scorers read any
+  local by name, and each child keeps its own `.with(..)` bindings. This needs
+  a new arm in the `scope!` macro, no runtime change.
+
+What this costs: a second copy of the dispatch loop, and scorer closures that
+take borrowed params, which share the inference risk of `action_fn`. Neither
+touches core, so the params form stays in; if the spike shows the closure
+signatures unusable, ship the context-only scorer and keep the node shape.
 
 Policy bitmask limit: 64 children. A larger `FLATBT_MAX_CHILDREN` makes
 `begin` report `ControlOp::error` instead of misbehaving.
@@ -169,10 +187,13 @@ for what shipped, and a decision-log entry.
 
 **Phase 2: utility / priority selection** (M)
 
-- A generic scored policy, the `utility!` macro (sharing the child-index
-  machinery with `choose!`), `priority`, and inertia.
+- A generic scored node over `BtChildren`, the `utility!` macro (sharing the
+  child-index machinery with `choose!`), `priority`, and inertia. The scorer
+  receives bound params.
+- The `utility { .. }` block in `scope!`, so scorers read any local.
 - Tests: preemption under `Evaluate`, fallback on failure in score order,
-  inertia preventing switches, and NaN skipped.
+  inertia preventing switches, NaN skipped, and a scorer reading a scope
+  local.
 
 **Phase 3: random policies and remaining decorators** (S each)
 
@@ -191,5 +212,6 @@ for what shipped, and a decision-log entry.
 
 ## Open questions
 
-- Should the utility scorer see scope params (`Fn(&C, P, usize)`)? That would
-  need the policy to receive params, which `BtControl` does not do today.
+- Should `weighted_select` reuse the scored node, so weights can read params
+  too? Weighted random is the same node with a random pick instead of the
+  maximum.
