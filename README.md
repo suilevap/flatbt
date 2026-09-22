@@ -41,6 +41,8 @@ assert_eq!(ammo, 0);
 
 One immutable tree can serve multiple agents. Each owns a `BtState` bound to that
 tree. The tree must outlive its states. `update` rejects a different root.
+A driver that cannot keep a `BtState` beside the tree it borrows, such as an ECS
+component, holds an `Option<Tree::State>` itself and calls `update_slot`.
 
 | Event | State lifetime |
 | --- | --- |
