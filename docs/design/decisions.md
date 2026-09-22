@@ -250,3 +250,22 @@ Two features stay: `extras`, gating `nodes` and `scope` as the optional part
 of the library, and `std`, whose absence makes the crate `no_std`. Both default
 on, and CI checks the two ends. Without `std`, diagnostics are discarded:
 holding a settable handler would take a lock or unsafe code.
+
+## 2026-09-23 — Node catalog, first phase
+
+From the [node catalog proposal](node-catalog-draft.md): `repeat_while`,
+`map_act`, `action_while`, `leaf_with` and `check_with` join `flatbt::nodes`
+under `extras`. `guard` had already landed in composition.
+
+`repeat_while` is a goal where `guard` is a requirement: a false condition
+succeeds it, so it reads as the prerequisite for the next node in a sequence.
+It fails only when the condition still holds and the child can no longer keep
+the agent busy -- the child failed, or completed without returning `Running`.
+The second rule is what bounds the loop: a restart runs in the same update, and
+a restarted child that completes at once would otherwise spin with no act to
+report, so it fails with a diagnostic. No iteration budget is needed.
+
+`map_act` carries the child's act type as a phantom parameter; a type that only
+appears in bounds would leave the impl unconstrained. `leaf_with` and
+`check_with` are separate constructors because a second `Leaf` impl over
+`Fn(&mut C, P)` would overlap the first under coherence.

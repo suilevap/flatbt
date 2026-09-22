@@ -1,11 +1,10 @@
 # Node catalog: brainstorm and plan
 
-Status: proposal. Nothing here is implemented. Each item says what it is for,
-whether the current core can express it, and roughly what it costs.
+Status: proposal; Phase 1 implemented. Each item says what it is for, whether
+the current core can express it, and roughly what it costs.
 
-The catalog lives in `flatbt-nodes` behind one `catalog` feature, per the
-[decision log](decisions.md) ("reusable Wait, priority/random selection,
-throttling, and decorators belong in a future catalog crate").
+The catalog lives in `flatbt::nodes`, under the existing `extras` feature.
+`guard` landed separately, in composition.
 
 ## Constraints that shape the catalog
 
@@ -159,13 +158,12 @@ and no core-managed persistent memory (the blackboard holds it explicitly).
 Each phase ends with the full check list from `CONTRIBUTING.md`, README entries
 for what shipped, and a decision-log entry.
 
-**Phase 1: guards and leaf helpers** (P1, all S)
+**Phase 1: guards and leaf helpers** (P1, all S) -- done
 
-- `guard`, `repeat_while`, and `map_act`.
+- `guard` (in composition), `repeat_while`, and `map_act`.
 - `action_while`, `leaf_with`, and `check_with`.
-- Tests pin the key contract: `guard` aborts a suspended action under
-  **`Resume`**, and its `CancelOnDrop` fires. That is the case that fails with
-  `seq((check, action))` today.
+- Not done: conditions reading scope params. `guard` and `repeat_while` read
+  the blackboard only; the child still receives the params.
 
 **Phase 2: utility / priority selection** (M)
 

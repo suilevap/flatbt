@@ -20,6 +20,8 @@ flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
 | `build.rs` | Tuple states, parameter tuples, child indices |
 | `src/nodes/action/` | Lifecycle and cancellation adapters |
 | `src/nodes/choose.rs` | Choice policy and `choose!` |
+| `src/nodes/decorate.rs` | `repeat_while`, `map_act` |
+| `src/nodes/function.rs` | Callable helpers: `action_while`, `leaf_with`, `check_with` |
 | `src/scope/` | Owned locals, parameter bindings, `scope!` |
 | `crates/flatbt-bevy/` | Tree resource, agent component, tick plugin |
 | `examples/`, `tests/` | Application examples, test helpers, public API tests |

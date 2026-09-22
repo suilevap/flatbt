@@ -72,7 +72,11 @@ pub use composition::{
     Sequence, check, child_state, control, guard, leaf, select, seq,
 };
 #[cfg(feature = "extras")]
-pub use nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, Choose, ChooseNode, action};
+pub use nodes::{
+    ActionNode, ActionWhile, BtAction, BtCancel, CancelOnDrop, CheckWith, Choose, ChooseNode,
+    LeafWith, MapAct, RepeatWhile, action, action_while, check_with, leaf_with, map_act,
+    repeat_while,
+};
 pub(crate) use runtime::log_error;
 pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update, update_slot};
 #[cfg(feature = "std")]

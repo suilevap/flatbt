@@ -236,6 +236,34 @@ State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
 the outcome. Drop has no context argument; the handle must own cancellation access.
 See the [external action example](examples/external_action.rs).
 
+## Decorators and helpers
+
+Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
+
+| Node | Behavior |
+| --- | --- |
+| `repeat_while(cond, child)` | Keep `child` running, restarting it, while `cond` holds; succeed once it does not. Fail if `child` fails, or completes without running, while `cond` still holds. |
+| `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
+| `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
+| `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
+
+`repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one
+and fails the other. Both ask `cond` on every update, `Resume` included, and
+drop a running child when they stop, which cancels it. So
+`seq((repeat_while(far, approach), interact))` approaches only while needed and
+succeeds at once for an agent already close.
+
+```rust,ignore
+let tree = scope! {
+    let target: Vector2 = |bb: &mut World| bb.target;
+    sequence {
+        check_with(|bb: &World, at: &Vector2| bb.can_reach(*at)).with(target);
+        repeat_while(far, action(Walk)).with(target);
+        map_act(Act::Use, use_subtree());
+    }
+};
+```
+
 ## Bevy
 
 Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns what
@@ -474,7 +502,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node
