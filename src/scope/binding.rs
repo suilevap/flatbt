@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::params::ParamShape;
 use crate::{BtNode, EntryMode, NodeResult};
@@ -128,7 +128,7 @@ where
         let Some(params) = self.binding.get(locals) else {
             return NodeResult::error(format_args!(
                 "bound input is unavailable for {}",
-                std::any::type_name::<N>()
+                core::any::type_name::<N>()
             ));
         };
         self.node.update(state, ctx, params, mode)

@@ -245,3 +245,8 @@ stays separate: it depends on Bevy and exposes its types, so a Bevy upgrade is a
 breaking release of it alone. It can no longer be re-exported as `flatbt::bevy`
 (that would be a dependency cycle); its prelude re-exports `flatbt::prelude`
 instead.
+
+Two features stay: `extras`, gating `nodes` and `scope` as the optional part
+of the library, and `std`, whose absence makes the crate `no_std`. Both default
+on, and CI checks the two ends. Without `std`, diagnostics are discarded:
+holding a settable handler would take a lock or unsafe code.

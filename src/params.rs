@@ -2,7 +2,7 @@
 //! Unit, references, and tuples are supported. Implement these traits for custom
 //! parameter structs that must be borrowed across successive calls.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 /// Lifetime-indexed view, independent of its source scope.
 /// Tuple shapes are generated through `FLATBT_MAX_PARAMS` (default 32).

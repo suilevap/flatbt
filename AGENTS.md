@@ -18,6 +18,9 @@ policies belong in `flatbt::nodes`, built on the public core API only.
 
 Split code into a separate crate only for a dependency or a release cadence the
 rest does not share, as `flatbt-bevy` has for Bevy. Organize everything else as
-modules in `flatbt`; do not add Cargo features for code without dependencies.
+modules in `flatbt`. Cargo features stay two, both on by default: `extras`
+(`nodes` and `scope`) and `std`. Library code uses `core`; only `std`-gated
+diagnostics use `std`. Keep new optional code under `extras` rather than adding
+a feature, unless it brings a dependency.
 
 Leave changes uncommitted as reviewable drafts unless explicitly asked to commit.

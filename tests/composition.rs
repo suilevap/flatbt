@@ -89,6 +89,7 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
     );
 }
 
+#[cfg(feature = "extras")]
 #[test]
 fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
     struct Observe;

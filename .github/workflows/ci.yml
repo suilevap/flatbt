@@ -16,6 +16,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@v2
       # The checks run offline, so fetch every dependency first.
       - run: cargo fetch --locked
@@ -23,3 +24,8 @@ jobs:
       - run: cargo clippy --offline --workspace --all-targets -- -D warnings
       - run: cargo clippy --offline --release -p flatbt-bevy --all-targets -- -D warnings
       - run: cargo test --offline --workspace
+      # Core only, and `no_std`: the other end of the two features.
+      - run: cargo clippy --offline -p flatbt --all-targets --no-default-features -- -D warnings
+      - run: cargo test --offline -p flatbt --no-default-features
+      # A target without `std` proves nothing in the library reaches for it.
+      - run: cargo build --offline -p flatbt --lib --no-default-features --features extras --target thumbv7em-none-eabihf

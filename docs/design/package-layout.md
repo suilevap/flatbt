@@ -3,7 +3,7 @@
 Two crates in one workspace:
 
 ```text
-flatbt-bevy ---> flatbt        (no dependencies)
+flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
      |
      +---> bevy_app, bevy_ecs, bevy_time 0.19
 ```
@@ -34,9 +34,22 @@ depended on as a whole. Split one off only for a dependency or a release cadence
 the rest does not share. `flatbt-bevy` qualifies on both: it pulls in Bevy, and
 exposes Bevy types, so each Bevy upgrade is a breaking release of it alone.
 
-Everything else is a module of `flatbt`. Code without dependencies gets no Cargo
-feature either: generic code that is not used is never instantiated, macros cost
-nothing until invoked, and each feature would double the combinations to test.
+Everything else is a module of `flatbt`.
+
+## Features
+
+Two, both on by default. Each end is tested: everything on, and none.
+
+| Feature | Gates | Off means |
+| --- | --- | --- |
+| `extras` | `nodes`, `scope`, their prelude items and macros | Runtime and composition only |
+| `std` | stderr diagnostics, `set_error_handler` | `no_std`; diagnostics discarded |
+
+The crate is `#![no_std]` and pulls in `std` only under that feature. A handler
+without `std` would need a lock or unsafe code, so diagnostics are dropped there
+and the node still fails. `extras` groups the optional helpers under one switch
+rather than one feature each: they have no dependencies, and every added feature
+doubles the combinations to test.
 
 ## Dependencies
 

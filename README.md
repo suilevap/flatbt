@@ -14,7 +14,9 @@ flatbt = { path = "../FlatBT" }
 ```
 
 One crate with no dependencies: the runtime, basic composition, actions,
-`choose!` and `scope!`. Import the tree authoring API:
+`choose!` and `scope!`. `no_std` and allocation-free with default features off;
+see [Advanced configuration](#advanced-configuration). Import the tree
+authoring API:
 
 ```rust
 use flatbt::prelude::*;
@@ -432,7 +434,8 @@ suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_
 
 - Context mutations and ticks take effect immediately, including on failed branches.
 - `NodeResult::error` and `ControlOp::error` report a diagnostic and return Failure.
-  Diagnostics go to stderr; `set_error_handler` sends them elsewhere.
+  Diagnostics go to stderr; `set_error_handler` sends them elsewhere. Without
+  the `std` feature they are discarded.
   Ordinary Failure is silent.
 - User panics propagate. Reset state before reuse after an unwind.
 - Custom policies must terminate; there is no execution budget.
@@ -463,7 +466,24 @@ cargo run --example resume
 ## Advanced configuration
 
 <details>
-<summary>Tuple limits and Bevy requirements</summary>
+<summary>Features, tuple limits, and Bevy requirements</summary>
+
+### Features
+
+Both on by default.
+
+| Feature | Adds |
+| --- | --- |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`) and `flatbt::scope` (`scope!`, bindings) |
+| `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
+
+Without `std` the crate is `no_std`; diagnostics are discarded, and the node
+still fails. For the runtime and composition only:
+
+```toml
+flatbt = { path = "../FlatBT", default-features = false }
+# embedded, with the extras: features = ["extras"]
+```
 
 `flatbt-bevy` is a separate crate so that a Bevy upgrade never forces a
 breaking release of `flatbt`. It targets Bevy 0.19 and requires Rust 1.95.
