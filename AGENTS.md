@@ -13,7 +13,11 @@ Keep tests focused on observable behavior and avoid unnecessary defensive cases.
 Recoverable runtime or configuration errors should report a diagnostic and fail
 the node or control rather than panic, including in release builds.
 
-Keep example and test utility nodes outside the core library. A reusable catalog
-of ready-made nodes and policies belongs in a separate crate when needed.
+Keep example and test utility nodes outside the library. Ready-made nodes and
+policies belong in `flatbt::nodes`, built on the public core API only.
+
+Split code into a separate crate only for a dependency or a release cadence the
+rest does not share, as `flatbt-bevy` has for Bevy. Organize everything else as
+modules in `flatbt`; do not add Cargo features for code without dependencies.
 
 Leave changes uncommitted as reviewable drafts unless explicitly asked to commit.

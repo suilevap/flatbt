@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use flatbt_core::params::ParamShape;
-use flatbt_core::{BtNode, EntryMode, NodeResult};
+use crate::params::ParamShape;
+use crate::{BtNode, EntryMode, NodeResult};
 
 /// Projects local fields into borrowed node parameters.
 pub trait ParamBinding<L> {

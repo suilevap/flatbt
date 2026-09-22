@@ -41,27 +41,27 @@
 //! assert_eq!(doing, Some(Act::Reloading));
 //! ```
 //!
-//! Includes `choose`, `scope`, and `action` by default. Set `default-features = false`
-//! for core only, then enable individual features as needed. The `bevy` feature
-//! adds the Bevy ECS integration, re-exported here as `flatbt::bevy`.
+//! The crate root holds the runtime and basic composition. [`nodes`] adds
+//! actions and `choose!`; [`scope`] adds invocation-local values and `scope!`.
+//! [`prelude`] imports all of it.
 
 #![forbid(unsafe_code)]
 
+pub mod composition;
+pub mod nodes;
+pub mod params;
 pub mod prelude;
+pub mod runtime;
+pub mod scope;
 
-pub use flatbt_core::*;
+pub use composition::{
+    BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Guarded, Leaf, Selector,
+    Sequence, check, child_state, control, guard, leaf, select, seq,
+};
+pub use nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, Choose, ChooseNode, action};
+pub(crate) use runtime::log_error;
+pub use runtime::{
+    BtNode, BtState, EntryMode, ErrorHandler, NodeResult, set_error_handler, update, update_slot,
+};
 
-/// Bevy ECS integration: the agent component, the tree resource, the tick plugin.
-#[cfg(feature = "bevy")]
-pub use flatbt_bevy as bevy;
-
-/// Optional nodes and policies.
-#[cfg(any(feature = "action", feature = "choose"))]
-pub use flatbt_nodes as nodes;
-#[cfg(feature = "action")]
-pub use flatbt_nodes::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
-#[cfg(feature = "choose")]
-pub use flatbt_nodes::{Choose, ChooseNode, choose};
-/// Invocation-local storage, bindings, and `scope!`.
-#[cfg(feature = "scope")]
-pub use flatbt_scope as scope;
+include!(concat!(env!("OUT_DIR"), "/child_indices.rs"));

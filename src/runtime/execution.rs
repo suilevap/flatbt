@@ -57,7 +57,7 @@ pub fn update<C, A, N: BtNode<C, A>>(
 /// clears it. The caller must pair each slot with one root.
 ///
 /// ```
-/// use flatbt_core::{BtNode, EntryMode, NodeResult, leaf, update_slot};
+/// use flatbt::{BtNode, EntryMode, NodeResult, leaf, update_slot};
 ///
 /// fn tree() -> impl BtNode<u32> {
 ///     leaf(|n: &mut u32| {

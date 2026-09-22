@@ -89,7 +89,6 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
     );
 }
 
-#[cfg(all(feature = "choose", feature = "scope"))]
 #[test]
 fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
     struct Observe;

@@ -62,7 +62,7 @@ pub struct Guarded<F, N> {
 /// to it.
 ///
 /// ```
-/// use flatbt_core::{BtState, EntryMode, NodeResult, guard, leaf, update};
+/// use flatbt::{BtState, EntryMode, NodeResult, guard, leaf, update};
 ///
 /// let tree = guard(|ammo: &u32| *ammo > 0, leaf(|_: &mut u32| NodeResult::RUNNING));
 /// let mut state = BtState::new(&tree);

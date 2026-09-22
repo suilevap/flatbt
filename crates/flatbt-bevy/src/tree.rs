@@ -5,7 +5,7 @@ use core::time::Duration;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
-use flatbt_core::{BtNode, EntryMode, NodeResult, update_slot};
+use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 
 /// A tree that can drive agents whose blackboard is `C` and whose decisions are
 /// `A`, with one state type.

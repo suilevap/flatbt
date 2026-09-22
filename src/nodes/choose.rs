@@ -1,4 +1,4 @@
-use flatbt_core::{BtControl, ControlNode, ControlOp};
+use crate::{BtControl, ControlNode, ControlOp};
 
 /// Selects from shared context on Evaluate; forwards the child's result.
 /// Resume follows the saved child.
@@ -26,8 +26,8 @@ pub type ChooseNode<F, Children> = ControlNode<Choose<F>, Children>;
 /// Matches shared context to select a statically typed node.
 ///
 /// ```
-/// use flatbt_core::{BtState, EntryMode, NodeResult, check, leaf, update};
-/// use flatbt_nodes::choose;
+/// use flatbt::{BtState, EntryMode, NodeResult, check, leaf, update};
+/// use flatbt::choose;
 ///
 /// let tree = choose!(|value: &usize| match *value {
 ///     0 => leaf(|value: &mut usize| {
@@ -84,7 +84,7 @@ macro_rules! choose {
             [$($arms)* [$pattern $(if $guard)?] [$node]] ; $($($rest)*)?)
     };
     (@parse [$($setup:tt)*] [$($arms:tt)*] ;) => {
-        $crate::__private::core::__flatbt_child_indices!([$crate::choose]; $($setup)* [] [] ; $($arms)*)
+        $crate::__flatbt_child_indices!([$crate::choose]; $($setup)* [] [] ; $($arms)*)
     };
     (@arms [$index:literal $($indices:literal)*]
         [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]
@@ -100,7 +100,7 @@ macro_rules! choose {
     (@arms [$($indices:literal)*]
         [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]
         [$($nodes:tt)*] [$($selection:tt)*] ;) => {
-        $crate::__private::core::control(
+        $crate::control(
             $crate::Choose($($capture)* |$bb: $context| match $($value)+ { $($selection)* }),
             ($($nodes)*),
         )

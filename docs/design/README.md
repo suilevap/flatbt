@@ -7,7 +7,7 @@ Code and tests define current behavior; historical proposals may differ.
 
 | Document | Scope |
 | --- | --- |
-| [Package layout](package-layout.md) | Crate boundaries and feature wiring |
+| [Package layout](package-layout.md) | Two crates, and what goes in each |
 | [Static state](static-state.md) | State composition, dispatch, ownership |
 | [Tree and state](tree-state.md) | Diagram: graph, code, memory layout |
 | [Choice](choose.md) | Candidate identity and selection |

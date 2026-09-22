@@ -229,3 +229,19 @@ ends the moment its condition stops holding. Checking only on `Evaluate` was
 rejected: `Resume` would then keep a child running past its condition, and a
 tree must not behave differently under `Resume` once it runs. `check` keeps its
 meaning -- asked once, on entry.
+
+## 2026-09-22 — One crate, plus the Bevy integration
+
+`flatbt-core`, `flatbt-nodes` and `flatbt-scope` merge into `flatbt` as modules
+(`runtime`, `composition`, `params`, `nodes`, `scope`), and the `choose`,
+`scope`, `action` and `bevy` features are removed. Supersedes the two
+2026-09-10 entries.
+
+The split treated crates like projects in a solution, but a crate is a unit of
+dependencies and release. None of the three had a dependency or a release cadence
+of its own; the split cost five manifests, hidden `__private` re-exports for the
+macros, a wrapper for `ChooseNode`, and a feature matrix script. `flatbt-bevy`
+stays separate: it depends on Bevy and exposes its types, so a Bevy upgrade is a
+breaking release of it alone. It can no longer be re-exported as `flatbt::bevy`
+(that would be a dependency cycle); its prelude re-exports `flatbt::prelude`
+instead.

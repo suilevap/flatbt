@@ -27,7 +27,7 @@ pub trait ParamValue {
 /// Shared input shape. Its view prevents direct mutation:
 ///
 /// ```compile_fail,E0594
-/// use flatbt_core::{BtNode, EntryMode, NodeResult};
+/// use flatbt::{BtNode, EntryMode, NodeResult};
 /// struct InvalidWriter;
 /// impl BtNode<(), (), &u32> for InvalidWriter {
 ///     type State = ();
