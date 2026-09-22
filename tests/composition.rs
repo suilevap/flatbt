@@ -31,17 +31,9 @@ impl BtNode<usize> for Pending {
     }
 }
 
-struct Reject<N>(N);
-
-impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
-    // This adapter forwards its entire state to the nested node.
-    type State = N::State;
-
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), mode: EntryMode) -> NodeResult {
-        let _ = self.0.update(state, ctx, (), mode);
-        NodeResult::Failure
-    }
-}
+#[path = "support/reject.rs"]
+mod reject;
+use reject::Reject;
 
 #[test]
 fn rejected_static_candidate_drops_its_state_without_resetting_saved_branch() {
