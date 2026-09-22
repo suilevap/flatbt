@@ -10,7 +10,8 @@ pub enum ControlOp {
 }
 
 impl ControlOp {
-    /// Logs to stderr and terminates the control with Failure.
+    /// Reports a diagnostic and terminates the control with Failure. See
+    /// [`set_error_handler`](crate::set_error_handler).
     pub fn error(message: impl std::fmt::Display) -> Self {
         crate::log_error(message);
         Self::Failure

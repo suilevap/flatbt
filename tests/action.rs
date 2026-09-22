@@ -230,16 +230,9 @@ fn speculative_completion_loses_or_new_action_preempts_without_ticking_old_actio
 }
 
 // An enclosing node can reject a child after the child's inline tick has run.
-struct Reject<N>(N);
-
-impl<C, N: flatbt::BtNode<C>> flatbt::BtNode<C> for Reject<N> {
-    type State = N::State;
-
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), mode: EntryMode) -> NodeResult {
-        let _ = self.0.update(state, ctx, (), mode);
-        Failure
-    }
-}
+#[path = "support/reject.rs"]
+mod reject;
+use reject::Reject;
 
 #[test]
 fn rejecting_a_running_candidate_does_not_undo_its_inline_tick() {

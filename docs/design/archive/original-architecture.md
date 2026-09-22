@@ -2,7 +2,7 @@
 
 Historical design, translated from the Russian source. This records the original
 v1 plan, including unimplemented and superseded proposals. For current behavior,
-see the [README](../../README.md) and [decision log](decisions.md).
+see the [README](../../../README.md) and [decision log](../decisions.md).
 Signatures and snippets below are conceptual.
 
 ## 1. Core idea

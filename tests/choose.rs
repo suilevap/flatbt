@@ -157,16 +157,9 @@ fn terminal_choice_is_forwarded_without_fallback_and_releases_the_old_state() {
     }
 }
 
-struct Reject<N>(N);
-
-impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
-    type State = N::State;
-
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), mode: EntryMode) -> NodeResult {
-        let _ = self.0.update(state, ctx, (), mode);
-        Failure
-    }
-}
+#[path = "support/reject.rs"]
+mod reject;
+use reject::Reject;
 
 #[test]
 fn outer_rejection_drops_nested_candidates_and_preserves_the_saved_branch() {

@@ -1,7 +1,7 @@
 # Storage boundaries
 
 Deferred proposal; no implementation. Based on `d0ce88c`; archived experiment
-`52e50b4` supplied evidence. Current [static choice](choose-draft.md) does not
+`52e50b4` supplied evidence. Current [static choice](../choose.md) does not
 require this proposal. Open runtime sets may use heap allocation or non-linear
 storage; their memory model remains open.
 

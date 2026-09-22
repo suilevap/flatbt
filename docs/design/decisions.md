@@ -2,7 +2,7 @@
 
 Chronological record. Later entries supersede earlier ones. See the
 [README](../../README.md) for current behavior; the
-[original proposal](original-architecture.md) is historical reference.
+[original proposal](archive/original-architecture.md) is historical reference.
 
 ## 2026-09-07 — M0: synchronous backend
 
@@ -104,7 +104,7 @@ scope owns locals and its DSL. No helpers enabled by default.
 
 Supersedes single-crate packaging and deferred catalog. Execution semantics unchanged.
 ChooseNode becomes a delegating wrapper so the owning crate can retain its constructor.
-See [package layout](package-layout-draft.md) for dependencies, migration, and checks.
+See [package layout](package-layout.md) for dependencies, migration, and checks.
 
 ## 2026-09-10 — All helpers by default
 

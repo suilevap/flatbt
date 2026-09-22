@@ -54,6 +54,8 @@ pub use composition::{
     Sequence, check, child_state, control, guard, leaf, select, seq,
 };
 pub(crate) use runtime::log_error;
-pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update, update_slot};
+pub use runtime::{
+    BtNode, BtState, EntryMode, ErrorHandler, NodeResult, set_error_handler, update, update_slot,
+};
 
 include!(concat!(env!("OUT_DIR"), "/child_indices.rs"));
