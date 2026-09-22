@@ -165,7 +165,7 @@ fn take_turn() -> impl BehaviorNode<Agent, Acting> {
 fn agents_can_be_ticked_one_at_a_time_in_an_order_the_game_sets() {
     let mut app = App::new();
     app.add_plugins(
-        BehaviorPlugin::for_tree(take_turn).tick_mode(|agent: &Agent| {
+        BehaviorPlugin::for_tree(take_turn).tick_mode(|agent: &Agent, _| {
             if agent.has_turn {
                 Tick::Resume
             } else {

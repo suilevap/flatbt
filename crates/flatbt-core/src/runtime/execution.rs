@@ -46,11 +46,35 @@ pub fn update<C, A, N: BtNode<C, A>>(
     if !std::ptr::eq(root_node, state.root_node) {
         return NodeResult::error("state belongs to a different root definition");
     }
-    run_node(root_node, &mut state.root_state, ctx, mode)
+    update_slot(root_node, &mut state.root_state, ctx, mode)
 }
 
-/// Initializes fresh state with Evaluate; clears the slot on terminal results.
-pub(crate) fn run_node<C, A, N: BtNode<C, A>>(
+/// Runs a root over caller-owned invocation state: what [`update`] does, without
+/// the [`BtState`] binding.
+///
+/// For a driver that cannot keep a `BtState` next to the tree it borrows, such
+/// as an ECS component. An empty slot enters with Evaluate; a terminal result
+/// clears it. The caller must pair each slot with one root.
+///
+/// ```
+/// use flatbt_core::{BtNode, EntryMode, NodeResult, leaf, update_slot};
+///
+/// fn tree() -> impl BtNode<u32> {
+///     leaf(|n: &mut u32| {
+///         *n += 1;
+///         if *n < 2 { NodeResult::RUNNING } else { NodeResult::Success }
+///     })
+/// }
+///
+/// let tree = tree();
+/// let mut slot = None;
+/// let mut n = 0;
+/// assert!(update_slot(&tree, &mut slot, &mut n, EntryMode::Resume).is_running());
+/// assert!(slot.is_some());
+/// assert_eq!(update_slot(&tree, &mut slot, &mut n, EntryMode::Resume), NodeResult::Success);
+/// assert!(slot.is_none());
+/// ```
+pub fn update_slot<C, A, N: BtNode<C, A>>(
     node: &N,
     slot: &mut Option<N::State>,
     ctx: &mut C,

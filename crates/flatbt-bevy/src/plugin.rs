@@ -4,7 +4,11 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
 use bevy_ecs::system::ParallelCommands;
 
-use crate::{Behavior, BehaviorTree, Tick, TickFn, TreeBuilder};
+use core::time::Duration;
+
+use bevy_time::Time;
+
+use crate::{Behavior, BehaviorTree, Tick, TickAt, TickFn, TreeBuilder};
 
 /// All behavior ticks, whatever their tree. Order other systems against this.
 ///
@@ -64,7 +68,7 @@ where
     pub fn for_tree(builder: F) -> Self {
         Self {
             builder,
-            tick_mode: |_| Tick::Evaluate,
+            tick_mode: |_, _| Tick::Evaluate,
             schedule: Update.intern(),
             parallel: false,
             act: core::marker::PhantomData,
@@ -79,9 +83,10 @@ where
     /// them when a profile says to, and expect the tree to behave the same
     /// under all three -- see [`Tick`].
     ///
-    /// The answer comes from the blackboard, so anything it needs -- a clock, a
-    /// staggered slot, a perception flag, whose turn it is -- is gathered like
-    /// everything else. See [`evaluate_every`](crate::evaluate_every) and
+    /// The answer comes from the blackboard and a [`TickAt`]: the agent and the
+    /// schedule's clock. Anything else it needs -- a perception flag, whose turn
+    /// it is -- is gathered like everything else. See
+    /// [`evaluate_every`](crate::evaluate_every) and
     /// [`act_every`](crate::act_every).
     ///
     /// ```
@@ -94,7 +99,7 @@ where
     /// # fn patrol() -> impl BehaviorNode<Guard, Act> {
     /// #     leaf(|_: &mut Guard| NodeResult::Running(Act::Idle))
     /// # }
-    /// BehaviorPlugin::for_tree(patrol).tick_mode(|guard: &Guard| {
+    /// BehaviorPlugin::for_tree(patrol).tick_mode(|guard: &Guard, _| {
     ///     if guard.alarm_changed {
     ///         Tick::Evaluate
     ///     } else if guard.walking {
@@ -175,6 +180,7 @@ type Agents<'w, 's, C, A, F> = Query<
 /// Ticks every agent running the tree named by `F`, in query order.
 fn tick_behaviors<C, A, F>(
     tree: Res<BehaviorTree<C, A, F>>,
+    time: Option<Res<Time>>,
     mut agents: Agents<C, A, F>,
     mut commands: Commands,
 ) where
@@ -182,14 +188,17 @@ fn tick_behaviors<C, A, F>(
     A: Component<Mutability = Mutable> + PartialEq,
     F: TreeBuilder<C, A>,
 {
+    let clock = clock(time.as_deref());
     for (entity, behavior, bb, held) in agents.iter_mut() {
-        apply(tick_agent(&tree, behavior, bb, held), entity, &mut commands);
+        let change = tick_agent(&tree, clock(entity), behavior, bb, held);
+        apply(change, entity, &mut commands);
     }
 }
 
 /// Ticks every agent running the tree named by `F` across the task pool.
 fn tick_behaviors_parallel<C, A, F>(
     tree: Res<BehaviorTree<C, A, F>>,
+    time: Option<Res<Time>>,
     mut agents: Agents<C, A, F>,
     commands: ParallelCommands,
 ) where
@@ -197,10 +206,11 @@ fn tick_behaviors_parallel<C, A, F>(
     A: Component<Mutability = Mutable> + PartialEq,
     F: TreeBuilder<C, A>,
 {
+    let clock = clock(time.as_deref());
     agents
         .par_iter_mut()
         .for_each(|(entity, behavior, bb, held)| {
-            let change = tick_agent(&tree, behavior, bb, held);
+            let change = tick_agent(&tree, clock(entity), behavior, bb, held);
             // Only an act that appeared or went needs a command, and that is the
             // rare case: an agent that keeps doing the same kind of thing had
             // its act written in place above.
@@ -210,9 +220,22 @@ fn tick_behaviors_parallel<C, A, F>(
         });
 }
 
+/// Where each agent's tick falls this run: zero without a `Time` resource.
+fn clock(time: Option<&Time>) -> impl Fn(Entity) -> TickAt + Sync {
+    let (elapsed, delta) = time.map_or((Duration::ZERO, Duration::ZERO), |time| {
+        (time.elapsed(), time.delta())
+    });
+    move |entity| TickAt {
+        entity,
+        elapsed,
+        delta,
+    }
+}
+
 /// One agent's tick, and what it left for a command.
 fn tick_agent<C, A, F>(
     tree: &BehaviorTree<C, A, F>,
+    at: TickAt,
     mut behavior: Mut<'_, Behavior<C, A, F>>,
     mut bb: Mut<'_, C>,
     held: Option<Mut<'_, A>>,
@@ -229,7 +252,7 @@ where
     // to `Changed<C>` either. The blackboard is the tree's input; its output is
     // the act.
     let bb = bb.bypass_change_detection();
-    let Some(mode) = tree.tick_mode()(bb).entry_mode() else {
+    let Some(mode) = tree.tick_mode()(bb, at).entry_mode() else {
         // Skipped: the suspended invocation and the standing act stay as they
         // are, and the systems carrying that act out keep seeing it.
         return ActChange::Settled;

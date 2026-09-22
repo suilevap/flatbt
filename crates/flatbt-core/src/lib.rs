@@ -55,7 +55,7 @@ pub use composition::{
 };
 pub(crate) use runtime::log_error;
 pub use runtime::{
-    BtNode, BtState, EntryMode, ErrorHandler, NodeResult, set_error_handler, update,
+    BtNode, BtState, EntryMode, ErrorHandler, NodeResult, set_error_handler, update, update_slot,
 };
 
 include!(concat!(env!("OUT_DIR"), "/child_indices.rs"));

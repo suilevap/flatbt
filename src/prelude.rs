@@ -3,7 +3,7 @@
 pub use flatbt_core::params::{ParamShape, ParamValue, Read, Write};
 pub use flatbt_core::{
     BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, EntryMode,
-    Leaf, NodeResult, Selector, Sequence, check, control, leaf, select, seq, update,
+    Leaf, NodeResult, Selector, Sequence, check, control, leaf, select, seq, update, update_slot,
 };
 
 #[cfg(feature = "action")]
