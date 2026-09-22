@@ -58,7 +58,7 @@ fn refill(mut guards: Query<&mut Guard, With<Act>>) {
 #[test]
 fn an_action_says_what_it_is_doing_until_the_world_is_done() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(reloading).tick_mode(|_| Tick::Resume))
+    app.add_plugins(BehaviorPlugin::for_tree(reloading).tick_mode(|_, _| Tick::Resume))
         .add_systems(Update, refill.after(BehaviorSystems));
     let agent = app
         .world_mut()

@@ -210,3 +210,12 @@ One authoring consequence, learned from a test that failed for the right reason:
 whatever keeps an agent busy is what decides when to stop. A `check` above a
 running node is not consulted again under any entry mode, so the condition
 belongs in `is_in_progress` on the action, not in a guard above it.
+
+## 2026-09-22 — `tick_mode` receives the agent and the clock
+
+`TickFn<C>` was `fn(&C) -> Tick`, so `evaluate_every` and `act_every`, which need
+an `Entity` and a clock, could only be called after a gather had copied both into
+every blackboard. It is now `fn(&C, TickAt) -> Tick`, where `TickAt` carries the
+agent's `Entity` and the schedule's `Time` elapsed and delta, read once per tick
+system. `bevy_time` moves from a dev-dependency to a dependency for it; without
+a `Time` resource both durations are zero.

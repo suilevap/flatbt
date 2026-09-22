@@ -6,6 +6,7 @@ use core::time::Duration;
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::ScheduleLabel;
+use bevy_time::{TimePlugin, TimeUpdateStrategy};
 use flatbt_bevy::prelude::*;
 
 /// What a guard knows. The tree reads it; the gather writes it.
@@ -255,7 +256,7 @@ fn remembering() -> impl BehaviorNode<Trace, Act> {
 
 fn traced_app() -> App {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(remembering).tick_mode(|_| Tick::Resume));
+    app.add_plugins(BehaviorPlugin::for_tree(remembering).tick_mode(|_, _| Tick::Resume));
     app
 }
 
@@ -377,7 +378,7 @@ fn approach() -> impl BehaviorNode<Walker, WalkingTo> {
 #[test]
 fn an_act_that_only_changes_is_written_in_place() {
     let mut app = App::new();
-    app.add_plugins(BehaviorPlugin::for_tree(approach).tick_mode(|_| Tick::Resume));
+    app.add_plugins(BehaviorPlugin::for_tree(approach).tick_mode(|_, _| Tick::Resume));
     let agent = app
         .world_mut()
         .spawn((
@@ -580,8 +581,12 @@ fn evaluate_every_spreads_a_population_across_the_period() {
     let delta = Duration::from_millis(10);
     let evaluated = (0..1_000u32)
         .filter(|index| {
-            let entity = Entity::from_raw_u32(*index).unwrap();
-            evaluate_every(period, Duration::from_millis(500), delta, entity) == Tick::Evaluate
+            let at = TickAt {
+                entity: Entity::from_raw_u32(*index).unwrap(),
+                elapsed: Duration::from_millis(500),
+                delta,
+            };
+            evaluate_every(period, at) == Tick::Evaluate
         })
         .count();
 
@@ -595,9 +600,11 @@ fn evaluate_every_spreads_a_population_across_the_period() {
 fn a_frame_longer_than_the_period_evaluates_once() {
     let mode = evaluate_every(
         Duration::from_millis(10),
-        Duration::from_millis(500),
-        Duration::from_millis(250),
-        Entity::from_raw_u32(7).unwrap(),
+        TickAt {
+            entity: Entity::from_raw_u32(7).unwrap(),
+            elapsed: Duration::from_millis(500),
+            delta: Duration::from_millis(250),
+        },
     );
     assert_eq!(mode, Tick::Evaluate);
 }
@@ -611,15 +618,57 @@ fn act_every_skips_between_slots_where_evaluate_every_resumes() {
     let clock = Duration::from_millis(500);
     let mut between = 0;
     for index in 0..1_000u32 {
-        let entity = Entity::from_raw_u32(index).unwrap();
-        match (
-            evaluate_every(period, clock, delta, entity),
-            act_every(period, clock, delta, entity),
-        ) {
+        let at = TickAt {
+            entity: Entity::from_raw_u32(index).unwrap(),
+            elapsed: clock,
+            delta,
+        };
+        match (evaluate_every(period, at), act_every(period, at)) {
             (Tick::Evaluate, Tick::Evaluate) => {}
             (Tick::Resume, Tick::Skip) => between += 1,
             other => panic!("the two policies disagreed on a slot: {other:?}"),
         }
     }
     assert!(between > 0);
+}
+
+/// How often a tree was entered.
+#[derive(Component, Default)]
+struct Entries(u32);
+
+fn counted() -> impl BehaviorNode<Entries, Act> {
+    leaf(|entries: &mut Entries| {
+        entries.0 += 1;
+        NodeResult::Running(Act::Firing)
+    })
+}
+
+/// The tick hands `tick_mode` the agent and the schedule's clock, so a policy
+/// that needs both is written in place.
+#[test]
+fn act_every_in_tick_mode_enters_each_agent_about_once_per_period() {
+    let mut app = App::new();
+    app.add_plugins(TimePlugin)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            10,
+        )))
+        .add_plugins(
+            BehaviorPlugin::for_tree(counted)
+                .tick_mode(|_, at| act_every(Duration::from_millis(100), at)),
+        );
+    let agents: Vec<Entity> = (0..20)
+        .map(|_| {
+            app.world_mut()
+                .spawn((Entries::default(), Behavior::for_tree(counted)))
+                .id()
+        })
+        .collect();
+    // One frame to start the clock, then three periods.
+    for _ in 0..31 {
+        app.update();
+    }
+    for agent in agents {
+        let entries = app.world().get::<Entries>(agent).unwrap().0;
+        assert!((2..=4).contains(&entries), "entered {entries} times");
+    }
 }

@@ -130,5 +130,5 @@ pub mod prelude;
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub use stagger::{act_every, evaluate_every};
 pub use tree::{
-    Behavior, BehaviorCommands, BehaviorNode, BehaviorTree, Tick, TickFn, TreeBuilder,
+    Behavior, BehaviorCommands, BehaviorNode, BehaviorTree, Tick, TickAt, TickFn, TreeBuilder,
 };

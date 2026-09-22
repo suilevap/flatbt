@@ -1,13 +1,11 @@
 //! Optional policies for [`BehaviorPlugin::tick_mode`], not part of the
-//! integration proper: they take a clock and an entity and return a [`Tick`].
+//! integration proper: they take a [`TickAt`] and return a [`Tick`].
 //!
 //! [`BehaviorPlugin::tick_mode`]: crate::BehaviorPlugin::tick_mode
 
 use core::time::Duration;
 
-use bevy_ecs::prelude::*;
-
-use crate::Tick;
+use crate::{Tick, TickAt};
 
 /// [`Tick::Evaluate`] on the one tick where this agent's slice of `period`
 /// elapses, [`Tick::Resume`] on every other.
@@ -17,19 +15,29 @@ use crate::Tick;
 /// It is here because staggering is the answer most often wanted, and because
 /// getting it wrong -- putting a whole population on one frame -- is easy.
 ///
-/// Each agent's slot is derived from its [`Entity`], so the work spreads across
+/// Each agent's slot is derived from its [`Entity`](bevy_ecs::entity::Entity), so the work spreads across
 /// the period and nothing is stored per agent. A tick longer than `period`
 /// still evaluates once, never twice.
 ///
 /// Every tick between slots still *resumes*, so an action in progress keeps
 /// being ticked. Use [`act_every`] instead when there is nothing to tick.
-pub fn evaluate_every(
-    period: Duration,
-    elapsed: Duration,
-    delta: Duration,
-    entity: Entity,
-) -> Tick {
-    stagger(period, elapsed, delta, entity, Tick::Resume)
+///
+/// ```
+/// # use core::time::Duration;
+/// # use bevy_ecs::prelude::*;
+/// # use flatbt_bevy::prelude::*;
+/// # #[derive(Component, Default)]
+/// # struct Guard;
+/// # #[derive(Component, Clone, Copy, PartialEq)]
+/// # enum Act { Idle }
+/// # fn patrol() -> impl BehaviorNode<Guard, Act> {
+/// #     leaf(|_: &mut Guard| NodeResult::Running(Act::Idle))
+/// # }
+/// BehaviorPlugin::for_tree(patrol)
+///     .tick_mode(|_, at| evaluate_every(Duration::from_millis(250), at));
+/// ```
+pub fn evaluate_every(period: Duration, at: TickAt) -> Tick {
+    stagger(period, at, Tick::Resume)
 }
 
 /// [`Tick::Evaluate`] on this agent's slot, [`Tick::Skip`] on every other tick.
@@ -42,17 +50,16 @@ pub fn evaluate_every(
 /// Wrong for a tree with an action that advances on its own, since skipping
 /// stops it advancing. If unsure, use [`evaluate_every`]: resuming does the
 /// same thing and costs a tick.
-pub fn act_every(period: Duration, elapsed: Duration, delta: Duration, entity: Entity) -> Tick {
-    stagger(period, elapsed, delta, entity, Tick::Skip)
+pub fn act_every(period: Duration, at: TickAt) -> Tick {
+    stagger(period, at, Tick::Skip)
 }
 
-fn stagger(
-    period: Duration,
-    elapsed: Duration,
-    delta: Duration,
-    entity: Entity,
-    between: Tick,
-) -> Tick {
+fn stagger(period: Duration, at: TickAt, between: Tick) -> Tick {
+    let TickAt {
+        entity,
+        elapsed,
+        delta,
+    } = at;
     let period = nanos(period);
     if period == 0 {
         return Tick::Evaluate;
