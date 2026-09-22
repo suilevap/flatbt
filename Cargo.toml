@@ -11,6 +11,7 @@ publish = false
 flatbt-core = { path = "crates/flatbt-core" }
 flatbt-nodes = { path = "crates/flatbt-nodes", default-features = false }
 flatbt-scope = { path = "crates/flatbt-scope" }
+flatbt-bevy = { path = "crates/flatbt-bevy" }
 
 [package]
 name = "flatbt"
@@ -24,11 +25,13 @@ default = ["choose", "scope", "action"]
 action = ["dep:flatbt-nodes", "flatbt-nodes/action"]
 choose = ["dep:flatbt-nodes", "flatbt-nodes/choose"]
 scope = ["dep:flatbt-scope"]
+bevy = ["dep:flatbt-bevy"]
 
 [dependencies]
 flatbt-core.workspace = true
 flatbt-nodes = { workspace = true, optional = true }
 flatbt-scope = { workspace = true, optional = true }
+flatbt-bevy = { workspace = true, optional = true }
 
 [[example]]
 name = "acts"

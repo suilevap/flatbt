@@ -174,3 +174,39 @@ This lands before the Bevy integration and independently of it. What it unlocks
 there: the tick query becomes `(&mut Behavior, &Bb, &mut Act)` -- a read-only
 blackboard and the decision as its own component -- so the `ActionComponent`
 bridge and the `Split` wrapper both stop being needed.
+
+## 2026-09-19 — Bevy, rebuilt on the act
+
+The integration is rewritten over `NodeResult<A>`. The tick query becomes
+`(Entity, &mut Behavior<C, A, F>, &mut C, Option<&mut A>)`: a tree reads its
+blackboard, returns what the agent is doing, and the tick puts that on the
+entity as a component.
+
+An agent doing something carries its act; an agent whose tree ended carries
+none. `Query<(&Act, &mut Transform)>` is therefore exactly the agents with a
+standing order, and `Without<Act>` exactly the idle ones -- no flags, nothing to
+clear, and no system reading the blackboard.
+
+Two pieces built for the previous shape are deleted rather than ported:
+
+- **`ActionComponent`**, which carried one decision at a time from a blackboard
+  field to a component. It cost four places per action (field, component,
+  hand-written `BtAction`, registration) and, because each decision was its own
+  marker, an archetype move whenever an agent changed its mind -- 0.5-0.8 ms of
+  frame per registered decision over 100 000 agents in `games/arena`, taking the
+  frame from 1.7 ms to 4.7. One act component whose *value* changes has neither
+  problem: the tick writes it in place with `set_if_neq`, and only appearing or
+  disappearing costs a command.
+- **`Split<In, Out>`**, the read-only-input wrapper. With the decision leaving
+  through the act there is nothing in the blackboard for a tree to write, so the
+  discipline it enforced is now the shape of the API.
+
+`Tick::Skip` gains a second meaning worth stating: it leaves the standing act
+alone as well as the invocation, so the systems carrying that act out keep
+seeing it. That is what makes it the right gate for a turn-based game and for an
+agent waiting on work the world is doing.
+
+One authoring consequence, learned from a test that failed for the right reason:
+whatever keeps an agent busy is what decides when to stop. A `check` above a
+running node is not consulted again under any entry mode, so the condition
+belongs in `is_in_progress` on the action, not in a guard above it.
