@@ -8,4 +8,4 @@ pub use children::{BtChildren, child_state};
 pub use control::{
     BtControl, ControlNode, ControlOp, ControlState, Selector, Sequence, control, select, seq,
 };
-pub use leaf::{Check, Leaf, check, leaf};
+pub use leaf::{Check, Guarded, Leaf, check, guard, leaf};

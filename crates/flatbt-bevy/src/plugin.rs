@@ -34,8 +34,6 @@ pub struct BehaviorSystems;
 ///     Firing,
 /// }
 ///
-/// // Whatever keeps the agent busy is what decides when to stop: while a node
-/// // is running, no entry mode consults anything above it.
 /// fn shoot() -> impl BehaviorNode<Guard, Act> {
 ///     leaf(|guard: &mut Guard| {
 ///         if guard.ammo > 0 {

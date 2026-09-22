@@ -118,7 +118,7 @@ impl BtAction<Guard, Act> for Reload {
     }
 }
 
-/// Keeps firing while the intruder is in range with rounds left.
+/// Keeps firing until its guard stops it.
 struct FireAt;
 
 impl BtAction<Guard, Act> for FireAt {
@@ -128,8 +128,8 @@ impl BtAction<Guard, Act> for FireAt {
         Some(())
     }
 
-    fn is_in_progress(&self, _: &(), guard: &Guard, _: ()) -> bool {
-        in_range(guard) && guard.ammo > 0
+    fn is_in_progress(&self, _: &(), _: &Guard, _: ()) -> bool {
+        true
     }
 
     fn tick(&self, _: &mut (), _: &mut Guard, _: ()) -> Act {
@@ -169,12 +169,14 @@ fn in_range(guard: &Guard) -> bool {
 
 /// A subtree is a plain function returning a node, so it composes into any tree
 /// by being called. Values, not registrations.
+///
+/// A `guard` is asked on every update, so firing stops the moment the intruder
+/// leaves range or the magazine runs dry.
 fn fire_at_intruder() -> impl BehaviorNode<Guard, Act> {
-    seq((
-        check(in_range),
-        check(|guard: &Guard| guard.ammo > 0),
+    guard(
+        |guard: &Guard| in_range(guard) && guard.ammo > 0,
         action(FireAt),
-    ))
+    )
 }
 
 /// `Act` is declared nowhere but this signature: it unifies from the actions,

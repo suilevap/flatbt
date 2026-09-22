@@ -25,10 +25,10 @@ enum Act {
 
 /// Firing keeps its own condition, which is what ends it.
 ///
-/// A guard above the leaf would not do: once the tree is suspended in the leaf,
-/// no entry mode consults a child above it, so the act would stand after the
-/// magazine ran out. Whatever keeps an agent busy is what decides when to stop
-/// -- which is `is_in_progress` on a real action.
+/// A `check` before the leaf would not do: while the leaf runs, the sequence
+/// goes straight back to it, so the act would stand after the magazine ran
+/// out. The condition belongs to the running node -- `is_in_progress` on a real
+/// action, or a `guard` around it.
 fn shoot() -> impl BehaviorNode<Guard, Act> {
     seq((leaf(|guard: &mut Guard| {
         if guard.alarm && guard.ammo > 0 {

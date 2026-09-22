@@ -56,8 +56,6 @@ where
 ///     Firing,
 /// }
 ///
-/// // The condition that ends the act sits in the node reporting it: while a
-/// // node is running, nothing above it is consulted again. See [`Behavior`].
 /// fn shoot(rounds: u32) -> impl BehaviorNode<Guard, Act> {
 ///     leaf(move |guard: &mut Guard| {
 ///         if guard.ammo >= rounds {
@@ -111,9 +109,8 @@ where
 ///
 /// [`Skip`](Tick::Skip) does not enter the tree at all and leaves both the
 /// suspended invocation and the agent's current act exactly as they were. It is
-/// the only one of the three that a guard inside the tree cannot approximate:
-/// once a tree is suspended, no entry mode consults a child above the one it is
-/// in.
+/// the only one of the three that no node inside the tree can approximate: a
+/// node can continue an invocation or end it, but not leave it untouched.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tick {
     /// Do not enter the tree. The suspended invocation and the standing act are

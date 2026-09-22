@@ -219,3 +219,13 @@ every blackboard. It is now `fn(&C, TickAt) -> Tick`, where `TickAt` carries the
 agent's `Entity` and the schedule's `Time` elapsed and delta, read once per tick
 system. `bevy_time` moves from a dev-dependency to a dependency for it; without
 a `Time` resource both durations are zero.
+
+## 2026-09-22 — A guard is asked on every update
+
+`guard(cond, child)` moves the stopping condition from the 2026-09-19 entry
+back outside the action. It checks `cond` on every update, `Resume` included,
+and fails without entering `child` when it does not hold, so a running child
+ends the moment its condition stops holding. Checking only on `Evaluate` was
+rejected: `Resume` would then keep a child running past its condition, and a
+tree must not behave differently under `Resume` once it runs. `check` keeps its
+meaning -- asked once, on entry.
