@@ -28,8 +28,9 @@ These follow from the current core and decide most of the plan below.
    its child by dropping the child's state, which fires `CancelOnDrop`. Hooks
    that need context on abort are not offered.
 5. **`BtControl::begin` already gets `&mut C` and the saved active index.**
-   That is enough for random policies (RNG in context), utility scoring, and
-   inertia. None of them needs a core change.
+   That is enough for random policies (RNG in context) and context-only
+   scoring with inertia, without a core change. Scoring that reads params
+   needs its own node (see the utility selector).
 6. **One active child per control.** `BtChildren` keeps a single variant.
    Parallel execution needs a different children trait.
 7. **The policy loop has no iteration budget.** Looping nodes bound
