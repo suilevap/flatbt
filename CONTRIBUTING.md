@@ -2,7 +2,8 @@
 
 ## Checks
 
-Run from the workspace root:
+Run from the workspace root. The checks run offline, so fetch dependencies once
+first with `cargo fetch`. CI runs the same commands.
 
 ```sh
 cargo test --offline --workspace --all-features
