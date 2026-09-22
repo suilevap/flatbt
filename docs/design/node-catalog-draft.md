@@ -51,7 +51,7 @@ question must be settled first.
 | Node | Semantics | Pri | Size | Core fit |
 | --- | --- | --- | --- | --- |
 | `guard(cond, child)` | Checks `cond` on every update, under both modes and before first entry. False on entry: Failure, and the child never starts. False later: the child's state is dropped (cancellation runs) and the node returns Failure. Otherwise it passes the child's result through. | P1 | S | fits |
-| `while_(cond, child)` | A loop, see the case table below. | P1 | S–M | fits |
+| `repeat_while(cond, child)` | Loops the child until `cond` is false, see the case table below. | P1 | S–M | fits |
 | `map_act(f, child)` | Turns the child's `NodeResult<B>` into `NodeResult<A>`. Lets a subtree keep its own act type and be reused under a larger one. | P1 | S | fits |
 | `invert`, `force_success`, `force_failure` | Standard result mapping. `Running` passes through. | P2 | S | fits |
 | `focus(lens, child)` | Runs a subtree over `&mut D` projected from `&mut C`. Lets a subtree be reused across blackboards. | P2 | S | fits (lens closure `for<'a> Fn(&'a mut C) -> &'a mut D`) |
@@ -59,22 +59,26 @@ question must be settled first.
 | `repeat(n, child)`, `retry(n, child)` | Count successes or failures inside the invocation. `Repeat` in `examples/support` becomes the catalog version. At most one restart per update (constraint 7). | P2 | S | fits |
 | `chance(p, rng, child)` | Enters the child with probability `p` on fresh entry only. | P3 | S | fits |
 
-`while_(cond, child)` loops a child that occupies the agent. Cases, evaluated
-in this order on each update:
+`repeat_while(cond, child)` keeps the agent busy with `child` while `cond`
+holds, and succeeds once it no longer does. It reads as a prerequisite for the
+next node in a sequence: `seq((repeat_while(far_away, move_closer), interact))`.
+An agent that is already close succeeds without moving.
+
+It fails only when `cond` still holds and the child can no longer occupy the
+agent. `cond` is checked on entry, on every update, and again whenever the
+child completes:
 
 | Situation | Result |
 | --- | --- |
-| `cond` false on entry | Failure; the child never starts. |
-| `cond` false while the child is running | Abort the child; Success (the loop ended). |
+| `cond` false: on entry, while the child runs, or after it completes | Success. A running child is aborted; on entry the child never starts. |
 | Child succeeds after running, `cond` still true | Restart the child in the same update. |
-| Child succeeds after running, `cond` no longer true | Success (the loop ended). |
-| Child fails after running | Failure. |
-| Child completes, either way, without ever returning `Running` | Failure. A loop around an instant child would spin without an act to report (constraints 2 and 7), so it is treated as a misuse; a restart that completes instantly logs a diagnostic. |
+| Child fails, `cond` still true | Failure. |
+| Child completes without returning `Running` in this iteration, `cond` still true | Failure. A loop around an instant child would spin without an act to report (constraints 2 and 7); a restart that completes instantly also logs a diagnostic. |
 
-`guard` differs in two ways: it never restarts, and a condition that turns
-false fails it instead of ending it.
+`guard` is the opposite contract: `cond` is a requirement rather than a goal,
+so a false `cond` fails it, and it never restarts its child.
 
-Params: `guard` and `while_` forward scope parameters to the child, and the
+Params: `guard` and `repeat_while` forward scope parameters to the child, and the
 condition may read them (`Fn(&C, P) -> bool`), using the same `ParamValue`
 reborrow as `ControlNode`. A guard on a scope local, like
 `guard(|_, target: &Enemy| target.alive, ..)`, is the common case inside
@@ -157,7 +161,7 @@ for what shipped, and a decision-log entry.
 
 **Phase 1: guards and leaf helpers** (P1, all S)
 
-- `guard`, `while_`, and `map_act`.
+- `guard`, `repeat_while`, and `map_act`.
 - `action_while`, `leaf_with`, and `check_with`.
 - Tests pin the key contract: `guard` aborts a suspended action under
   **`Resume`**, and its `CancelOnDrop` fires. That is the case that fails with
@@ -187,7 +191,5 @@ for what shipped, and a decision-log entry.
 
 ## Open questions
 
-- `while_` naming. Rust reserves `while`, so the choices are `while_`,
-  `loop_while`, or `repeat_while`.
 - Should the utility scorer see scope params (`Fn(&C, P, usize)`)? That would
   need the policy to receive params, which `BtControl` does not do today.
