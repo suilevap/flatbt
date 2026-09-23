@@ -204,3 +204,42 @@ fn patrol() -> Vec<Spec> {
         Leaf(Op::Act(2)),
     ]
 }
+
+/// One line that identifies a run's outcome. `csharp/Program.cs` prints the
+/// same format, so the two can be compared as text.
+pub fn checksum(scenario: Scenario, (bb, counts): &(Bb, [u64; 3])) -> String {
+    let s = &bb.soldier;
+    let join = |v: &[u32]| v.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let work: Vec<u32> = s.work.iter().map(|&w| w as u32).collect();
+    format!(
+        "{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+        scenario.name(),
+        counts[0],
+        counts[1],
+        counts[2],
+        bb.t,
+        bb.mode,
+        bb.enemy as u8,
+        bb.hp,
+        bb.pos,
+        bb.charge,
+        bb.score,
+        s.health,
+        s.medkits,
+        s.mag,
+        s.reserve,
+        s.grenades,
+        s.food,
+        s.hunger,
+        s.fatigue,
+        s.foe_left,
+        s.foe_hp,
+        s.foe_dist,
+        s.foe_grouped as u8,
+        s.noise.map_or("-".to_owned(), |n| n.to_string()),
+        join(&work),
+        s.kills,
+        s.deaths,
+        join(&s.effects),
+    )
+}

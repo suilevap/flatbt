@@ -4,6 +4,9 @@ use crate::soldier::{Abort::*, Cond::*, Effect::*, Place, SoldierOp};
 use flatbt::prelude::*;
 
 pub const NAME: &str = "flatbt";
+/// Every update enters with `Evaluate`: selectors rescan from their first
+/// child, as bt-tree (C#) does. Used only for that comparison.
+pub const EVALUATE: &str = "flatbt-evaluate";
 
 fn op(op: Op) -> impl BtNode<Bb> {
     leaf(move |bb: &mut Bb| match op.run(bb) {
@@ -131,17 +134,25 @@ fn soldier() -> impl BtNode<Bb> {
 }
 
 /// One shared tree; each agent owns only `Option<Tree::State>`.
-fn measure<N: BtNode<Bb> + 'static>(scenario: Scenario, tree: fn() -> N) -> Box<dyn Measure>
+fn measure<N: BtNode<Bb> + 'static>(
+    scenario: Scenario,
+    tree: fn() -> N,
+    mode: EntryMode,
+) -> Box<dyn Measure>
 where
     N::State: 'static,
 {
+    let name = match mode {
+        EntryMode::Resume => NAME,
+        EntryMode::Evaluate => EVALUATE,
+    };
     entry(
-        NAME,
+        name,
         true,
         scenario,
         tree,
         |_: &N| None::<N::State>,
-        |tree, slot, bb| match update_slot(tree, slot, bb, EntryMode::Resume) {
+        move |tree, slot, bb| match update_slot(tree, slot, bb, mode) {
             NodeResult::Success => Outcome::Success,
             NodeResult::Failure => Outcome::Failure,
             NodeResult::Running(()) => Outcome::Running,
@@ -150,10 +161,18 @@ where
 }
 
 pub fn entries() -> Vec<Box<dyn Measure>> {
+    with_mode(EntryMode::Resume)
+}
+
+pub fn evaluate_entries() -> Vec<Box<dyn Measure>> {
+    with_mode(EntryMode::Evaluate)
+}
+
+fn with_mode(mode: EntryMode) -> Vec<Box<dyn Measure>> {
     vec![
-        measure(Scenario::Select8, select8),
-        measure(Scenario::Patrol, patrol),
-        measure(Scenario::Guard, guard),
-        measure(Scenario::Soldier, soldier),
+        measure(Scenario::Select8, select8, mode),
+        measure(Scenario::Patrol, patrol, mode),
+        measure(Scenario::Guard, guard, mode),
+        measure(Scenario::Soldier, soldier, mode),
     ]
 }
