@@ -305,3 +305,22 @@ Both forms stay. The prefix suits long nodes, the suffix short ones such as
 `action(Walk).with(pos)`, and keeping the suffix breaks no tree. `with` at the
 start of a node is reserved inside `scope!`; `with(x);` with no node is a
 compile error.
+
+## 2026-09-23 — Selection by score
+
+`utility!` and `Utility<F, S>` run the child with the highest score and fall
+back to the best untried one when it fails, tracking tried children in a `u64`
+per invocation (so at most 64 children). Evaluate rescores and may preempt;
+Resume continues without scoring, like `select`.
+
+- **One policy, generic score.** The proposal's separate `priority` selector
+  was the same policy with integer scores, so it is not a second name.
+- **Ties keep the running child.** Otherwise a challenger that only matches the
+  running child plus its inertia would take over, contradicting what inertia
+  promises; a test caught exactly that.
+- **NaN skips a child**, detected as a score not comparable with itself, which
+  keeps the policy generic over `PartialOrd`.
+- **Scorer reads the blackboard only**, as decided in the proposal: `BtControl`
+  does not receive parameters.
+- The macro's last arm becomes the scorer's `_` arm, so no unreachable branch
+  is generated and nothing can panic.

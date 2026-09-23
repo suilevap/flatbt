@@ -1,6 +1,6 @@
 # Node catalog: brainstorm and plan
 
-Status: proposal; Phase 1 implemented. Each item says what it is for, whether
+Status: proposal; Phases 1 and 2 implemented. Each item says what it is for, whether
 the current core can express it, and roughly what it costs.
 
 The catalog lives in `flatbt::nodes`, under the existing `extras` feature.
@@ -104,7 +104,7 @@ ordinary `.with(..)` bindings, so `scope!` needs no macro changes.
 | Policy | Semantics | Pri | Size | Core fit |
 | --- | --- | --- | --- | --- |
 | `utility!(\|c: &C\| { score_a => a, score_b => b })` / `utility(scorer, children)` | Runs the child with the highest score. When it fails, rescores and tries the best **untried** child (a `u64` bitmask in policy state). Under `Evaluate` it rescores and may preempt. An optional `inertia` adds a bonus to `active_child_index`, which `begin` already receives, to prevent flip-flopping. Scores are `f32`; NaN counts as "skip". | P1 | M | fits. The macro reuses `__flatbt_child_indices` like `choose!`, and generates `Fn(&C, usize) -> f32`. |
-| `priority(...)` | Dynamic priority selector: the same machinery with integer priorities and a stable tie-break on child order. One generic policy (`S: PartialOrd`) with two constructors. | P1 | S (on top of utility) | fits |
+| `priority(...)` | Folded into `utility`: its score type is generic, and integer scores make a dynamic priority selector. A second name would be the same policy. | -- | -- | done, as `utility` |
 | `random_select(rng, children)` | On fresh entry, picks an untried child uniformly at random. On failure, tries another untried child. Under `Evaluate`, keeps the active child, like `seq`. | P2 | S | fits (`rng: Fn(&mut C) -> u32` from context) |
 | `weighted_select(rng, weights, children)` | Weighted version. `weights: Fn(&C, usize) -> f32`. | P2 | S | fits |
 | `shuffle_seq(rng, children)` | A sequence in random order, without replacement, using the bitmask. | P2 | S | fits |
@@ -165,12 +165,12 @@ for what shipped, and a decision-log entry.
 - Conditions (and the act of `action_while`) that read scope params, under
   the same constructors through `ReadFn`.
 
-**Phase 2: utility / priority selection** (M)
+**Phase 2: utility / priority selection** (M) -- done
 
-- A generic scored policy, the `utility!` macro (sharing the child-index
-  machinery with `choose!`), `priority`, and inertia.
-- Tests: preemption under `Evaluate`, fallback on failure in score order,
-  inertia preventing switches, and NaN skipped.
+- `Utility<F, S>` with a generic score type, `utility(..)`, the `utility!`
+  macro (sharing the child-index machinery with `choose!`), and inertia.
+  Integer scores cover the dynamic priority selector; no separate `priority`.
+- A tie keeps the running child, then goes to the lower index.
 
 **Phase 3: random policies and remaining decorators** (S each)
 

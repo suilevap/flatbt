@@ -22,6 +22,7 @@ flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
 | `src/nodes/choose.rs` | Choice policy and `choose!` |
 | `src/nodes/decorate.rs` | `repeat_while`, `map_act` |
 | `src/nodes/function.rs` | Callable helpers: `action_while`, `leaf_with`, `check_with` |
+| `src/nodes/utility.rs` | Scored selection: `Utility`, `utility`, `utility!` |
 | `src/scope/` | Owned locals, parameter bindings, `scope!` |
 | `crates/flatbt-bevy/` | Tree resource, agent component, tick plugin |
 | `examples/`, `tests/` | Application examples, test helpers, public API tests |

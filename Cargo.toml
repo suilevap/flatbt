@@ -83,3 +83,7 @@ required-features = ["std"]
 [[test]]
 name = "catalog"
 required-features = ["extras"]
+
+[[test]]
+name = "utility"
+required-features = ["extras"]
