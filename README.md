@@ -176,6 +176,33 @@ let tree = choose!(|bb: &Blackboard| match bb.order {
 Arm definitions cannot use `bb` or match bindings. Read update-time inputs inside
 the node. See the [choice example](examples/choose.rs).
 
+### By score
+
+`utility!` scores every child and runs the best. Unlike `choose!`, it falls
+back: a child that fails is not retried, and the best of the rest runs instead.
+
+```rust,ignore
+let tree = utility!(|bb: &Needs| {
+    bb.hunger => action(Eat),
+    bb.fatigue => action(Sleep),
+    bb.boredom * 0.5 => action(Play),
+}, inertia = 0.1);
+```
+
+| Event | Behavior |
+| --- | --- |
+| Fresh entry, `Evaluate` | Score all; run the best. A better child preempts the running one. |
+| `Resume` | Continue the running child without scoring. |
+| Child fails | Run the best child not yet tried; fail when none is left. |
+| Child succeeds | Succeed. |
+
+Higher scores win. A tie keeps the running child, and otherwise goes to the
+first. NaN skips a child. `inertia` is added to the running child's score, so a
+challenger must beat it by more than that. Integer scores make a dynamic
+priority selector. The function form is `utility(|bb: &C, index| score,
+children)`; for inertia there, `control(Utility::new(score).inertia(x),
+children)`. At most 64 children.
+
 ## Share local values
 
 Locals initialize once per invocation and survive suspension
@@ -515,7 +542,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `utility!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node

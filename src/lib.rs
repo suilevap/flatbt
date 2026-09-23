@@ -75,8 +75,8 @@ pub use composition::{
 #[cfg(feature = "extras")]
 pub use nodes::{
     ActionNode, ActionWhile, BtAction, BtCancel, CancelOnDrop, CheckWith, Choose, ChooseNode,
-    LeafWith, MapAct, RepeatWhile, action, action_while, check_with, leaf_with, map_act,
-    repeat_while,
+    LeafWith, MapAct, RepeatWhile, Utility, action, action_while, check_with, leaf_with, map_act,
+    repeat_while, utility,
 };
 pub(crate) use runtime::log_error;
 pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update, update_slot};
