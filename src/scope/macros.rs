@@ -3,8 +3,11 @@
 /// - `let name: Type = callback;`: initialize with `Fn(&mut Context) -> Type`.
 /// - `let name: Type;`: reserve an output slot for a producer.
 /// - `Node.with(name);`: shared input. `out name`: exclusive output slot.
+/// - `with(name, out other) Node;`: the same binding written first, for a long
+///   node. It binds everything after it up to `;`. `with` at the start of a
+///   node is therefore reserved.
 /// - Plain node expressions use unit parameters; constructors take ordinary Rust
-///   arguments. Only `.with(...)` binds runtime fields.
+///   arguments. Only `.with(...)` or a leading `with(...)` binds runtime fields.
 ///   Annotate the initializer's argument. Nested sequence/select blocks share
 ///   locals.
 ///
@@ -93,6 +96,20 @@ macro_rules! __flatbt_scope {
     };
     (@children [$locals:ident $value:ident] sequence [$($nodes:tt)*];) => { $crate::seq(($($nodes)*)) };
     (@children [$locals:ident $value:ident] select [$($nodes:tt)*];) => { $crate::select(($($nodes)*)) };
+    // A leading with(...) binds the whole node after it, up to its `;`.
+    (@children $setup:tt $control:ident $nodes:tt; with ($($args:tt)*) ; $($rest:tt)*) => {
+        compile_error!("expected a node after with(...)")
+    };
+    (@children $setup:tt $control:ident $nodes:tt; with ($($args:tt)*) $($rest:tt)+) => {
+        $crate::__flatbt_scope!(@prefixed $setup $control $nodes [$($args)*] []; $($rest)+)
+    };
+    (@prefixed $setup:tt $control:ident [$($nodes:tt)*] [$($args:tt)*] [$($node:tt)+]; ; $($rest:tt)*) => {
+        $crate::__flatbt_scope!(@children $setup $control
+            [$($nodes)* $crate::__flatbt_scope!(@args $setup [$($node)+] []; $($args)*),]; $($rest)*)
+    };
+    (@prefixed $setup:tt $control:ident $nodes:tt $args:tt [$($node:tt)*]; $next:tt $($rest:tt)*) => {
+        $crate::__flatbt_scope!(@prefixed $setup $control $nodes $args [$($node)* $next]; $($rest)*)
+    };
     (@children $setup:tt $control:ident $nodes:tt; $($rest:tt)+) => {
         $crate::__flatbt_scope!(@expression $setup $control $nodes []; $($rest)+)
     };
@@ -137,7 +154,7 @@ macro_rules! __flatbt_scope {
     (@shape out) => { $crate::params::Write<_> };
     (@borrow $value:ident in $field:ident) => { $value.$field.as_ref()? };
     (@borrow $value:ident out $field:ident) => { &mut $value.$field };
-    (@ $($invalid:tt)*) => { compile_error!("expected local declarations, then sequence { ... } or select { ... } with node expressions ending in ; and optional .with(local, out local) bindings") };
+    (@ $($invalid:tt)*) => { compile_error!("expected local declarations, then sequence { ... } or select { ... } with node expressions ending in ; and optional .with(local, out local) or leading with(local, out local) bindings") };
     ($($body:tt)*) => {
         $crate::__flatbt_scope!(@locals [__FlatbtLocals __flatbt_locals] [] []; $($body)*)
     };

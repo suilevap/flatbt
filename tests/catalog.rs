@@ -350,7 +350,7 @@ fn hunt() -> impl BtNode<Arena, Act> {
     scope! {
         let target: usize = |arena: &mut Arena| arena.alive.iter().position(|a| *a).unwrap_or(0);
         sequence {
-            guard(
+            with(target) guard(
                 |arena: &Arena, target: &usize| arena.alive[*target],
                 seq((
                     repeat_while(
@@ -362,7 +362,7 @@ fn hunt() -> impl BtNode<Arena, Act> {
                         NodeResult::Running(Act::Step)
                     }),
                 )),
-            ).with(target);
+            );
         }
     }
 }

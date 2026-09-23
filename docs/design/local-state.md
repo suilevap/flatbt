@@ -87,7 +87,9 @@ an exclusive output. Plain node expressions use unit parameters. Constructors
 keep ordinary Rust arguments: `wait_frames(frames)` reads outer configuration;
 `LookAt.with(frames)` selects a local field.
 
-Only the final statement-level `.with(...)` suffix binds locals. Parenthesize an
+A leading `with(...)` binds the whole node after it, up to `;`, with the same
+argument syntax; use it when a long node would push the suffix out of sight.
+Otherwise only the final statement-level `.with(...)` suffix binds locals. Parenthesize an
 expression to use an unrelated `.with` method. Binding syntax inside opaque Rust
 expressions, such as tuple arguments, is not expanded; use nested control blocks.
 

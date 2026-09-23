@@ -205,6 +205,10 @@ For a suspending producer, declare `let cover: Vector2;` and bind
 Missing inputs log a diagnostic and fail the consumer. Shared-local writes survive
 candidate failure.
 
+For a long node, write the binding first: `with(enemy, out cover) ChooseCover;`
+binds everything after it up to `;`, so the bound locals are visible at the top.
+Keep `.with(..)` for short nodes. `with` at the start of a node is reserved.
+
 Function API: `scope`, `bind`, `read`, `write`, `params`, and `WithParams`.
 See the [macro example](examples/scoped_params.rs) and
 [function example](examples/scoped_params_manual.rs).
@@ -261,10 +265,10 @@ constructor takes either; annotate the closure's arguments.
 let tree = scope! {
     let target: Entity = pick_target;
     sequence {
-        guard(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
+        with(target) guard(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
             repeat_while(|bb: &World, target: &Entity| bb.far_from(*target), action(Approach)),
             action(Attack),
-        ))).with(target);
+        )));
     }
 };
 ```

@@ -264,6 +264,49 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
 }
 
 #[test]
+fn a_leading_with_binds_the_whole_node_after_it() {
+    struct Offset;
+    impl BtNode<World, (), (&Vector2, &mut Option<Vector2>)> for Offset {
+        type State = ();
+        fn update(
+            &self,
+            _: &mut (),
+            _: &mut World,
+            (input, output): (&Vector2, &mut Option<Vector2>),
+            _: EntryMode,
+        ) -> NodeResult {
+            *output = Some(Vector2(input.0 + 10.0, input.1));
+            Success
+        }
+    }
+    let tree = scope! {
+        let walk_pos: Vector2 = |world: &mut World| world.next_patrol;
+        let door_pos: Vector2;
+        sequence {
+            with(walk_pos, out door_pos) Offset;
+            // Everything up to `;` is the bound node, however long.
+            with(door_pos) seq((
+                LookAt,
+                LookAt,
+            ));
+            action(Walk).with(walk_pos);
+        }
+    };
+    let mut state: BtState<_, _> = BtState::new(&tree);
+    let mut world = world();
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        Running
+    );
+    assert_eq!(
+        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        Success
+    );
+    assert_eq!(world.looked_at, [Vector2(11.0, 2.0), Vector2(11.0, 2.0)]);
+    assert_eq!(world.walked_to, [Vector2(1.0, 2.0)]);
+}
+
+#[test]
 fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_completion() {
     use std::sync::{Arc, Mutex};
     type Log = Arc<Mutex<Vec<&'static str>>>;

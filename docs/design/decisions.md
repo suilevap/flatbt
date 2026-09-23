@@ -292,3 +292,16 @@ already do; an unmatched closure reports `ReadFn` rather than a plain `Fn`
 mismatch, softened by a `diagnostic::on_unimplemented` note. `leaf_with` and
 `check_with` stay separate for now: `leaf` and `check` would take the same
 treatment, but that is a core change on its own.
+
+## 2026-09-23 — `with(...)` may come first
+
+In `scope!`, `with(target) guard(.., seq((..)));` binds the node after it the
+same way `guard(.., seq((..))).with(target);` does. A long node pushed the
+binding to its last line, where a reader meets it after the closures that use
+it. Only the macro can offer this: `target` names a local, not a value, so a
+function or method taking it first cannot exist outside `scope!`.
+
+Both forms stay. The prefix suits long nodes, the suffix short ones such as
+`action(Walk).with(pos)`, and keeping the suffix breaks no tree. `with` at the
+start of a node is reserved inside `scope!`; `with(x);` with no node is a
+compile error.
