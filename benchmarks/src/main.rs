@@ -4,6 +4,7 @@ mod alloc;
 mod common;
 mod harness;
 mod libs;
+mod soldier;
 
 use common::{SCENARIOS, Scenario};
 use harness::{Config, Measure, Report};
@@ -128,10 +129,20 @@ fn print_table(s: Scenario, reports: &[Report], reference: &(common::Bb, [u64; 3
         _ => String::new(),
     };
     let [success, failure, running] = reference.1;
+    let (nodes, leaves, depth) = s.spec().shape();
     println!(
-        "\n### {} — {success} success / {failure} failure / {running} running per 100k ticks\n",
+        "\n### {} — {nodes} nodes, {leaves} leaves, depth {depth}; {success} success / {failure} failure / {running} running per 100k ticks\n",
         s.name()
     );
+    if s == Scenario::Soldier {
+        let effects = &reference.0.soldier.effects;
+        let mix: Vec<String> = soldier::Effect::NAMES
+            .iter()
+            .zip(effects)
+            .map(|(name, n)| format!("{name} {n}"))
+            .collect();
+        println!("Actions completed per 100k ticks: {}.\n", mix.join(", "));
+    }
     println!(
         "| library | ns/tick, 1 agent | ns/tick, 10k agents | allocs/tick | bytes/tick | bytes/agent (inline + heap) | allocs to build an agent | ns to build an agent | peak transient heap | shared tree | same result |"
     );

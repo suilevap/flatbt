@@ -1,6 +1,8 @@
 //! The vocabulary every library runs: one blackboard, one set of leaf
 //! operations, and trees described once as a [`Spec`].
 
+use crate::soldier::{self, Soldier, SoldierOp};
+
 /// Per-agent world state. Every library reads and writes it through [`Op::run`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bb {
@@ -11,10 +13,13 @@ pub struct Bb {
     pub pos: i32,
     pub charge: u32,
     pub score: u64,
+    /// Only the `soldier` scenario's world moves it.
+    pub rich: bool,
+    pub soldier: Soldier,
 }
 
 impl Bb {
-    pub fn new(t: u32) -> Self {
+    pub fn new(scenario: Scenario, t: u32) -> Self {
         Self {
             t,
             mode: 0,
@@ -23,6 +28,8 @@ impl Bb {
             pos: 0,
             charge: 0,
             score: 0,
+            rich: scenario == Scenario::Soldier,
+            soldier: Soldier::new(),
         }
     }
 
@@ -35,6 +42,9 @@ impl Bb {
         self.enemy = h.is_multiple_of(5);
         if self.enemy {
             self.hp -= 9;
+        }
+        if self.rich {
+            soldier::step(&mut self.soldier, h);
         }
     }
 }
@@ -58,6 +68,13 @@ pub enum Op {
     EnemyNear,
     Heal,
     Attack,
+    Soldier(SoldierOp),
+}
+
+impl From<SoldierOp> for Op {
+    fn from(op: SoldierOp) -> Self {
+        Op::Soldier(op)
+    }
 }
 
 impl Op {
@@ -91,6 +108,7 @@ impl Op {
                 bb.score += 100;
                 Success
             }
+            Op::Soldier(op) => op.run(bb),
         }
     }
 }
@@ -112,6 +130,21 @@ pub enum Spec {
     Leaf(Op),
 }
 
+impl Spec {
+    /// (nodes, leaves, depth)
+    pub fn shape(&self) -> (usize, usize, usize) {
+        match self {
+            Spec::Leaf(_) => (1, 1, 1),
+            Spec::Seq(children) | Spec::Sel(children) => children
+                .iter()
+                .map(Spec::shape)
+                .fold((1, 0, 0), |(n, l, d), (cn, cl, cd)| {
+                    (n + cn, l + cl, d.max(cd + 1))
+                }),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scenario {
     /// Selector over 8 condition/action branches; completes every tick.
@@ -120,9 +153,16 @@ pub enum Scenario {
     Patrol,
     /// Flee / attack / patrol priorities, three levels deep.
     Guard,
+    /// A game NPC: 7 priorities, 7 levels, see `soldier`.
+    Soldier,
 }
 
-pub const SCENARIOS: [Scenario; 3] = [Scenario::Select8, Scenario::Patrol, Scenario::Guard];
+pub const SCENARIOS: [Scenario; 4] = [
+    Scenario::Select8,
+    Scenario::Patrol,
+    Scenario::Guard,
+    Scenario::Soldier,
+];
 
 impl Scenario {
     pub fn name(self) -> &'static str {
@@ -130,6 +170,7 @@ impl Scenario {
             Scenario::Select8 => "select8",
             Scenario::Patrol => "patrol",
             Scenario::Guard => "guard",
+            Scenario::Soldier => "soldier",
         }
     }
 
@@ -149,6 +190,7 @@ impl Scenario {
                 Seq(vec![Leaf(Op::EnemyNear), Leaf(Op::Attack)]),
                 Seq(patrol()),
             ]),
+            Scenario::Soldier => soldier::spec(),
         }
     }
 }
