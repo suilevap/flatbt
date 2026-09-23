@@ -16,6 +16,10 @@ impl<A> NodeResult<A> {
     /// Reports a diagnostic and returns Failure. Use `Failure` directly for normal
     /// outcomes. With `std`, diagnostics go to stderr unless `set_error_handler` says
     /// otherwise; without it they are discarded.
+    // Cold and out of line: the controls that call this are inlined into
+    // their parents, and the formatting would come along into every tick.
+    #[cold]
+    #[inline(never)]
     pub fn error(message: impl core::fmt::Display) -> Self {
         log_error(message);
         Self::Failure
@@ -40,6 +44,8 @@ impl NodeResult<()> {
     pub const RUNNING: Self = Self::Running(());
 }
 
+#[cold]
+#[inline(never)]
 pub(crate) fn log_error(message: impl core::fmt::Display) {
     #[cfg(feature = "std")]
     diagnostics::report(&message);
