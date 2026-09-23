@@ -29,7 +29,10 @@ mod score;
 pub use random::{Shuffled, Weighted, shuffled, weighted};
 pub use score::{ByScore, by_score};
 
-use crate::{BtChildren, ControlNode, EntryMode, NodeResult, Selector, Sequence, select, seq};
+use crate::params::ParamShape;
+use crate::{
+    BtChildren, ControlNode, ControlOp, EntryMode, NodeResult, Selector, Sequence, select, seq,
+};
 
 /// Children used in an invocation are one bit each in a `u64`.
 const MAX_CHILDREN: usize = 64;
@@ -95,16 +98,17 @@ pub struct OrderedState<OrderState, ChildrenState> {
 /// update takes.
 #[cold]
 #[inline(never)]
-fn unsupported<A>(position: usize, at: Option<usize>) -> NodeResult<A> {
-    NodeResult::error(format_args!(
+fn unsupported(position: usize, at: Option<usize>) {
+    crate::log_error(format_args!(
         "order_by visits positions in order; asked for {position} after {at:?}"
-    ))
+    ));
 }
 
-impl<C, A, P, O, Children> BtChildren<C, A, P> for Ordered<O, Children>
+impl<C, A, S, O, Children> BtChildren<C, A, S> for Ordered<O, Children>
 where
+    S: ParamShape,
     O: BtOrder<C>,
-    Children: BtChildren<C, A, P>,
+    Children: BtChildren<C, A, S>,
 {
     type State = OrderedState<O::State, Children::State>;
     const LEN: usize = Children::LEN;
@@ -117,14 +121,15 @@ where
     }
 
     #[inline]
-    fn run_child(
+    fn run_from(
         &self,
         state: &mut Self::State,
-        position: usize,
+        first: usize,
         ctx: &mut C,
-        params: P,
+        params: &mut S::Value<'_>,
         mode: EntryMode,
-    ) -> NodeResult<A> {
+        next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
+    ) -> Result<NodeResult<A>, ControlOp> {
         // The child count is static, so too many is a build error, not a check
         // on every update.
         const {
@@ -133,11 +138,63 @@ where
                 "order_by supports at most 64 children"
             )
         };
-        let at = state.at.map(|(at, _)| at as usize);
-        let child = match state.at {
+        let mut position = first;
+        loop {
+            let succeeded = match self.child_at(state, position, ctx, mode) {
+                Ok(Some(child)) => {
+                    // One child at a time: the order, not the tuple, decides
+                    // which child the next position holds.
+                    let mut ended = false;
+                    let mut stop = |_: &mut C, _: usize, succeeded: bool| {
+                        ended = succeeded;
+                        ControlOp::Failure
+                    };
+                    match self.children.run_from(
+                        &mut state.children,
+                        child as usize,
+                        ctx,
+                        params,
+                        mode,
+                        &mut stop,
+                    ) {
+                        Ok(running) => return Ok(running),
+                        Err(_) => ended,
+                    }
+                }
+                // No child left to offer, or a position out of order: the
+                // control sees a Failure there.
+                Ok(None) | Err(()) => false,
+            };
+            match next(ctx, position, succeeded) {
+                ControlOp::RunChild(following) if following == position + 1 => position = following,
+                op => return Err(op),
+            }
+        }
+    }
+}
+
+impl<O, Children> Ordered<O, Children> {
+    /// The child at `position`, picking it if the pass has moved on. `Err`
+    /// after reporting a position out of order.
+    #[inline]
+    fn child_at<C, A, S>(
+        &self,
+        state: &mut OrderedState<O::State, Children::State>,
+        position: usize,
+        ctx: &mut C,
+        mode: EntryMode,
+    ) -> Result<Option<u8>, ()>
+    where
+        S: ParamShape,
+        O: BtOrder<C>,
+        Children: BtChildren<C, A, S>,
+    {
+        Ok(match state.at {
             // A new pass: on entry, or Evaluate back at the start.
-            None if position == 0 => self.pick(state, ctx, 0),
-            _ if position == 0 && mode == EntryMode::Evaluate => self.pick(state, ctx, 0),
+            None if position == 0 => self.pick::<C, A, S>(state, ctx, 0),
+            _ if position == 0 && mode == EntryMode::Evaluate => {
+                self.pick::<C, A, S>(state, ctx, 0)
+            }
             // The same position again: Resume, or Evaluate continuing it.
             Some((at, child)) if at as usize == position => child,
             // The next position.
@@ -145,32 +202,27 @@ where
                 if let Some(child) = child {
                     state.used |= 1 << child;
                 }
-                self.pick(state, ctx, position)
+                self.pick::<C, A, S>(state, ctx, position)
             }
-            _ => return unsupported(position, at),
-        };
-        match child {
-            Some(child) => {
-                self.children
-                    .run_child(&mut state.children, child as usize, ctx, params, mode)
+            _ => {
+                unsupported(position, state.at.map(|(at, _)| at as usize));
+                return Err(());
             }
-            None => NodeResult::Failure,
-        }
+        })
     }
-}
 
-impl<O, Children> Ordered<O, Children> {
     /// Asks the order for the child at `position` and records it.
     #[inline]
-    fn pick<C, A, P>(
+    fn pick<C, A, S>(
         &self,
         state: &mut OrderedState<O::State, Children::State>,
         ctx: &mut C,
         position: usize,
     ) -> Option<u8>
     where
+        S: ParamShape,
         O: BtOrder<C>,
-        Children: BtChildren<C, A, P>,
+        Children: BtChildren<C, A, S>,
     {
         if position == 0 {
             state.used = 0;
