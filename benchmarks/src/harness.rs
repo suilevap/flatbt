@@ -110,7 +110,7 @@ where
     fn trace(&self, ticks: u32) -> (Bb, [u64; 3]) {
         let tree = (self.make_tree)();
         let mut agent = (self.make_agent)(&tree);
-        let mut bb = Bb::new(0);
+        let mut bb = Bb::new(self.scenario, 0);
         let mut counts = [0; 3];
         for _ in 0..ticks {
             counts[self.step(&tree, &mut agent, &mut bb) as usize] += 1;
@@ -121,7 +121,7 @@ where
     fn ticks(&self, ticks: u64) -> Bb {
         let tree = (self.make_tree)();
         let mut agent = (self.make_agent)(&tree);
-        let mut bb = Bb::new(0);
+        let mut bb = Bb::new(self.scenario, 0);
         for _ in 0..ticks {
             black_box(self.step(&tree, &mut agent, &mut bb));
         }
@@ -140,7 +140,7 @@ where
 
         // One agent: time and steady-state allocation.
         let mut agent = (self.make_agent)(&tree);
-        let mut bb = Bb::new(0);
+        let mut bb = Bb::new(self.scenario, 0);
         for _ in 0..config.single_ticks / 10 {
             black_box(self.step(&tree, &mut agent, &mut bb));
         }
@@ -172,7 +172,10 @@ where
         let start = Instant::now();
         for i in 0..n {
             // Stagger the world clocks so agents are not in lockstep.
-            population.push(((self.make_agent)(&tree), Bb::new(i as u32 * 7919)));
+            population.push((
+                (self.make_agent)(&tree),
+                Bb::new(self.scenario, i as u32 * 7919),
+            ));
         }
         let build_ns = start.elapsed().as_nanos() as f64 / n as f64;
         let after = alloc::snapshot();

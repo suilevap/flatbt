@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 N=${N:-200000}
 LIBS=${LIBS:-"flatbt bonsai-bt behavior-tree bhv behavior-tree-lite"}
-SCENARIOS=${SCENARIOS:-"select8 patrol guard"}
+SCENARIOS=${SCENARIOS:-"select8 patrol guard soldier"}
 cargo build --release --quiet
 BIN=target/release/flatbt-compare
 
