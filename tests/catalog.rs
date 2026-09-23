@@ -318,3 +318,92 @@ fn check_with_reads_a_local_and_leaf_with_writes_one() {
         NodeResult::Failure
     );
 }
+
+/// A target picked once per invocation, kept in a scope local, then followed.
+#[derive(Default)]
+struct Arena {
+    at: u32,
+    alive: [bool; 2],
+    positions: [u32; 2],
+    attacks: u32,
+}
+
+struct Approach;
+
+impl BtAction<Arena, Act, &usize> for Approach {
+    type State = ();
+
+    fn start(&self, _: &mut Arena, _: &usize) -> Option<()> {
+        Some(())
+    }
+
+    fn is_in_progress(&self, _: &(), _: &Arena, _: &usize) -> bool {
+        true
+    }
+
+    fn tick(&self, _: &mut (), arena: &mut Arena, target: &usize) -> Act {
+        Act::Walk(Walk::To(arena.positions[*target]))
+    }
+}
+
+fn hunt() -> impl BtNode<Arena, Act> {
+    scope! {
+        let target: usize = |arena: &mut Arena| arena.alive.iter().position(|a| *a).unwrap_or(0);
+        sequence {
+            guard_with(
+                |arena: &Arena, target: &usize| arena.alive[*target],
+                seq((
+                    repeat_while_with(
+                        |arena: &Arena, target: &usize| arena.at < arena.positions[*target],
+                        action(Approach),
+                    ),
+                    leaf(|arena: &mut Arena| {
+                        arena.attacks += 1;
+                        NodeResult::Running(Act::Step)
+                    }),
+                )),
+            ).with(target);
+        }
+    }
+}
+
+#[test]
+fn guard_and_repeat_while_follow_a_target_held_in_a_scope_local() {
+    let tree = hunt();
+    let mut state = BtState::new(&tree);
+    let mut arena = Arena {
+        alive: [false, true],
+        positions: [9, 4],
+        ..Arena::default()
+    };
+
+    // Target 1 was picked on entry; approach it while it is still far.
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Running(Act::Walk(Walk::To(4))));
+
+    arena.at = 4;
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Running(Act::Step));
+    assert_eq!(arena.attacks, 1);
+
+    // The guard asks about the same target on every update.
+    arena.alive[1] = false;
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Failure);
+    assert_eq!(arena.attacks, 1);
+}
+
+#[test]
+fn repeat_while_with_succeeds_at_once_when_the_target_is_reached() {
+    let tree = hunt();
+    let mut state = BtState::new(&tree);
+    let mut arena = Arena {
+        at: 4,
+        alive: [false, true],
+        positions: [9, 4],
+        ..Arena::default()
+    };
+
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Evaluate);
+    assert_eq!(result, NodeResult::Running(Act::Step));
+}

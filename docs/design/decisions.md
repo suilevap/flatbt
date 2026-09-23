@@ -269,3 +269,12 @@ report, so it fails with a diagnostic. No iteration budget is needed.
 appears in bounds would leave the impl unconstrained. `leaf_with` and
 `check_with` are separate constructors because a second `Leaf` impl over
 `Fn(&mut C, P)` would overlap the first under coherence.
+
+## 2026-09-23 — Conditions that read scope parameters
+
+`guard_with` and `repeat_while_with` hand the node's parameters to the
+condition as well as to the child, so a target picked into a `scope!` local is
+the one the condition asks about on every update. Separate constructors, as
+with `leaf_with`: one node cannot accept both `Fn(&C)` and `Fn(&C, P)` without
+overlapping impls, and changing `guard` in core would force a `ParamValue`
+bound on every guard. Both forms of `repeat_while` share one loop.

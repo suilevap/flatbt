@@ -27,7 +27,8 @@ pub struct RepeatWhile<F, N> {
 ///   A loop around an instant child would spin with no act to report; a restart
 ///   that does so also reports a diagnostic.
 ///
-/// Parameters are forwarded to the child.
+/// Parameters are forwarded to the child; [`repeat_while_with`] also hands
+/// them to the condition.
 ///
 /// ```
 /// use flatbt::prelude::*;
@@ -67,37 +68,161 @@ where
         state: &mut Self::State,
         ctx: &mut C,
         params: P,
-        mut mode: EntryMode,
+        mode: EntryMode,
     ) -> NodeResult<A> {
-        if !(self.condition)(ctx) {
+        repeat(&self.child, state, ctx, params, mode, |ctx, _| {
+            (self.condition)(ctx)
+        })
+    }
+}
+
+/// [`repeat_while`] whose condition also receives the node's parameters.
+pub struct RepeatWhileWith<F, N> {
+    condition: F,
+    child: N,
+}
+
+/// [`repeat_while`] whose condition also reads the parameters it forwards, such
+/// as a target found earlier in a `scope!`:
+///
+/// ```
+/// use flatbt::prelude::*;
+///
+/// struct World { at: u32 }
+///
+/// let tree = scope! {
+///     let target: u32 = |_: &mut World| 3;
+///     sequence {
+///         repeat_while_with(
+///             |world: &World, target: &u32| world.at < *target,
+///             leaf_with(|_: &mut World, target: &u32| NodeResult::Running(*target)),
+///         ).with(target);
+///     }
+/// };
+/// let mut state = BtState::new(&tree);
+/// let mut world = World { at: 0 };
+/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Running(3));
+/// world.at = 3;
+/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
+/// ```
+///
+/// Annotate the condition's arguments.
+pub fn repeat_while_with<F, N>(condition: F, child: N) -> RepeatWhileWith<F, N> {
+    RepeatWhileWith { condition, child }
+}
+
+impl<C, A, P: ParamValue, F, N, S> BtNode<C, A, P> for RepeatWhileWith<F, N>
+where
+    F: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> bool,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    S: Default + Send + 'static,
+{
+    type State = RepeatWhileState<S>;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        params: P,
+        mode: EntryMode,
+    ) -> NodeResult<A> {
+        repeat(&self.child, state, ctx, params, mode, &self.condition)
+    }
+}
+
+/// The loop behind both forms of `repeat_while`.
+fn repeat<C, A, P: ParamValue, N, S>(
+    child: &N,
+    state: &mut RepeatWhileState<S>,
+    ctx: &mut C,
+    params: P,
+    mut mode: EntryMode,
+    condition: impl for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> bool,
+) -> NodeResult<A>
+where
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    S: Default,
+{
+    let mut params = params.into_value();
+    if !condition(ctx, P::Shape::reborrow(&mut params)) {
+        return NodeResult::Success;
+    }
+    let mut restarted = false;
+    loop {
+        let result = child.update(&mut state.child, ctx, P::Shape::reborrow(&mut params), mode);
+        if result.is_running() {
+            state.ran = true;
+            return result;
+        }
+        let ran = core::mem::take(&mut state.ran);
+        state.child = S::default();
+        if !condition(ctx, P::Shape::reborrow(&mut params)) {
             return NodeResult::Success;
         }
+        match result {
+            NodeResult::Success if ran => {}
+            NodeResult::Success if restarted => {
+                return NodeResult::error(
+                    "repeat_while: restarted child completed without running",
+                );
+            }
+            _ => return NodeResult::Failure,
+        }
+        restarted = true;
+        mode = EntryMode::Evaluate;
+    }
+}
+
+/// [`guard`](crate::guard) whose predicate also receives the node's parameters.
+pub struct GuardedWith<F, N> {
+    predicate: F,
+    child: N,
+}
+
+/// [`guard`](crate::guard) whose predicate also reads the parameters it
+/// forwards: a requirement on a target found earlier in a `scope!`, asked on
+/// every update, `Resume` included.
+///
+/// ```
+/// use flatbt::prelude::*;
+///
+/// struct World { alive: [bool; 2] }
+///
+/// let tree = scope! {
+///     let target: usize = |_: &mut World| 1;
+///     sequence {
+///         guard_with(
+///             |world: &World, target: &usize| world.alive[*target],
+///             leaf(|_: &mut World| NodeResult::RUNNING),
+///         ).with(target);
+///     }
+/// };
+/// let mut state = BtState::new(&tree);
+/// let mut world = World { alive: [true, true] };
+/// assert!(update(&tree, &mut state, &mut world, EntryMode::Resume).is_running());
+/// world.alive[1] = false;
+/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Failure);
+/// ```
+///
+/// Annotate the predicate's arguments.
+pub fn guard_with<F, N>(predicate: F, child: N) -> GuardedWith<F, N> {
+    GuardedWith { predicate, child }
+}
+
+impl<C, A, P: ParamValue, F, N, S> BtNode<C, A, P> for GuardedWith<F, N>
+where
+    F: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> bool,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    S: Default + Send + 'static,
+{
+    type State = S;
+
+    fn update(&self, state: &mut S, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
         let mut params = params.into_value();
-        let mut restarted = false;
-        loop {
-            let result =
-                self.child
-                    .update(&mut state.child, ctx, P::Shape::reborrow(&mut params), mode);
-            if result.is_running() {
-                state.ran = true;
-                return result;
-            }
-            let ran = core::mem::take(&mut state.ran);
-            state.child = S::default();
-            if !(self.condition)(ctx) {
-                return NodeResult::Success;
-            }
-            match result {
-                NodeResult::Success if ran => {}
-                NodeResult::Success if restarted => {
-                    return NodeResult::error(
-                        "repeat_while: restarted child completed without running",
-                    );
-                }
-                _ => return NodeResult::Failure,
-            }
-            restarted = true;
-            mode = EntryMode::Evaluate;
+        if (self.predicate)(ctx, P::Shape::reborrow(&mut params)) {
+            self.child.update(state, ctx, params, mode)
+        } else {
+            NodeResult::Failure
         }
     }
 }

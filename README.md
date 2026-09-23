@@ -243,6 +243,7 @@ Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
 | Node | Behavior |
 | --- | --- |
 | `repeat_while(cond, child)` | Keep `child` running, restarting it, while `cond` holds; succeed once it does not. Fail if `child` fails, or completes without running, while `cond` still holds. |
+| `guard_with(cond, child)`, `repeat_while_with(cond, child)` | `guard` and `repeat_while` whose `cond` also receives the node's parameters, such as a target held in a scope local. |
 | `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
 | `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
 | `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
@@ -255,14 +256,19 @@ succeeds at once for an agent already close.
 
 ```rust,ignore
 let tree = scope! {
-    let target: Vector2 = |bb: &mut World| bb.target;
+    let target: Entity = pick_target;
     sequence {
-        check_with(|bb: &World, at: &Vector2| bb.can_reach(*at)).with(target);
-        repeat_while(far, action(Walk)).with(target);
-        map_act(Act::Use, use_subtree());
+        guard_with(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
+            repeat_while_with(|bb: &World, target: &Entity| bb.far_from(*target), action(Approach)),
+            action(Attack),
+        ))).with(target);
     }
 };
 ```
+
+The target is picked once per invocation and every node below the guard
+receives it: `Approach` and `Attack` implement `BtAction<World, Act, &Entity>`.
+A child that takes no parameters needs `no_params(..)`.
 
 ## Bevy
 
