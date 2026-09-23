@@ -163,7 +163,8 @@ for what shipped, and a decision-log entry.
 
 - `guard` (in composition), `repeat_while`, and `map_act`.
 - `action_while`, `leaf_with`, and `check_with`.
-- `guard_with` and `repeat_while_with`: conditions that read scope params.
+- `guard_with`, `repeat_while_with` and `action_while_with`: conditions (and
+  the act) that read scope params.
 
 **Phase 2: utility / priority selection** (M)
 

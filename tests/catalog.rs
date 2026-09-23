@@ -407,3 +407,36 @@ fn repeat_while_with_succeeds_at_once_when_the_target_is_reached() {
     let result = update(&tree, &mut state, &mut arena, EntryMode::Evaluate);
     assert_eq!(result, NodeResult::Running(Act::Step));
 }
+
+#[test]
+fn action_while_with_follows_a_target_held_in_a_scope_local() {
+    let tree = scope! {
+        let target: usize = |arena: &mut Arena| arena.alive.iter().position(|a| *a).unwrap_or(0);
+        sequence {
+            guard_with(
+                |arena: &Arena, target: &usize| arena.alive[*target],
+                action_while_with(
+                    |arena: &Arena, target: &usize| arena.at != arena.positions[*target],
+                    |arena: &Arena, target: &usize| Act::Walk(Walk::To(arena.positions[*target])),
+                ),
+            ).with(target);
+        }
+    };
+    let mut state = BtState::new(&tree);
+    let mut arena = Arena {
+        alive: [false, true],
+        positions: [9, 4],
+        ..Arena::default()
+    };
+
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Running(Act::Walk(Walk::To(4))));
+    // The act is asked again every update, so it follows the target it was given.
+    arena.positions[1] = 6;
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Running(Act::Walk(Walk::To(6))));
+
+    arena.at = 6;
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Success);
+}

@@ -8,9 +8,10 @@ pub use crate::scope::{
 };
 #[cfg(feature = "extras")]
 pub use crate::{
-    ActionNode, ActionWhile, BtAction, BtCancel, CancelOnDrop, CheckWith, Choose, ChooseNode,
-    GuardedWith, LeafWith, MapAct, RepeatWhile, RepeatWhileWith, action, action_while, check_with,
-    choose, guard_with, leaf_with, map_act, repeat_while, repeat_while_with,
+    ActionNode, ActionWhile, ActionWhileWith, BtAction, BtCancel, CancelOnDrop, CheckWith, Choose,
+    ChooseNode, GuardedWith, LeafWith, MapAct, RepeatWhile, RepeatWhileWith, action, action_while,
+    action_while_with, check_with, choose, guard_with, leaf_with, map_act, repeat_while,
+    repeat_while_with,
 };
 pub use crate::{
     BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, EntryMode,

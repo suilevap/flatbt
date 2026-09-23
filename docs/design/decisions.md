@@ -278,3 +278,8 @@ the one the condition asks about on every update. Separate constructors, as
 with `leaf_with`: one node cannot accept both `Fn(&C)` and `Fn(&C, P)` without
 overlapping impls, and changing `guard` in core would force a `ParamValue`
 bound on every guard. Both forms of `repeat_while` share one loop.
+
+`action_while_with` completes the set. `action_while` stays generic over
+parameters and ignores them, like `leaf` and `check`, so it still fits under a
+parameterized guard; a condition or act that needs the target takes the
+`_with` form.

@@ -12,4 +12,7 @@ pub use decorate::{
     GuardedWith, MapAct, RepeatWhile, RepeatWhileState, RepeatWhileWith, guard_with, map_act,
     repeat_while, repeat_while_with,
 };
-pub use function::{ActionWhile, CheckWith, LeafWith, action_while, check_with, leaf_with};
+pub use function::{
+    ActionWhile, ActionWhileWith, CheckWith, LeafWith, action_while, action_while_with, check_with,
+    leaf_with,
+};

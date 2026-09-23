@@ -246,6 +246,7 @@ Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
 | `guard_with(cond, child)`, `repeat_while_with(cond, child)` | `guard` and `repeat_while` whose `cond` also receives the node's parameters, such as a target held in a scope local. |
 | `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
 | `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
+| `action_while_with(cond, act)` | `action_while` whose `cond` and `act` also receive the node's parameters. |
 | `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
 
 `repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one

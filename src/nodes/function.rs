@@ -1,3 +1,4 @@
+use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// Stateless callable that also receives parameters.
@@ -71,6 +72,7 @@ pub struct ActionWhile<F, G> {
 /// world does the work, and this says what the agent is doing until it is
 /// done. Waiting for something is the same node with the condition negated.
 /// Both are asked on every update, so `act` follows a moving target.
+/// Parameters are ignored; [`action_while_with`] hands them to both.
 ///
 /// ```
 /// use flatbt::prelude::*;
@@ -95,6 +97,60 @@ impl<C, A, P, F: Fn(&C) -> bool, G: Fn(&C) -> A> BtNode<C, A, P> for ActionWhile
     fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
         if (self.condition)(ctx) {
             NodeResult::Running((self.act)(ctx))
+        } else {
+            NodeResult::Success
+        }
+    }
+}
+
+/// [`action_while`] whose condition and act also receive the node's parameters.
+pub struct ActionWhileWith<F, G> {
+    condition: F,
+    act: G,
+}
+
+/// [`action_while`] whose condition and act also read the node's parameters,
+/// such as a target held in a `scope!` local:
+///
+/// ```
+/// use flatbt::prelude::*;
+///
+/// #[derive(Debug, PartialEq)]
+/// enum Act { WalkTo(u32) }
+/// struct World { at: u32, positions: [u32; 2] }
+///
+/// let tree = scope! {
+///     let target: usize = |_: &mut World| 1;
+///     sequence {
+///         action_while_with(
+///             |world: &World, target: &usize| world.at != world.positions[*target],
+///             |world: &World, target: &usize| Act::WalkTo(world.positions[*target]),
+///         ).with(target);
+///     }
+/// };
+/// let mut state = BtState::new(&tree);
+/// let mut world = World { at: 0, positions: [2, 5] };
+/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Running(Act::WalkTo(5)));
+/// world.at = 5;
+/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
+/// ```
+///
+/// Annotate the closures' arguments.
+pub fn action_while_with<F, G>(condition: F, act: G) -> ActionWhileWith<F, G> {
+    ActionWhileWith { condition, act }
+}
+
+impl<C, A, P: ParamValue, F, G> BtNode<C, A, P> for ActionWhileWith<F, G>
+where
+    F: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> bool,
+    G: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> A,
+{
+    type State = ();
+
+    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
+        let mut params = params.into_value();
+        if (self.condition)(ctx, P::Shape::reborrow(&mut params)) {
+            NodeResult::Running((self.act)(ctx, params))
         } else {
             NodeResult::Success
         }
