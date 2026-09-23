@@ -7,7 +7,11 @@ pub use crate::scope::{
     WithoutParams, WriteBinding, bind, compute, no_params, params, read, scope, write,
 };
 #[cfg(feature = "extras")]
-pub use crate::{ActionNode, BtAction, BtCancel, CancelOnDrop, Choose, ChooseNode, action, choose};
+pub use crate::{
+    ActionNode, ActionWhile, BtAction, BtCancel, CancelOnDrop, CheckWith, Choose, ChooseNode,
+    LeafWith, MapAct, RepeatWhile, action, action_while, check_with, choose, leaf_with, map_act,
+    repeat_while,
+};
 pub use crate::{
     BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, EntryMode,
     Guarded, Leaf, NodeResult, Selector, Sequence, check, control, guard, leaf, select, seq,

@@ -250,3 +250,58 @@ Two features stay: `extras`, gating `nodes` and `scope` as the optional part
 of the library, and `std`, whose absence makes the crate `no_std`. Both default
 on, and CI checks the two ends. Without `std`, diagnostics are discarded:
 holding a settable handler would take a lock or unsafe code.
+
+## 2026-09-23 — Node catalog, first phase
+
+From the [node catalog proposal](node-catalog-draft.md): `repeat_while`,
+`map_act`, `action_while`, `leaf_with` and `check_with` join `flatbt::nodes`
+under `extras`. `guard` had already landed in composition.
+
+`repeat_while` is a goal where `guard` is a requirement: a false condition
+succeeds it, so it reads as the prerequisite for the next node in a sequence.
+It fails only when the condition still holds and the child can no longer keep
+the agent busy -- the child failed, or completed without returning `Running`.
+The second rule is what bounds the loop: a restart runs in the same update, and
+a restarted child that completes at once would otherwise spin with no act to
+report, so it fails with a diagnostic. No iteration budget is needed.
+
+`map_act` carries the child's act type as a phantom parameter; a type that only
+appears in bounds would leave the impl unconstrained. `leaf_with` and
+`check_with` are separate constructors because a second `Leaf` impl over
+`Fn(&mut C, P)` would overlap the first under coherence.
+
+## 2026-09-23 — Conditions that read scope parameters
+
+`guard`, `repeat_while` and `action_while` take a condition (and an act) that
+is either `Fn(&C)` or `Fn(&C, P)`, where `P` is a reborrow of the parameters
+the node forwards to its child. So a target picked into a `scope!` local is the
+one the condition asks about on every update, under the same name.
+
+One constructor takes both through `ReadFn<C, P, R, M>`, implemented for each
+closure shape with its own marker type: the two impls are of different traits
+(`ReadFn<.., ReadsContext>` and `ReadFn<.., ReadsParams>`), so they do not
+overlap the way two `BtNode` impls on one node would, and the marker is
+inferred from the closure's arity. Nodes carry it as a phantom parameter.
+
+Considered first: separate `guard_with`, `repeat_while_with` and
+`action_while_with` constructors. Rejected for doubling the API, and because
+`action_while` accepted `.with(..)` and silently ignored it.
+
+Costs, accepted: `guard` now needs `P: ParamValue`, as `seq` and `select`
+already do; an unmatched closure reports `ReadFn` rather than a plain `Fn`
+mismatch, softened by a `diagnostic::on_unimplemented` note. `leaf_with` and
+`check_with` stay separate for now: `leaf` and `check` would take the same
+treatment, but that is a core change on its own.
+
+## 2026-09-23 — `with(...)` may come first
+
+In `scope!`, `with(target) guard(.., seq((..)));` binds the node after it the
+same way `guard(.., seq((..))).with(target);` does. A long node pushed the
+binding to its last line, where a reader meets it after the closures that use
+it. Only the macro can offer this: `target` names a local, not a value, so a
+function or method taking it first cannot exist outside `scope!`.
+
+Both forms stay. The prefix suits long nodes, the suffix short ones such as
+`action(Walk).with(pos)`, and keeping the suffix breaks no tree. `with` at the
+start of a node is reserved inside `scope!`; `with(x);` with no node is a
+compile error.

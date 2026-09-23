@@ -205,6 +205,10 @@ For a suspending producer, declare `let cover: Vector2;` and bind
 Missing inputs log a diagnostic and fail the consumer. Shared-local writes survive
 candidate failure.
 
+For a long node, write the binding first: `with(enemy, out cover) ChooseCover;`
+binds everything after it up to `;`, so the bound locals are visible at the top.
+Keep `.with(..)` for short nodes. `with` at the start of a node is reserved.
+
 Function API: `scope`, `bind`, `read`, `write`, `params`, and `WithParams`.
 See the [macro example](examples/scoped_params.rs) and
 [function example](examples/scoped_params_manual.rs).
@@ -235,6 +239,43 @@ State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
 `BtCancel` and use `CancelOnDrop::from(handle)`. Disarm in `complete` after handling
 the outcome. Drop has no context argument; the handle must own cancellation access.
 See the [external action example](examples/external_action.rs).
+
+## Decorators and helpers
+
+Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
+
+| Node | Behavior |
+| --- | --- |
+| `repeat_while(cond, child)` | Keep `child` running, restarting it, while `cond` holds; succeed once it does not. Fail if `child` fails, or completes without running, while `cond` still holds. |
+| `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
+| `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
+| `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
+
+`repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one
+and fails the other. Both ask `cond` on every update, `Resume` included, and
+drop a running child when they stop, which cancels it. So
+`seq((repeat_while(far, approach), interact))` approaches only while needed and
+succeeds at once for an agent already close.
+
+A condition or act is `Fn(&C)`, or `Fn(&C, P)` to also read the node's
+parameters -- for `guard`, `repeat_while` and `action_while` alike. The same
+constructor takes either; annotate the closure's arguments.
+
+```rust,ignore
+let tree = scope! {
+    let target: Entity = pick_target;
+    sequence {
+        with(target) guard(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
+            repeat_while(|bb: &World, target: &Entity| bb.far_from(*target), action(Approach)),
+            action(Attack),
+        )));
+    }
+};
+```
+
+The target is picked once per invocation and every node below the guard
+receives it: `Approach` and `Attack` implement `BtAction<World, Act, &Entity>`.
+A child that takes no parameters needs `no_params(..)`.
 
 ## Bevy
 
@@ -474,7 +515,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node

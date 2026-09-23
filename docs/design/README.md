@@ -15,6 +15,12 @@ Code and tests define current behavior; historical proposals may differ.
 | [Actions](action.md) | Inline lifecycle and cancellation |
 | [Bevy integration](bevy-integration.md) | Blackboard as a component, tree resource, tick plugin |
 
+## Proposals
+
+| Document | Status |
+| --- | --- |
+| [Node catalog](node-catalog-draft.md) | Decorators, helpers, and selection policies; being implemented |
+
 ## Archive and history
 
 | Document | Status |
