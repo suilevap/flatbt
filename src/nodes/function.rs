@@ -36,6 +36,7 @@ pub fn leaf_with<F>(f: F) -> LeafWith<F> {
 impl<C, A, P, F: Fn(&mut C, P) -> NodeResult<A>> BtNode<C, A, P> for LeafWith<F> {
     type State = ();
 
+    #[inline(always)]
     fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
         (self.0)(ctx, params)
     }
@@ -53,6 +54,7 @@ pub fn check_with<F>(predicate: F) -> CheckWith<F> {
 impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
     type State = ();
 
+    #[inline(always)]
     fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
         if (self.0)(ctx, params) {
             NodeResult::Success
@@ -130,6 +132,7 @@ where
 {
     type State = ();
 
+    #[inline(always)]
     fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
         let mut params = params.into_value();
         if self.condition.call(ctx, P::Shape::reborrow(&mut params)) {

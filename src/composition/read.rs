@@ -26,6 +26,7 @@ pub trait ReadFn<C, P: ParamValue, R, M> {
 }
 
 impl<C, P: ParamValue, R, F: Fn(&C) -> R> ReadFn<C, P, R, ReadsContext> for F {
+    #[inline(always)]
     fn call(&self, ctx: &C, _: <P::Shape as ParamShape>::Value<'_>) -> R {
         self(ctx)
     }
@@ -35,6 +36,7 @@ impl<C, P: ParamValue, R, F> ReadFn<C, P, R, ReadsParams> for F
 where
     F: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> R,
 {
+    #[inline(always)]
     fn call(&self, ctx: &C, params: <P::Shape as ParamShape>::Value<'_>) -> R {
         self(ctx, params)
     }
