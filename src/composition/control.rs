@@ -80,6 +80,9 @@ where
 {
     type State = ControlState<P::State, S>;
 
+    // A tree is one type. Inlining every level into the root's update lets the
+    // compiler see the whole path; LLVM's own heuristics stop a few levels in.
+    #[inline(always)]
     fn update(
         &self,
         state: &mut Self::State,
@@ -147,6 +150,7 @@ pub fn seq<Children>(children: Children) -> ControlNode<Sequence, Children> {
 impl<C> BtControl<C> for Sequence {
     type State = ();
 
+    #[inline(always)]
     fn begin(
         &self,
         _: &mut (),
@@ -161,6 +165,7 @@ impl<C> BtControl<C> for Sequence {
         }
     }
 
+    #[inline(always)]
     fn child_succeeded(
         &self,
         _: &mut (),
@@ -175,6 +180,7 @@ impl<C> BtControl<C> for Sequence {
         }
     }
 
+    #[inline(always)]
     fn child_failed(
         &self,
         _: &mut (),
@@ -199,6 +205,7 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
 impl<C> BtControl<C> for Selector {
     type State = ();
 
+    #[inline(always)]
     fn begin(
         &self,
         _: &mut (),
@@ -213,6 +220,7 @@ impl<C> BtControl<C> for Selector {
         }
     }
 
+    #[inline(always)]
     fn child_succeeded(
         &self,
         _: &mut (),
@@ -223,6 +231,7 @@ impl<C> BtControl<C> for Selector {
         ControlOp::Success
     }
 
+    #[inline(always)]
     fn child_failed(
         &self,
         _: &mut (),
