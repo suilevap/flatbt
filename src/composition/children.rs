@@ -59,6 +59,7 @@ macro_rules! tuple_children {
             type State = $state<$($node::State),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
 
+            #[inline(always)]
             fn active_child_index(&self, state: &Self::State) -> Option<usize> {
                 match state {
                     $state::Empty => None,
@@ -66,6 +67,7 @@ macro_rules! tuple_children {
                 }
             }
 
+            #[inline(always)]
             fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
                 match child_index {
                     $($index => {

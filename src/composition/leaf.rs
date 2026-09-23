@@ -20,6 +20,7 @@ pub fn leaf<F>(f: F) -> Leaf<F> {
 impl<C, A, P, F: Fn(&mut C) -> NodeResult<A>> BtNode<C, A, P> for Leaf<F> {
     type State = ();
 
+    #[inline(always)]
     fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
         (self.0)(ctx)
     }
@@ -39,6 +40,7 @@ pub fn check<F>(predicate: F) -> Check<F> {
 impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
     type State = ();
 
+    #[inline(always)]
     fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
         if (self.0)(ctx) {
             NodeResult::Success
@@ -80,6 +82,7 @@ pub fn guard<F, N>(predicate: F, child: N) -> Guarded<F, N> {
 impl<C, A, P, F: Fn(&C) -> bool, N: BtNode<C, A, P>> BtNode<C, A, P> for Guarded<F, N> {
     type State = N::State;
 
+    #[inline(always)]
     fn update(
         &self,
         state: &mut N::State,
