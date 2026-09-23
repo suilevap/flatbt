@@ -1,29 +1,38 @@
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::params::ParamShape;
+use crate::{BtNode, ControlOp, EntryMode, NodeResult};
 
 /// Static tuple dispatch with at most one active child.
 /// Generated through `FLATBT_MAX_CHILDREN` (default 32).
-pub trait BtChildren<C, A = (), P = ()> {
+///
+/// `S` is the shape of the parameters every child receives; see `ParamShape`.
+pub trait BtChildren<C, A = (), S: ParamShape = ()> {
     type State: Default + Send + 'static;
     const LEN: usize;
 
     /// Reads selection from the saved state variant.
     fn active_child_index(&self, state: &Self::State) -> Option<usize>;
 
-    /// Updates the saved child in place or enters a fresh candidate with Evaluate.
-    /// Terminal candidates preserve saved state; Running candidates replace it.
-    /// A terminal saved child clears selection. Invalid indices log an error and
-    /// return Failure without changing state.
-    fn run_child(
+    /// Runs child `first`, then, while `next` answers `RunChild(i + 1)` for the
+    /// child `i` that just ended, the child after it, without leaving this call.
+    /// `next` receives whether the child succeeded. Returns `Ok` with a Running
+    /// result, or `Err` with the first answer that is not the following child.
+    ///
+    /// Each child updates its saved state in place, or enters a fresh candidate
+    /// with Evaluate. Terminal candidates preserve saved state; Running
+    /// candidates replace it. A terminal saved child clears selection. An
+    /// index at or past `LEN` runs nothing and comes back as `Err(RunChild)`.
+    fn run_from(
         &self,
         state: &mut Self::State,
-        child_index: usize,
+        first: usize,
         ctx: &mut C,
-        params: P,
+        params: &mut S::Value<'_>,
         mode: EntryMode,
-    ) -> NodeResult<A>;
+        next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
+    ) -> Result<NodeResult<A>, ControlOp>;
 }
 
-impl<C, A, P> BtChildren<C, A, P> for () {
+impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
     type State = ();
     const LEN: usize = 0;
 
@@ -31,22 +40,21 @@ impl<C, A, P> BtChildren<C, A, P> for () {
         None
     }
 
-    fn run_child(
+    fn run_from(
         &self,
         _: &mut (),
-        child_index: usize,
+        first: usize,
         _: &mut C,
-        _: P,
+        _: &mut S::Value<'_>,
         _: EntryMode,
-    ) -> NodeResult<A> {
-        NodeResult::error(format_args!(
-            "child index {child_index} out of bounds for empty children"
-        ))
+        _: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
+    ) -> Result<NodeResult<A>, ControlOp> {
+        Err(ControlOp::RunChild(first))
     }
 }
 
 macro_rules! tuple_children {
-    (@generate_impl $state:ident; $($index:tt $node:ident $variant:ident),+) => {
+    (@generate_impl $state:ident; $($index:tt $node:ident $variant:ident $child_state:ident),+) => {
         /// One active child state; the variant encodes its index.
         #[derive(Default)]
         pub enum $state<$($node),+> {
@@ -55,8 +63,12 @@ macro_rules! tuple_children {
             $($variant($node),)+
         }
 
-        impl<C, A, P, $($node: BtNode<C, A, P>),+> BtChildren<C, A, P> for ($($node,)+) {
-            type State = $state<$($node::State),+>;
+        impl<C, A, S: ParamShape, $($node, $child_state),+> BtChildren<C, A, S> for ($($node,)+)
+        where
+            $($node: for<'a> BtNode<C, A, S::Value<'a>, State = $child_state>,
+            $child_state: Default + Send + 'static,)+
+        {
+            type State = $state<$($child_state),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
 
             #[inline(always)]
@@ -68,40 +80,63 @@ macro_rules! tuple_children {
             }
 
             #[inline(always)]
-            fn run_child(&self, state: &mut Self::State, child_index: usize, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
-                match child_index {
-                    $($index => {
-                        if let $state::$variant(active) = state {
-                            let result = self.$index.update(active, ctx, params, mode);
+            fn run_from(
+                &self,
+                state: &mut Self::State,
+                first: usize,
+                ctx: &mut C,
+                params: &mut S::Value<'_>,
+                mode: EntryMode,
+                next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
+            ) -> Result<NodeResult<A>, ControlOp> {
+                // One block per child, in order. When the policy asks for the
+                // following child, control falls into the next block; for a
+                // policy the compiler can see through, such as `Sequence`, the
+                // index is a constant and the chain is straight-line code.
+                let mut index = first;
+                $(
+                    if index == $index {
+                        let result = if let $state::$variant(active) = state {
+                            let result = self.$index.update(active, ctx, S::reborrow(params), mode);
                             if !result.is_running() {
                                 *state = $state::Empty;
                             }
                             result
                         } else {
                             // Preserve the old variant until this candidate is selected.
-                            let mut candidate = $node::State::default();
-                            let result = self.$index.update(&mut candidate, ctx, params, EntryMode::Evaluate);
+                            let mut candidate = $child_state::default();
+                            let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), EntryMode::Evaluate);
                             if result.is_running() {
                                 *state = $state::$variant(candidate);
                             }
                             result
+                        };
+                        let op = match result {
+                            // The act comes from whichever child actually ran.
+                            running @ NodeResult::Running(_) => return Ok(running),
+                            NodeResult::Success => next(ctx, $index, true),
+                            NodeResult::Failure => next(ctx, $index, false),
+                        };
+                        match op {
+                            ControlOp::RunChild(following) if following == $index + 1 => index = following,
+                            op => return Err(op),
                         }
-                    },)+
-                    _ => NodeResult::error(format_args!("child index {child_index} out of bounds for {} children", Self::LEN)),
-                }
+                    }
+                )+
+                Err(ControlOp::RunChild(index))
             }
         }
     };
-    (@generate_prefix [$($done_index:tt $done_node:ident $done_variant:ident,)*] $state:ident $index:tt $node:ident $variant:ident $(, $tail_state:ident $tail_index:tt $tail_node:ident $tail_variant:ident)*) => {
-        tuple_children!(@generate_impl $state; $($done_index $done_node $done_variant,)* $index $node $variant);
-        tuple_children!(@generate_prefix [$($done_index $done_node $done_variant,)* $index $node $variant,] $($tail_state $tail_index $tail_node $tail_variant),*);
+    (@generate_prefix [$($done_index:tt $done_node:ident $done_variant:ident $done_child_state:ident,)*] $state:ident $index:tt $node:ident $variant:ident $child_state:ident $(, $tail_state:ident $tail_index:tt $tail_node:ident $tail_variant:ident $tail_child_state:ident)*) => {
+        tuple_children!(@generate_impl $state; $($done_index $done_node $done_variant $done_child_state,)* $index $node $variant $child_state);
+        tuple_children!(@generate_prefix [$($done_index $done_node $done_variant $done_child_state,)* $index $node $variant $child_state,] $($tail_state $tail_index $tail_node $tail_variant $tail_child_state),*);
     };
     (@generate_prefix [$($done:tt)*]) => {};
 }
 
 /// Generated tuple state enums, parameterized by child state types.
 pub mod child_state {
-    use super::{BtChildren, BtNode, EntryMode, NodeResult};
+    use super::{BtChildren, BtNode, ControlOp, EntryMode, NodeResult, ParamShape};
 
     include!(concat!(env!("OUT_DIR"), "/tuple_children.rs"));
 }

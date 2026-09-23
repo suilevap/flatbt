@@ -72,13 +72,12 @@ pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Chi
     ControlNode { policy, children }
 }
 
-impl<C, A, Params: ParamValue, P: BtControl<C>, Children, S> BtNode<C, A, Params>
+impl<C, A, Params: ParamValue, P: BtControl<C>, Children> BtNode<C, A, Params>
     for ControlNode<P, Children>
 where
-    Children: for<'a> BtChildren<C, A, <Params::Shape as ParamShape>::Value<'a>, State = S>,
-    S: Default + Send + 'static,
+    Children: BtChildren<C, A, Params::Shape>,
 {
-    type State = ControlState<P::State, S>;
+    type State = ControlState<P::State, Children::State>;
 
     // A tree is one type. Inlining every level into the root's update lets the
     // compiler see the whole path; LLVM's own heuristics stop a few levels in.
@@ -92,47 +91,94 @@ where
     ) -> NodeResult<A> {
         let mut params = params.into_value();
         let active_child_index = self.children.active_child_index(&state.children);
-        let mut op = match (mode, active_child_index) {
+        let op = match (mode, active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
             _ => self
                 .policy
                 .begin(&mut state.inner, ctx, active_child_index, Children::LEN),
         };
+        // No loop here: once this is inlined into its parent, a loop would let
+        // the compiler hoist every descendant's address out of it and spill them.
+        // `run_from` already follows children in order, which is all that
+        // `Sequence` and `Selector` ask for.
+        match self.run(state, op, ctx, &mut params, mode) {
+            Ok(result) => result,
+            Err(op) => self.run_rest(state, op, ctx, &mut params, mode),
+        }
+    }
+}
+
+impl<P, Children> ControlNode<P, Children> {
+    /// Runs children from `op` while the policy asks for them in order.
+    /// `Err` holds a request for any other child.
+    #[inline(always)]
+    fn run<C, A, S: ParamShape>(
+        &self,
+        state: &mut ControlState<P::State, Children::State>,
+        op: ControlOp,
+        ctx: &mut C,
+        params: &mut S::Value<'_>,
+        mode: EntryMode,
+    ) -> Result<NodeResult<A>, ControlOp>
+    where
+        P: BtControl<C>,
+        Children: BtChildren<C, A, S>,
+    {
+        let child_index = match op {
+            ControlOp::Success => return Ok(NodeResult::Success),
+            ControlOp::Failure => return Ok(NodeResult::Failure),
+            ControlOp::RunChild(child_index) => child_index,
+        };
+        if child_index >= Children::LEN {
+            return Ok(NodeResult::error(format_args!(
+                "control policy returned invalid child index {child_index} for {} children",
+                Children::LEN,
+            )));
+        }
+        let inner = &mut state.inner;
+        let mut next = |ctx: &mut C, completed: usize, succeeded: bool| {
+            if succeeded {
+                self.policy
+                    .child_succeeded(inner, ctx, completed, Children::LEN)
+            } else {
+                self.policy
+                    .child_failed(inner, ctx, completed, Children::LEN)
+            }
+        };
+        match self.children.run_from(
+            &mut state.children,
+            child_index,
+            ctx,
+            params,
+            mode,
+            &mut next,
+        ) {
+            Ok(running) => Ok(running),
+            Err(ControlOp::Success) => Ok(NodeResult::Success),
+            Err(ControlOp::Failure) => Ok(NodeResult::Failure),
+            Err(op) => Err(op),
+        }
+    }
+
+    /// Follows a policy that jumps between children out of order.
+    #[inline(never)]
+    fn run_rest<C, A, S: ParamShape>(
+        &self,
+        state: &mut ControlState<P::State, Children::State>,
+        mut op: ControlOp,
+        ctx: &mut C,
+        params: &mut S::Value<'_>,
+        mode: EntryMode,
+    ) -> NodeResult<A>
+    where
+        P: BtControl<C>,
+        Children: BtChildren<C, A, S>,
+    {
         loop {
-            op = match op {
-                ControlOp::Success => return NodeResult::Success,
-                ControlOp::Failure => return NodeResult::Failure,
-                ControlOp::RunChild(child_index) => {
-                    if child_index >= Children::LEN {
-                        return NodeResult::error(format_args!(
-                            "control policy returned invalid child index {child_index} for {} children",
-                            Children::LEN,
-                        ));
-                    }
-                    match self.children.run_child(
-                        &mut state.children,
-                        child_index,
-                        ctx,
-                        Params::Shape::reborrow(&mut params),
-                        mode,
-                    ) {
-                        // The act comes from whichever child actually ran.
-                        running @ NodeResult::Running(_) => return running,
-                        NodeResult::Success => self.policy.child_succeeded(
-                            &mut state.inner,
-                            ctx,
-                            child_index,
-                            Children::LEN,
-                        ),
-                        NodeResult::Failure => self.policy.child_failed(
-                            &mut state.inner,
-                            ctx,
-                            child_index,
-                            Children::LEN,
-                        ),
-                    }
-                }
-            };
+            match self.run(state, op, ctx, params, mode) {
+                Ok(result) => return result,
+                Err(next) => op = next,
+            }
         }
     }
 }
