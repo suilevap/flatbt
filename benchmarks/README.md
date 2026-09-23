@@ -188,5 +188,67 @@ against FlatBT.
   the function's prologue and epilogue alone; the leaves take 10%. That is
   the place to look for single-agent speed.
 
+## Against bt-tree (C#)
+
+[bt-tree](https://github.com/suilevap/bt-tree) is the C# library FlatBT
+descends from: one shared tree, a per-agent `Context` holding the running path
+as `NodeContext` objects. Different runtime, so this measures how far the Rust
+design goes, not Rust against C#.
+
+```sh
+csharp/compare.sh            # needs a .NET 10 SDK; fetches bt-tree at 90f5002
+csharp/compare.sh --quick
+```
+
+[`csharp/Program.cs`](csharp/Program.cs) ports the world, the leaves and all
+four trees line for line and compiles bt-tree's `BTLib` sources unchanged into
+the project, as its README says to use it. Conditions are `bt.Condition`,
+instant actions `bt.Action`, and multi-tick leaves subclass `ActionNode`.
+
+bt-tree's `Context.Update()` rethinks the tree every update: selectors rescan
+from their first child, sequences resume their running child. That is FlatBT's
+`EntryMode::Evaluate`, so this comparison runs FlatBT with `Evaluate`
+(`flatbt-compare evaluate`), not the `Resume` used above. The script checks
+that both produce the same checksum on every scenario; they do.
+`bt-tree-pooled` passes bt-tree's own `PoolNodeContext` instead of allocating
+a `NodeContext` per visited node.
+
+.NET 10.0.12 (JIT, tiered PGO, workstation GC, 2M ticks of warm-up per run),
+the machine above. `flatbt + PRs` is FlatBT with the cold-path, inlining and
+fall-through changes (#17–#19). The .NET population timings varied by up to
+50% between runs, with garbage collection; the ratios below are from one run.
+Bytes/agent for bt-tree is measured after ticking, when running paths hold
+their node contexts.
+
+| scenario | library | ns/tick, 1 agent | ns/tick, 10k agents | bytes allocated/tick | bytes/agent | ns to build an agent |
+|---|---|--:|--:|--:|--:|--:|
+| select8 | flatbt | 55.9 | 54.5 | 0 | 2 | 68 |
+| | flatbt + PRs | 16.8 | 18.5 | 0 | 2 | 72 |
+| | bt-tree | 260.2 | 271.8 | 440 | 488 | 136 |
+| | bt-tree-pooled | 224.1 | 257.3 | 0 | 487 | 110 |
+| patrol | flatbt | 6.9 | 9.2 | 0 | 1 | 111 |
+| | flatbt + PRs | 6.0 | 8.0 | 0 | 1 | 73 |
+| | bt-tree | 89.9 | 91.1 | 84 | 568 | 121 |
+| | bt-tree-pooled | 76.3 | 83.9 | 0 | 593 | 87 |
+| guard | flatbt | 25.0 | 31.7 | 0 | 2 | 29 |
+| | flatbt + PRs | 13.8 | 19.5 | 0 | 2 | 32 |
+| | bt-tree | 173.4 | 218.1 | 248 | 597 | 88 |
+| | bt-tree-pooled | 177.9 | 253.9 | 0 | 606 | 82 |
+| soldier | flatbt | 73.7 | 93.6 | 0 | 3 | 32 |
+| | flatbt + PRs | 38.1 | 50.4 | 0 | 3 | 33 |
+| | bt-tree | 356.4 | 630.7 | 541 | 611 | 91 |
+| | bt-tree-pooled | 363.8 | 588.9 | 0 | 597 | 118 |
+
+On `soldier`, FlatBT runs 4.8× faster than bt-tree for one agent and 6.7×
+for 10k (9.4× and 12.5× with the PRs), in 3 bytes per agent instead of about
+600. Both share one tree, so the difference is the per-agent path:
+bt-tree pushes a `NodeContext` object per visited node, copies it from the
+previous path, and dispatches every node through a virtual call and a
+delegate; FlatBT keeps the path as nested enum tags and resolves it at
+compile time.
+
+bt-tree's `Update(time, forceUpdate: false)` ticks only the running action
+between rethinks. It changes the semantics, so it is not compared here.
+
 Not measured: compile time, binary size, reactive (`Evaluate`) ticking,
 parallel ticking.

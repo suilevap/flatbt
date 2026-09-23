@@ -28,7 +28,8 @@ fn all() -> Vec<Box<dyn Measure>> {
 
 const USAGE: &str = "\
 usage: flatbt-compare [--quick] [--lib NAME] [--scenario NAME]
-       flatbt-compare ticks LIB SCENARIO N   (ticks one agent N times; for profilers)";
+       flatbt-compare ticks LIB SCENARIO N   (ticks one agent N times; for profilers)
+       flatbt-compare evaluate [--quick]     (flatbt with Evaluate, as TSV; see csharp/)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -50,21 +51,18 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let mut config = Config {
-        single_ticks: 2_000_000,
-        agents: 10_000,
-        frames: 200,
-        samples: 7,
-    };
+    let quick = args.iter().any(|a| a == "--quick");
+    if args.first().map(String::as_str) == Some("evaluate") {
+        evaluate(&config(quick));
+        return ExitCode::SUCCESS;
+    }
+
+    let config = config(quick);
     let (mut lib, mut scenario) = (None, None);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--quick" => {
-                config.single_ticks = 200_000;
-                config.frames = 20;
-                config.samples = 3;
-            }
+            "--quick" => {}
             "--lib" => lib = args.next().cloned(),
             "--scenario" => scenario = args.next().and_then(|s| Scenario::parse(s)),
             _ => {
@@ -100,6 +98,45 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+fn config(quick: bool) -> Config {
+    if quick {
+        Config {
+            single_ticks: 200_000,
+            agents: 10_000,
+            frames: 20,
+            samples: 3,
+        }
+    } else {
+        Config {
+            single_ticks: 2_000_000,
+            agents: 10_000,
+            frames: 200,
+            samples: 7,
+        }
+    }
+}
+
+/// Tab-separated rows in the format `csharp/Program.cs` prints, for
+/// `csharp/compare.sh`: lib, scenario, ns/tick for 1 agent and for 10k,
+/// bytes allocated per tick, bytes per agent, ns to build an agent, checksum.
+fn evaluate(config: &Config) {
+    for e in libs::flatbt::evaluate_entries() {
+        eprintln!("running {} / {}", e.lib(), e.scenario().name());
+        let r = e.run(config);
+        println!(
+            "{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{:.0}\t{:.0}\t{}",
+            e.lib(),
+            e.scenario().name(),
+            r.ns_per_tick,
+            r.ns_per_agent_tick,
+            r.bytes_per_tick,
+            r.agent_inline as f64 + r.agent_heap,
+            r.build_ns,
+            common::checksum(e.scenario(), &r.checksum),
+        );
     }
 }
 
