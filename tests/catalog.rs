@@ -350,10 +350,10 @@ fn hunt() -> impl BtNode<Arena, Act> {
     scope! {
         let target: usize = |arena: &mut Arena| arena.alive.iter().position(|a| *a).unwrap_or(0);
         sequence {
-            guard_with(
+            guard(
                 |arena: &Arena, target: &usize| arena.alive[*target],
                 seq((
-                    repeat_while_with(
+                    repeat_while(
                         |arena: &Arena, target: &usize| arena.at < arena.positions[*target],
                         action(Approach),
                     ),
@@ -394,7 +394,7 @@ fn guard_and_repeat_while_follow_a_target_held_in_a_scope_local() {
 }
 
 #[test]
-fn repeat_while_with_succeeds_at_once_when_the_target_is_reached() {
+fn repeat_while_reading_a_target_succeeds_at_once_when_the_target_is_reached() {
     let tree = hunt();
     let mut state = BtState::new(&tree);
     let mut arena = Arena {
@@ -409,13 +409,13 @@ fn repeat_while_with_succeeds_at_once_when_the_target_is_reached() {
 }
 
 #[test]
-fn action_while_with_follows_a_target_held_in_a_scope_local() {
+fn action_while_follows_a_target_held_in_a_scope_local() {
     let tree = scope! {
         let target: usize = |arena: &mut Arena| arena.alive.iter().position(|a| *a).unwrap_or(0);
         sequence {
-            guard_with(
+            guard(
                 |arena: &Arena, target: &usize| arena.alive[*target],
-                action_while_with(
+                action_while(
                     |arena: &Arena, target: &usize| arena.at != arena.positions[*target],
                     |arena: &Arena, target: &usize| Act::Walk(Walk::To(arena.positions[*target])),
                 ),
@@ -437,6 +437,35 @@ fn action_while_with_follows_a_target_held_in_a_scope_local() {
     assert_eq!(result, NodeResult::Running(Act::Walk(Walk::To(6))));
 
     arena.at = 6;
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Success);
+}
+
+#[test]
+fn one_constructor_takes_either_shape_under_the_same_binding() {
+    let tree = scope! {
+        let target: usize = |_: &mut Arena| 1;
+        sequence {
+            // Context only: ignores the target it is handed.
+            guard(
+                |arena: &Arena| arena.alive.contains(&true),
+                // Context and target.
+                action_while(
+                    |arena: &Arena, target: &usize| arena.alive[*target],
+                    |_: &Arena| Act::Step,
+                ),
+            ).with(target);
+        }
+    };
+    let mut state = BtState::new(&tree);
+    let mut arena = Arena {
+        alive: [true, true],
+        ..Arena::default()
+    };
+
+    let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
+    assert_eq!(result, NodeResult::Running(Act::Step));
+    arena.alive[1] = false;
     let result = update(&tree, &mut state, &mut arena, EntryMode::Resume);
     assert_eq!(result, NodeResult::Success);
 }

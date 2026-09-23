@@ -1,3 +1,7 @@
+use core::marker::PhantomData;
+
+use super::read::ReadFn;
+use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// Stateless callable. Captures hold configuration; context holds mutable data.
@@ -51,9 +55,10 @@ impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
 }
 
 /// A child that runs only while a predicate holds.
-pub struct Guarded<F, N> {
+pub struct Guarded<F, N, M> {
     predicate: F,
     child: N,
+    reads: PhantomData<fn() -> M>,
 }
 
 /// Runs `child` while `predicate` holds; fails without entering it otherwise.
@@ -74,23 +79,31 @@ pub struct Guarded<F, N> {
 /// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Failure);
 /// ```
 ///
+/// The predicate is `Fn(&C) -> bool`, or `Fn(&C, P) -> bool` to also read the
+/// parameters it forwards to `child` -- a target bound with `.with(target)`,
+/// asked about on every update. See [`ReadFn`].
+///
 /// [`seq`]: crate::seq
-pub fn guard<F, N>(predicate: F, child: N) -> Guarded<F, N> {
-    Guarded { predicate, child }
+pub fn guard<F, N, M>(predicate: F, child: N) -> Guarded<F, N, M> {
+    Guarded {
+        predicate,
+        child,
+        reads: PhantomData,
+    }
 }
 
-impl<C, A, P, F: Fn(&C) -> bool, N: BtNode<C, A, P>> BtNode<C, A, P> for Guarded<F, N> {
-    type State = N::State;
+impl<C, A, P: ParamValue, F, N, S, M> BtNode<C, A, P> for Guarded<F, N, M>
+where
+    F: ReadFn<C, P, bool, M>,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    S: Default + Send + 'static,
+{
+    type State = S;
 
     #[inline(always)]
-    fn update(
-        &self,
-        state: &mut N::State,
-        ctx: &mut C,
-        params: P,
-        mode: EntryMode,
-    ) -> NodeResult<A> {
-        if (self.predicate)(ctx) {
+    fn update(&self, state: &mut S, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
+        let mut params = params.into_value();
+        if self.predicate.call(ctx, P::Shape::reborrow(&mut params)) {
             self.child.update(state, ctx, params, mode)
         } else {
             NodeResult::Failure

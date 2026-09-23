@@ -77,12 +77,11 @@ child completes:
 `guard` is the opposite contract: `cond` is a requirement rather than a goal,
 so a false `cond` fails it, and it never restarts its child.
 
-Params: `guard` and `repeat_while` forward scope parameters to the child.
-`guard_with` and `repeat_while_with` also hand them to the condition
-(`Fn(&C, P) -> bool`), using the same `ParamValue` reborrow as `ControlNode`.
-A guard on a target held in a scope local, like
-`guard_with(|bb: &World, target: &Entity| bb.is_alive(*target), ..)`, is the
-common case inside `scope!`.
+Params: `guard` and `repeat_while` forward scope parameters to the child, and
+the condition may read them: it is `Fn(&C) -> bool` or `Fn(&C, P) -> bool`,
+under the same constructor (`ReadFn`). A guard on a target held in a scope
+local, like `guard(|bb: &World, target: &Entity| bb.is_alive(*target), ..)`,
+is the common case inside `scope!`.
 
 ### Action and function helpers
 
@@ -163,8 +162,8 @@ for what shipped, and a decision-log entry.
 
 - `guard` (in composition), `repeat_while`, and `map_act`.
 - `action_while`, `leaf_with`, and `check_with`.
-- `guard_with`, `repeat_while_with` and `action_while_with`: conditions (and
-  the act) that read scope params.
+- Conditions (and the act of `action_while`) that read scope params, under
+  the same constructors through `ReadFn`.
 
 **Phase 2: utility / priority selection** (M)
 

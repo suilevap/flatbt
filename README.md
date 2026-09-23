@@ -243,10 +243,8 @@ Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
 | Node | Behavior |
 | --- | --- |
 | `repeat_while(cond, child)` | Keep `child` running, restarting it, while `cond` holds; succeed once it does not. Fail if `child` fails, or completes without running, while `cond` still holds. |
-| `guard_with(cond, child)`, `repeat_while_with(cond, child)` | `guard` and `repeat_while` whose `cond` also receives the node's parameters, such as a target held in a scope local. |
 | `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
 | `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
-| `action_while_with(cond, act)` | `action_while` whose `cond` and `act` also receive the node's parameters. |
 | `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
 
 `repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one
@@ -255,12 +253,16 @@ drop a running child when they stop, which cancels it. So
 `seq((repeat_while(far, approach), interact))` approaches only while needed and
 succeeds at once for an agent already close.
 
+A condition or act is `Fn(&C)`, or `Fn(&C, P)` to also read the node's
+parameters -- for `guard`, `repeat_while` and `action_while` alike. The same
+constructor takes either; annotate the closure's arguments.
+
 ```rust,ignore
 let tree = scope! {
     let target: Entity = pick_target;
     sequence {
-        guard_with(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
-            repeat_while_with(|bb: &World, target: &Entity| bb.far_from(*target), action(Approach)),
+        guard(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
+            repeat_while(|bb: &World, target: &Entity| bb.far_from(*target), action(Approach)),
             action(Attack),
         ))).with(target);
     }

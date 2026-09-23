@@ -1,5 +1,7 @@
+use core::marker::PhantomData;
+
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, EntryMode, NodeResult, ReadFn};
 
 /// Stateless callable that also receives parameters.
 pub struct LeafWith<F>(F);
@@ -61,9 +63,10 @@ impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
 }
 
 /// An act reported while a condition holds.
-pub struct ActionWhile<F, G> {
+pub struct ActionWhile<F, G, M> {
     condition: F,
     act: G,
+    reads: PhantomData<fn() -> M>,
 }
 
 /// Reports `act` while `condition` holds, then succeeds.
@@ -72,7 +75,6 @@ pub struct ActionWhile<F, G> {
 /// world does the work, and this says what the agent is doing until it is
 /// done. Waiting for something is the same node with the condition negated.
 /// Both are asked on every update, so `act` follows a moving target.
-/// Parameters are ignored; [`action_while_with`] hands them to both.
 ///
 /// ```
 /// use flatbt::prelude::*;
@@ -87,30 +89,9 @@ pub struct ActionWhile<F, G> {
 /// ammo = 3;
 /// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
 /// ```
-pub fn action_while<F, G>(condition: F, act: G) -> ActionWhile<F, G> {
-    ActionWhile { condition, act }
-}
-
-impl<C, A, P, F: Fn(&C) -> bool, G: Fn(&C) -> A> BtNode<C, A, P> for ActionWhile<F, G> {
-    type State = ();
-
-    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
-        if (self.condition)(ctx) {
-            NodeResult::Running((self.act)(ctx))
-        } else {
-            NodeResult::Success
-        }
-    }
-}
-
-/// [`action_while`] whose condition and act also receive the node's parameters.
-pub struct ActionWhileWith<F, G> {
-    condition: F,
-    act: G,
-}
-
-/// [`action_while`] whose condition and act also read the node's parameters,
-/// such as a target held in a `scope!` local:
+///
+/// Each closure is `Fn(&C)`, or `Fn(&C, P)` to also read the node's
+/// parameters, such as a target held in a `scope!` local; see [`ReadFn`]:
 ///
 /// ```
 /// use flatbt::prelude::*;
@@ -122,7 +103,7 @@ pub struct ActionWhileWith<F, G> {
 /// let tree = scope! {
 ///     let target: usize = |_: &mut World| 1;
 ///     sequence {
-///         action_while_with(
+///         action_while(
 ///             |world: &World, target: &usize| world.at != world.positions[*target],
 ///             |world: &World, target: &usize| Act::WalkTo(world.positions[*target]),
 ///         ).with(target);
@@ -134,23 +115,25 @@ pub struct ActionWhileWith<F, G> {
 /// world.at = 5;
 /// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
 /// ```
-///
-/// Annotate the closures' arguments.
-pub fn action_while_with<F, G>(condition: F, act: G) -> ActionWhileWith<F, G> {
-    ActionWhileWith { condition, act }
+pub fn action_while<F, G, M>(condition: F, act: G) -> ActionWhile<F, G, M> {
+    ActionWhile {
+        condition,
+        act,
+        reads: PhantomData,
+    }
 }
 
-impl<C, A, P: ParamValue, F, G> BtNode<C, A, P> for ActionWhileWith<F, G>
+impl<C, A, P: ParamValue, F, G, MF, MG> BtNode<C, A, P> for ActionWhile<F, G, (MF, MG)>
 where
-    F: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> bool,
-    G: for<'a> Fn(&C, <P::Shape as ParamShape>::Value<'a>) -> A,
+    F: ReadFn<C, P, bool, MF>,
+    G: ReadFn<C, P, A, MG>,
 {
     type State = ();
 
     fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
         let mut params = params.into_value();
-        if (self.condition)(ctx, P::Shape::reborrow(&mut params)) {
-            NodeResult::Running((self.act)(ctx, params))
+        if self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
+            NodeResult::Running(self.act.call(ctx, params))
         } else {
             NodeResult::Success
         }

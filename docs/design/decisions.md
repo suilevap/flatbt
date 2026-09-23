@@ -272,14 +272,23 @@ appears in bounds would leave the impl unconstrained. `leaf_with` and
 
 ## 2026-09-23 — Conditions that read scope parameters
 
-`guard_with` and `repeat_while_with` hand the node's parameters to the
-condition as well as to the child, so a target picked into a `scope!` local is
-the one the condition asks about on every update. Separate constructors, as
-with `leaf_with`: one node cannot accept both `Fn(&C)` and `Fn(&C, P)` without
-overlapping impls, and changing `guard` in core would force a `ParamValue`
-bound on every guard. Both forms of `repeat_while` share one loop.
+`guard`, `repeat_while` and `action_while` take a condition (and an act) that
+is either `Fn(&C)` or `Fn(&C, P)`, where `P` is a reborrow of the parameters
+the node forwards to its child. So a target picked into a `scope!` local is the
+one the condition asks about on every update, under the same name.
 
-`action_while_with` completes the set. `action_while` stays generic over
-parameters and ignores them, like `leaf` and `check`, so it still fits under a
-parameterized guard; a condition or act that needs the target takes the
-`_with` form.
+One constructor takes both through `ReadFn<C, P, R, M>`, implemented for each
+closure shape with its own marker type: the two impls are of different traits
+(`ReadFn<.., ReadsContext>` and `ReadFn<.., ReadsParams>`), so they do not
+overlap the way two `BtNode` impls on one node would, and the marker is
+inferred from the closure's arity. Nodes carry it as a phantom parameter.
+
+Considered first: separate `guard_with`, `repeat_while_with` and
+`action_while_with` constructors. Rejected for doubling the API, and because
+`action_while` accepted `.with(..)` and silently ignored it.
+
+Costs, accepted: `guard` now needs `P: ParamValue`, as `seq` and `select`
+already do; an unmatched closure reports `ReadFn` rather than a plain `Fn`
+mismatch, softened by a `diagnostic::on_unimplemented` note. `leaf_with` and
+`check_with` stay separate for now: `leaf` and `check` would take the same
+treatment, but that is a core change on its own.
