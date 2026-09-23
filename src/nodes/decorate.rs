@@ -185,3 +185,175 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
         }
     }
 }
+
+/// A terminal result a child's result is mapped to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Success,
+    Failure,
+}
+
+impl Outcome {
+    #[inline(always)]
+    fn result<A>(self) -> NodeResult<A> {
+        match self {
+            Self::Success => NodeResult::Success,
+            Self::Failure => NodeResult::Failure,
+        }
+    }
+}
+
+/// A child whose terminal results are mapped; `Running` passes through.
+pub struct Remap<N> {
+    child: N,
+    success: Outcome,
+    failure: Outcome,
+}
+
+/// Swaps Success and Failure; `Running` and its act pass through.
+pub fn invert<N>(child: N) -> Remap<N> {
+    Remap {
+        child,
+        success: Outcome::Failure,
+        failure: Outcome::Success,
+    }
+}
+
+/// Succeeds whenever `child` ends; `Running` passes through.
+pub fn force_success<N>(child: N) -> Remap<N> {
+    Remap {
+        child,
+        success: Outcome::Success,
+        failure: Outcome::Success,
+    }
+}
+
+/// Fails whenever `child` ends; `Running` passes through.
+pub fn force_failure<N>(child: N) -> Remap<N> {
+    Remap {
+        child,
+        success: Outcome::Failure,
+        failure: Outcome::Failure,
+    }
+}
+
+impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
+    type State = N::State;
+
+    #[inline(always)]
+    fn update(
+        &self,
+        state: &mut N::State,
+        ctx: &mut C,
+        params: P,
+        mode: EntryMode,
+    ) -> NodeResult<A> {
+        match self.child.update(state, ctx, params, mode) {
+            running @ NodeResult::Running(_) => running,
+            NodeResult::Success => self.success.result(),
+            NodeResult::Failure => self.failure.result(),
+        }
+    }
+}
+
+/// A child resumed as Evaluate while a condition holds.
+pub struct ReevaluateWhen<F, N, M> {
+    condition: F,
+    child: N,
+    reads: PhantomData<fn() -> M>,
+}
+
+/// Passes `Resume` down to `child` as `Evaluate` on updates where
+/// `condition` holds, so that subtree reconsiders its choices even when the
+/// rest of the tree only resumes; otherwise passes the mode through.
+///
+/// For something that should make the agent reconsider, such as an alarm
+/// changing: `reevaluate_when(|bb: &Guard| bb.alarm_changed, combat)`. The
+/// condition is `Fn(&C) -> bool` or `Fn(&C, P) -> bool`, see [`ReadFn`].
+/// Never converts unconditionally: a subtree evaluated on every update is what
+/// `Evaluate` at the root already gives.
+pub fn reevaluate_when<F, N, M>(condition: F, child: N) -> ReevaluateWhen<F, N, M> {
+    ReevaluateWhen {
+        condition,
+        child,
+        reads: PhantomData,
+    }
+}
+
+impl<C, A, P: ParamValue, F, N, S, M> BtNode<C, A, P> for ReevaluateWhen<F, N, M>
+where
+    F: ReadFn<C, P, bool, M>,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    S: Default + Send + 'static,
+{
+    type State = S;
+
+    #[inline(always)]
+    fn update(&self, state: &mut S, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
+        let mut params = params.into_value();
+        let mode = if mode == EntryMode::Resume
+            && self.condition.call(ctx, P::Shape::reborrow(&mut params))
+        {
+            EntryMode::Evaluate
+        } else {
+            mode
+        };
+        self.child.update(state, ctx, params, mode)
+    }
+}
+
+/// A subtree run over part of the context.
+pub struct Focus<F, N, D> {
+    lens: F,
+    child: N,
+    part: PhantomData<fn() -> D>,
+}
+
+/// Runs `child`, a tree over `D`, on the part of the context `lens` selects,
+/// so one subtree serves several blackboards that contain a `D`.
+///
+/// ```
+/// use flatbt::prelude::*;
+///
+/// struct Legs { steps: u32 }
+/// struct Agent { legs: Legs }
+///
+/// fn walk() -> impl BtNode<Legs> {
+///     leaf(|legs: &mut Legs| { legs.steps += 1; NodeResult::Success })
+/// }
+///
+/// let tree = focus(|agent: &mut Agent| &mut agent.legs, walk());
+/// let mut state: BtState<_, _> = BtState::new(&tree);
+/// let mut agent = Agent { legs: Legs { steps: 0 } };
+/// assert_eq!(update(&tree, &mut state, &mut agent, EntryMode::Evaluate), NodeResult::Success);
+/// assert_eq!(agent.legs.steps, 1);
+/// ```
+pub fn focus<C, D, F, N>(lens: F, child: N) -> Focus<F, N, D>
+where
+    F: Fn(&mut C) -> &mut D,
+{
+    Focus {
+        lens,
+        child,
+        part: PhantomData,
+    }
+}
+
+impl<C, D, A, P, F, N> BtNode<C, A, P> for Focus<F, N, D>
+where
+    F: Fn(&mut C) -> &mut D,
+    N: BtNode<D, A, P>,
+{
+    type State = N::State;
+
+    #[inline(always)]
+    fn update(
+        &self,
+        state: &mut N::State,
+        ctx: &mut C,
+        params: P,
+        mode: EntryMode,
+    ) -> NodeResult<A> {
+        self.child.update(state, (self.lens)(ctx), params, mode)
+    }
+}

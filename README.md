@@ -203,6 +203,21 @@ priority selector. The function form is `utility(|bb: &C, index| score,
 children)`; for inertia there, `control(Utility::new(score).inertia(x),
 children)`. At most 64 children.
 
+### At random
+
+`random_select`, `weighted_select` and `shuffle_seq` draw from a generator the
+context owns, `rng: Fn(&mut C) -> u32`, so a game seeds it once and tests stay
+deterministic.
+
+| Control | Behavior |
+| --- | --- |
+| `random_select(rng, children)` | Run a random child; when it fails, a random one of the rest. |
+| `weighted_select(rng, weight, children)` | The same, drawn by `weight(ctx, index)`; a weight that is not positive never draws. |
+| `shuffle_seq(rng, children)` | A sequence in random order. |
+
+A random choice is kept while its child runs: neither `Evaluate` nor `Resume`
+draws again. At most 64 children.
+
 ## Share local values
 
 Locals initialize once per invocation and survive suspension
@@ -277,6 +292,11 @@ Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
 | `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
 | `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
 | `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
+| `invert(child)`, `force_success(child)`, `force_failure(child)` | Map the child's Success/Failure; `Running` passes through. |
+| `repeat(n, child)`, `retry(n, child)` | Run `child` until it has succeeded `n` times, or until it succeeds within `n` attempts. |
+| `if_else(cond, then, otherwise)` | Run one branch by `cond`, without fallback; `Evaluate` may switch it. |
+| `reevaluate_when(cond, child)` | Pass `Resume` down as `Evaluate` on updates where `cond` holds. |
+| `focus(lens, child)` | Run a subtree over the part of the context `lens` selects. |
 
 `repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one
 and fails the other. Both ask `cond` on every update, `Resume` included, and
@@ -542,7 +562,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `utility!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `utility!`, random selection, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node

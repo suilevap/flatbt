@@ -1,6 +1,6 @@
 # Node catalog: brainstorm and plan
 
-Status: proposal; Phases 1 and 2 implemented. Each item says what it is for, whether
+Status: proposal; Phases 1 to 3 implemented. Each item says what it is for, whether
 the current core can express it, and roughly what it costs.
 
 The catalog lives in `flatbt::nodes`, under the existing `extras` feature.
@@ -172,13 +172,18 @@ for what shipped, and a decision-log entry.
   Integer scores cover the dynamic priority selector; no separate `priority`.
 - A tie keeps the running child, then goes to the lower index.
 
-**Phase 3: random policies and remaining decorators** (S each)
+**Phase 3: random policies and remaining decorators** (S each) -- done
 
 - `random_select`, `weighted_select`, and `shuffle_seq`, with an RNG from
-  context. Tests use a deterministic counter RNG.
-- `invert`, `force_*`, `repeat`/`retry` (moved out of `examples/support`),
-  `reevaluate_when`, `focus`, `if_else`.
-- `action_fn` after a spike on closure inference; `produce`.
+  context. Tests use a scripted RNG.
+- `invert`, `force_*`, `repeat`/`retry`, `reevaluate_when`, `focus`,
+  `if_else`. The example `Repeat` stays in `examples/support`: it is what the
+  tests use to exercise the custom-policy API.
+- Dropped: `action_fn` and `produce`. The spike compiled, but a closure that
+  ignores parameters still takes a `_: ()` argument, and hiding that needs the
+  arity trick on three closures at once. `action_while` covers the common
+  action, a small `impl BtAction` the rest; `leaf_with` with `.with(out x)`
+  already produces a local.
 
 **Phase 4: P3**
 

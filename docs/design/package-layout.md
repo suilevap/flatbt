@@ -20,7 +20,9 @@ flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
 | `build.rs` | Tuple states, parameter tuples, child indices |
 | `src/nodes/action/` | Lifecycle and cancellation adapters |
 | `src/nodes/choose.rs` | Choice policy and `choose!` |
-| `src/nodes/decorate.rs` | `repeat_while`, `map_act` |
+| `src/nodes/decorate.rs` | `repeat_while`, `map_act`, `invert`, `force_*`, `reevaluate_when`, `focus` |
+| `src/nodes/policy.rs` | `repeat`, `retry`, `if_else` |
+| `src/nodes/random.rs` | `random_select`, `weighted_select`, `shuffle_seq` |
 | `src/nodes/function.rs` | Callable helpers: `action_while`, `leaf_with`, `check_with` |
 | `src/nodes/utility.rs` | Scored selection: `Utility`, `utility`, `utility!` |
 | `src/scope/` | Owned locals, parameter bindings, `scope!` |

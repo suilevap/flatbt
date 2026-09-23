@@ -87,3 +87,7 @@ required-features = ["extras"]
 [[test]]
 name = "utility"
 required-features = ["extras"]
+
+[[test]]
+name = "policies"
+required-features = ["extras"]

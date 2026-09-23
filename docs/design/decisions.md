@@ -324,3 +324,25 @@ Resume continues without scoring, like `select`.
   does not receive parameters.
 - The macro's last arm becomes the scorer's `_` arm, so no unreachable branch
   is generated and nothing can panic.
+
+## 2026-09-23 — Random selection and the remaining decorators
+
+Phase 3 of the node catalog.
+
+- **Randomness from the context.** `rng: Fn(&mut C) -> u32`, so the crate stays
+  dependency-free and `no_std`, one seeded generator serves a whole game, and a
+  test can script the draws. Uniform picks take `draw % untried`; the bias is
+  under 64 / 2^32.
+- **A random choice is kept while it runs.** `Evaluate` does not redraw for
+  `random_select`, `weighted_select` or `shuffle_seq`: reconsidering a coin flip
+  every update would make the agent jitter, and nothing new is known.
+  `utility` is where a choice should follow the world.
+- **`repeat` and `retry` restart in the same update**, bounded by their count,
+  so they need no act of their own and cannot spin. `if_else` is `choose!` with
+  two arms and a condition.
+- **`reevaluate_when` needs a condition.** The proposal's unconditional
+  `reactive` was rejected in review; this converts `Resume` only on the
+  updates the caller names.
+- **`focus` takes its lens bound at construction**, `Fn(&mut C) -> &mut D`, so a
+  closure returning a borrow infers its lifetimes.
+- **`action_fn` and `produce` dropped** after a spike: see the proposal.
