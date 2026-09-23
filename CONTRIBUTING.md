@@ -34,6 +34,7 @@ implemented APIs. Keep development history and proposals in design notes.
 
 [Design notes](docs/design/README.md) index implemented designs, open proposals,
 and historical decisions. [Experiments](experiments/README.md) record archived
-implementations and how to inspect them.
+implementations and how to inspect them. [Benchmarks](benchmarks/README.md)
+compare FlatBT with other Rust behavior tree crates.
 
 These documents support development; proposals do not define the public API.
