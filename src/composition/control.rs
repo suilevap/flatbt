@@ -12,6 +12,8 @@ pub enum ControlOp {
 impl ControlOp {
     /// Reports a diagnostic and terminates the control with Failure. See
     /// `set_error_handler`.
+    #[cold]
+    #[inline(never)]
     pub fn error(message: impl core::fmt::Display) -> Self {
         crate::log_error(message);
         Self::Failure
