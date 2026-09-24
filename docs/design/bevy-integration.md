@@ -87,9 +87,10 @@ gone. What is left is one plugin, one component pair, and the tick.
 - **Changed:** written in place with `set_if_neq`. No archetype move, which is
   the common case -- a standing `MarchingTo(x)` that follows a moving target is
   a value write per tick.
-- **Appeared** or **gone:** a command, since both are structural. The parallel
-  tick takes one through `ParallelCommands`, whose queues are per thread, so
-  nothing is shared and nothing is locked.
+- **Appeared** or **gone:** structural, so the tick queues it -- per thread,
+  in a buffer that keeps its capacity -- and an exclusive system chained right
+  after the tick inside `BehaviorSystems` applies the queue. Its run condition
+  skips it on every frame where nothing was queued.
 
 That ordering matters for cost. An earlier design made each decision its own
 marker component, so an agent that switched between firing and reloading moved
@@ -97,12 +98,31 @@ archetype every time; over 100 000 constantly re-deciding agents that cost
 0.5-0.8 ms of frame per registered decision. One act component whose *value*
 changes costs a comparison.
 
-An earlier round buffered the structural changes per batch and inserted them with
-`try_insert_batch`, which meant a shared list behind a mutex in the parallel
-tick. Nothing measured said the batching was worth that: structural changes are
-the rare case by construction, so `ParallelCommands` is both simpler and
-lock-free. If a load test ever shows the mass-arrival frame wanting batched
-inserts, it comes back with a number behind it.
+### Why not `Commands`
+
+The tick used to issue the structural changes through `Commands`
+(`ParallelCommands` in the parallel tick). That was correct and lock-free, and
+it allocated on every frame, including frames that queued nothing:
+
+- A game orders its carry-out system `.after(BehaviorSystems)`, so Bevy
+  inserts an `ApplyDeferred` sync point after any tick that holds `Commands`.
+- Bevy 0.19's multi-threaded executor runs every exclusive system, a sync
+  point included, by spawning a task (136 bytes) and cloning a `FixedBitSet`
+  (16 bytes). That happens whether or not any command was queued.
+
+In gridvail this showed up as its warmed-turn allocation test failing by one
+allocation per frame. An exclusive system whose run condition is false is never
+spawned and costs nothing. A running one costs the same as the sync point did,
+but it only runs on frames where an agent actually started or stopped doing
+something. So the tick holds no deferred parameter, and
+`tests/allocations.rs` pins the warmed tick at Bevy's own baseline with a
+system ordered after it, serial and parallel.
+
+An earlier round batched structural changes behind a mutex and inserted them
+with `try_insert_batch`. The queue here takes no lock, since each thread pushes
+to its own buffer, and it applies changes in the tick's order rather than
+grouped into batches. If a load test ever shows the mass-arrival frame needs
+batched inserts, that can come back with a number behind it.
 
 ### The act's lifetime, and who ends it
 

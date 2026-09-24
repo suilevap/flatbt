@@ -382,7 +382,8 @@ good place to decide who gets it.
   component; one whose tree ended carries none. `Query<&Act>` is exactly the
   agents with a standing order, and `Without<Act>` the idle ones. A changed act
   is written in place with `set_if_neq`; only appearing and disappearing cost an
-  insert or a remove, and those are batched.
+  insert or a remove, applied right after the tick. A warmed tick whose acts only
+  change value allocates nothing and adds no sync point.
 - **Nodes never change the world.** An action starts something, the act appears,
   a system does the work, and `is_in_progress` watches the world until it is
   done. A node cannot issue `Commands`; a system that needs them has them where
