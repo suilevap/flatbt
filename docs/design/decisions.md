@@ -325,18 +325,48 @@ Resume continues without scoring, like `select`.
 - The macro's last arm becomes the scorer's `_` arm, so no unreachable branch
   is generated and nothing can panic.
 
-## 2026-09-23 — Random selection and the remaining decorators
+## 2026-09-24 — Order is a layer over children; the remaining decorators
 
-Phase 3 of the node catalog.
+Phase 3 of the node catalog, reshaped in review. Supersedes the `Utility`
+policy of the 2026-09-23 entry on selection by score.
 
-- **Randomness from the context.** `rng: Fn(&mut C) -> u32`, so the crate stays
-  dependency-free and `no_std`, one seeded generator serves a whole game, and a
-  test can script the draws. Uniform picks take `draw % untried`; the bias is
-  under 64 / 2^32.
-- **A random choice is kept while it runs.** `Evaluate` does not redraw for
-  `random_select`, `weighted_select` or `shuffle_seq`: reconsidering a coin flip
-  every update would make the agent jitter, and nothing new is known.
-  `utility` is where a choice should follow the world.
+**Order separates from control.** `utility`, `random_select`,
+`weighted_select` and `shuffle_seq` were each a control that chose a child and
+then behaved like `select` or `seq`. They are now one wrapper and three orders:
+`order_by(order, children)` implements `BtChildren`, so the ordinary `select`
+and `seq` visit the children in the order a `BtOrder` computes.
+
+| Before | Now |
+| --- | --- |
+| `utility(score, ..)` | `select(order_by(by_score(score), ..))` |
+| `random_select(rng, ..)` | `select(order_by(shuffled(rng), ..))` |
+| `weighted_select(rng, w, ..)` | `select(order_by(weighted(rng, w), ..))` |
+| `shuffle_seq(rng, ..)` | `seq(order_by(shuffled(rng), ..))` |
+
+Combinations that had no node come free: `seq(order_by(by_score(..)))` runs
+everything best first. `utility!` stays, expanding to the first row.
+
+- **Controls stay unchanged.** Wrapping the children rather than the policy
+  means no `select_by`/`seq_by`: the control is the one already known, and so
+  is its reaction to `Evaluate`.
+- **No stored permutation.** `select` and `seq` only ask for position 0, the
+  running position, or the next one, so the wrapper keeps a `u64` of children
+  used at earlier positions and the current position's child. Other access,
+  such as `choose!` over it, reports a diagnostic and fails.
+- **When the order is recomputed** follows from the control: whenever it goes
+  back to position 0 under `Evaluate`. `select` does on every `Evaluate`, so a
+  score order preempts; `seq` does only while on its first child.
+- **Random orders are drawn once per invocation.** One draw from
+  `rng: Fn(&mut C) -> u32` seeds the invocation, and each position hashes
+  (seed, position). A pass restarted by `Evaluate` walks the same order, so
+  `select` retries the children before the running one exactly as it does for
+  a written order, rather than redrawing a coin flip every update. This changes
+  the earlier `random_select`, which kept the running child without rescanning.
+- **Randomness from the context** keeps the crate dependency-free and `no_std`,
+  lets one seeded generator serve a game, and keeps tests deterministic.
+
+The remaining decorators:
+
 - **`repeat` and `retry` restart in the same update**, bounded by their count,
   so they need no act of their own and cannot spin. `if_else` is `choose!` with
   two arms and a condition.
@@ -346,9 +376,11 @@ Phase 3 of the node catalog.
 - **`focus` takes its lens bound at construction**, `Fn(&mut C) -> &mut D`, so a
   closure returning a borrow infers its lifetimes.
 - **`action_fn` and `produce` dropped** after a spike: see the proposal.
-- **Inlining.** Node `update`s and policy callbacks are `#[inline(always)]`,
-  as core's are: each is called from exactly one parent in a static tree, so
-  forcing it duplicates nothing. Helpers that loop over children get a plain
-  `#[inline]` and are left to LLVM. Diagnostics go through a `#[cold]`,
-  `#[inline(never)]` function, so their formatting stays off the path every
-  update takes; `utility`'s limit check is moved to the same shape.
+- **One file per node family** under `src/nodes/`, orders under `order/`.
+  Rust has no rule either way; the old `decorate.rs` had become a grab bag.
+- **Inlining.** Node `update`s, policy callbacks and `order_by`'s dispatch are
+  `#[inline(always)]`, as core's are: each is called from exactly one parent in
+  a static tree, so forcing it duplicates nothing. Code that loops over
+  children -- the orders' `next` -- gets a plain `#[inline]` and is left to
+  LLVM. Diagnostics go through a `#[cold]`, `#[inline(never)]` function, so
+  their formatting stays off the path every update takes.

@@ -176,10 +176,39 @@ let tree = choose!(|bb: &Blackboard| match bb.order {
 Arm definitions cannot use `bb` or match bindings. Read update-time inputs inside
 the node. See the [choice example](examples/choose.rs).
 
-### By score
+### In a computed order
 
-`utility!` scores every child and runs the best. Unlike `choose!`, it falls
-back: a child that fails is not retried, and the best of the rest runs instead.
+`order_by(order, children)` makes `select` and `seq` visit their children in
+an order computed at run time. The control keeps its meaning: `select` tries
+them in that order until one succeeds, `seq` runs them all in that order.
+
+| Order | Visits children |
+| --- | --- |
+| `by_score(\|bb: &C, index\| score)` | Highest score first. `.inertia(x)` favours the running child. |
+| `shuffled(rng)` | In a random order. |
+| `weighted(rng, \|bb: &C, index\| weight)` | In a random order drawn by weight. |
+
+```rust,ignore
+select(order_by(by_score(score), children))    // utility selector
+select(order_by(shuffled(rng), children))      // random selector
+seq(order_by(shuffled(rng), children))         // shuffled sequence
+select(order_by(weighted(rng, weight), children))
+```
+
+The order is computed again whenever the control goes back to its first child
+under `Evaluate`: `select` does on every `Evaluate`, so a better-scoring child
+preempts the running one, and `seq` does only while still on its first child.
+`Resume` never reorders.
+
+- Scores: higher goes first; a tie keeps the running child, then goes to the
+  lower index; NaN leaves a child out. Integer scores give a dynamic priority.
+  `inertia` is added to the running child's score.
+- Random orders draw from a generator the context owns, `rng: Fn(&mut C) ->
+  u32`, once per invocation, so `Evaluate` walks the same order again and tests
+  stay deterministic. A weight that is not positive leaves its child out.
+- At most 64 children. Custom orders implement `BtOrder`.
+
+`utility!` writes a score order as one arm per child:
 
 ```rust,ignore
 let tree = utility!(|bb: &Needs| {
@@ -188,35 +217,6 @@ let tree = utility!(|bb: &Needs| {
     bb.boredom * 0.5 => action(Play),
 }, inertia = 0.1);
 ```
-
-| Event | Behavior |
-| --- | --- |
-| Fresh entry, `Evaluate` | Score all; run the best. A better child preempts the running one. |
-| `Resume` | Continue the running child without scoring. |
-| Child fails | Run the best child not yet tried; fail when none is left. |
-| Child succeeds | Succeed. |
-
-Higher scores win. A tie keeps the running child, and otherwise goes to the
-first. NaN skips a child. `inertia` is added to the running child's score, so a
-challenger must beat it by more than that. Integer scores make a dynamic
-priority selector. The function form is `utility(|bb: &C, index| score,
-children)`; for inertia there, `control(Utility::new(score).inertia(x),
-children)`. At most 64 children.
-
-### At random
-
-`random_select`, `weighted_select` and `shuffle_seq` draw from a generator the
-context owns, `rng: Fn(&mut C) -> u32`, so a game seeds it once and tests stay
-deterministic.
-
-| Control | Behavior |
-| --- | --- |
-| `random_select(rng, children)` | Run a random child; when it fails, a random one of the rest. |
-| `weighted_select(rng, weight, children)` | The same, drawn by `weight(ctx, index)`; a weight that is not positive never draws. |
-| `shuffle_seq(rng, children)` | A sequence in random order. |
-
-A random choice is kept while its child runs: neither `Evaluate` nor `Resume`
-draws again. At most 64 children.
 
 ## Share local values
 
@@ -562,7 +562,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `utility!`, random selection, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `order_by` and `utility!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node

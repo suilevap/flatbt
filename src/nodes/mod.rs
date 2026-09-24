@@ -1,23 +1,30 @@
 //! Ready-made nodes and policies built on the public core API: actions with
-//! cancellation, `choose!`, `utility!`, decorators, and callable helpers.
+//! cancellation, `choose!`, orders for `select` and `seq`, decorators, and
+//! callable helpers.
 
 pub mod action;
 pub mod choose;
-pub mod decorate;
+pub mod focus;
 pub mod function;
-pub mod policy;
-pub mod random;
-pub mod utility;
+pub mod if_else;
+pub mod map_act;
+pub mod order;
+pub mod reevaluate;
+pub mod remap;
+pub mod repeat;
+pub mod repeat_while;
 
 pub use action::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
 pub use choose::{Choose, ChooseNode};
-pub use decorate::{
-    Focus, MapAct, ReevaluateWhen, Remap, RepeatWhile, RepeatWhileState, focus, force_failure,
-    force_success, invert, map_act, reevaluate_when, repeat_while,
-};
+pub use focus::{Focus, focus};
 pub use function::{ActionWhile, CheckWith, LeafWith, action_while, check_with, leaf_with};
-pub use policy::{IfElse, Repeat, Retry, if_else, repeat, retry};
-pub use random::{
-    RandomSelect, ShuffleSeq, WeightedSelect, random_select, shuffle_seq, weighted_select,
+pub use if_else::{IfElse, if_else};
+pub use map_act::{MapAct, map_act};
+pub use order::{
+    BtOrder, ByScore, Ordered, OrderedState, Shuffled, Weighted, by_score, order_by, shuffled,
+    weighted,
 };
-pub use utility::{Utility, utility};
+pub use reevaluate::{ReevaluateWhen, reevaluate_when};
+pub use remap::{Remap, force_failure, force_success, invert};
+pub use repeat::{Repeat, Retry, repeat, retry};
+pub use repeat_while::{RepeatWhile, RepeatWhileState, repeat_while};

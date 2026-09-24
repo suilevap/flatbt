@@ -2,18 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use flatbt::prelude::*;
 
-/// A context with a deterministic "generator": each draw returns the next value.
 #[derive(Default)]
 struct Ctx {
-    draws: Vec<u32>,
     ran: Vec<&'static str>,
     fail: Vec<&'static str>,
     flag: bool,
     cancelled: Arc<Mutex<Vec<&'static str>>>,
-}
-
-fn draw(ctx: &mut Ctx) -> u32 {
-    ctx.draws.remove(0)
 }
 
 /// Records its name; fails if listed in `fail`, otherwise runs one update and
@@ -76,116 +70,6 @@ fn instant(name: &'static str, succeeds: bool) -> impl BtNode<Ctx, &'static str>
             NodeResult::Failure
         }
     })
-}
-
-#[test]
-fn random_select_draws_among_untried_and_keeps_the_running_child() {
-    let tree = random_select(draw, (task("a"), task("b"), task("c")));
-    let mut state = BtState::new(&tree);
-    let mut ctx = Ctx {
-        // 1 % 3 -> b fails; 1 % 2 of [a, c] -> c.
-        draws: vec![1, 1],
-        fail: vec!["b"],
-        ..Ctx::default()
-    };
-
-    assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate).act(),
-        Some("c")
-    );
-    // Evaluate does not redraw while c runs.
-    assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
-        NodeResult::Success
-    );
-    assert_eq!(ctx.ran, ["b", "c"]);
-    assert!(ctx.draws.is_empty());
-}
-
-#[test]
-fn random_select_fails_when_every_child_fails() {
-    let tree = random_select(draw, (instant("a", false), instant("b", false)));
-    let mut state = BtState::new(&tree);
-    let mut ctx = Ctx {
-        draws: vec![0, 0],
-        ..Ctx::default()
-    };
-
-    assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
-        NodeResult::Failure
-    );
-    assert_eq!(ctx.ran, ["a", "b"]);
-}
-
-#[test]
-fn weighted_select_follows_weights_and_never_draws_zero() {
-    let weights = |_: &Ctx, index: usize| [0.0, 1.0, 3.0][index];
-    let tree = weighted_select(
-        draw,
-        weights,
-        (instant("a", true), instant("b", true), instant("c", true)),
-    );
-    let mut ctx = Ctx::default();
-
-    // Draws map to [0, 4): b covers [0, 1), c covers [1, 4).
-    for (value, expected) in [
-        (0, "b"),
-        (u32::MAX / 8, "b"),
-        (u32::MAX / 2, "c"),
-        (u32::MAX, "c"),
-    ] {
-        ctx.draws = vec![value];
-        ctx.ran.clear();
-        let mut state = BtState::new(&tree);
-        assert_eq!(
-            update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
-            NodeResult::Success
-        );
-        assert_eq!(ctx.ran, [expected]);
-    }
-}
-
-#[test]
-fn weighted_select_falls_back_and_fails_without_positive_weights() {
-    let weights = |_: &Ctx, index: usize| [f32::NAN, 1.0, 1.0][index];
-    let tree = weighted_select(
-        draw,
-        weights,
-        (instant("a", true), instant("b", false), instant("c", false)),
-    );
-    let mut state = BtState::new(&tree);
-    let mut ctx = Ctx {
-        draws: vec![0, 0],
-        ..Ctx::default()
-    };
-
-    assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
-        NodeResult::Failure
-    );
-    assert_eq!(ctx.ran, ["b", "c"]);
-}
-
-#[test]
-fn shuffle_seq_runs_each_child_once_in_drawn_order() {
-    let tree = shuffle_seq(draw, (task("a"), task("b"), task("c")));
-    let mut state = BtState::new(&tree);
-    let mut ctx = Ctx {
-        // 2 % 3 -> c; 0 % 2 of [a, b] -> a; then b.
-        draws: vec![2, 0, 0],
-        ..Ctx::default()
-    };
-
-    while update(&tree, &mut state, &mut ctx, EntryMode::Evaluate).is_running() {}
-    assert_eq!(ctx.ran, ["c", "a", "b"]);
-
-    ctx.draws = vec![0, 0];
-    ctx.ran.clear();
-    ctx.fail = vec!["b"];
-    let mut state = BtState::new(&tree);
-    while update(&tree, &mut state, &mut ctx, EntryMode::Evaluate).is_running() {}
-    assert_eq!(ctx.ran, ["a", "b"]);
 }
 
 #[test]

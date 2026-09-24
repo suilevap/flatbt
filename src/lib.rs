@@ -74,11 +74,11 @@ pub use composition::{
 };
 #[cfg(feature = "extras")]
 pub use nodes::{
-    ActionNode, ActionWhile, BtAction, BtCancel, CancelOnDrop, CheckWith, Choose, ChooseNode,
-    Focus, IfElse, LeafWith, MapAct, RandomSelect, ReevaluateWhen, Remap, Repeat, RepeatWhile,
-    Retry, ShuffleSeq, Utility, WeightedSelect, action, action_while, check_with, focus,
-    force_failure, force_success, if_else, invert, leaf_with, map_act, random_select,
-    reevaluate_when, repeat, repeat_while, retry, shuffle_seq, utility, weighted_select,
+    ActionNode, ActionWhile, BtAction, BtCancel, BtOrder, ByScore, CancelOnDrop, CheckWith, Choose,
+    ChooseNode, Focus, IfElse, LeafWith, MapAct, Ordered, ReevaluateWhen, Remap, Repeat,
+    RepeatWhile, Retry, Shuffled, Weighted, action, action_while, by_score, check_with, focus,
+    force_failure, force_success, if_else, invert, leaf_with, map_act, order_by, reevaluate_when,
+    repeat, repeat_while, retry, shuffled, weighted,
 };
 pub(crate) use runtime::log_error;
 pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update, update_slot};
