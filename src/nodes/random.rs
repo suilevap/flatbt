@@ -7,13 +7,14 @@ use crate::{BtControl, ControlNode, ControlOp, control};
 
 const MAX_CHILDREN: usize = 64;
 
-#[inline(always)]
-fn too_many(child_count: usize) -> Option<ControlOp> {
-    (child_count > MAX_CHILDREN).then(|| {
-        ControlOp::error(format_args!(
-            "random selection supports at most {MAX_CHILDREN} children, got {child_count}"
-        ))
-    })
+/// Reports more children than the tried-set holds. Kept cold and out of line,
+/// so the formatting stays off the path every update takes.
+#[cold]
+#[inline(never)]
+fn too_many_children(child_count: usize) -> ControlOp {
+    ControlOp::error(format_args!(
+        "random selection supports at most {MAX_CHILDREN} children, got {child_count}"
+    ))
 }
 
 #[inline(always)]
@@ -22,7 +23,7 @@ fn untried(tried: u64, index: usize) -> bool {
 }
 
 /// Marks and runs the `nth` untried child; `nth` must be below their count.
-#[inline(always)]
+#[inline]
 fn run_nth_untried(tried: &mut u64, child_count: usize, nth: usize) -> ControlOp {
     match (0..child_count)
         .filter(|index| untried(*tried, *index))
@@ -37,7 +38,7 @@ fn run_nth_untried(tried: &mut u64, child_count: usize, nth: usize) -> ControlOp
 }
 
 /// Marks and runs an untried child drawn uniformly, or `none` when all were tried.
-#[inline(always)]
+#[inline]
 fn run_uniform<C>(
     rng: &impl Fn(&mut C) -> u32,
     tried: &mut u64,
@@ -98,8 +99,8 @@ impl<C, R: Fn(&mut C) -> u32> BtControl<C> for RandomSelect<R> {
         active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
-        if let Some(error) = too_many(child_count) {
-            return error;
+        if child_count > MAX_CHILDREN {
+            return too_many_children(child_count);
         }
         if let Some(index) = active_child_index {
             return ControlOp::RunChild(index);
@@ -159,7 +160,7 @@ pub fn weighted_select<R, W, Children>(
 }
 
 impl<R, W> WeightedSelect<R, W> {
-    #[inline(always)]
+    #[inline]
     fn run_weighted<C>(&self, tried: &mut u64, ctx: &mut C, child_count: usize) -> ControlOp
     where
         R: Fn(&mut C) -> u32,
@@ -211,8 +212,8 @@ impl<C, R: Fn(&mut C) -> u32, W: Fn(&C, usize) -> f32> BtControl<C> for Weighted
         active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
-        if let Some(error) = too_many(child_count) {
-            return error;
+        if child_count > MAX_CHILDREN {
+            return too_many_children(child_count);
         }
         if let Some(index) = active_child_index {
             return ControlOp::RunChild(index);
@@ -264,8 +265,8 @@ impl<C, R: Fn(&mut C) -> u32> BtControl<C> for ShuffleSeq<R> {
         active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
-        if let Some(error) = too_many(child_count) {
-            return error;
+        if child_count > MAX_CHILDREN {
+            return too_many_children(child_count);
         }
         if let Some(index) = active_child_index {
             return ControlOp::RunChild(index);

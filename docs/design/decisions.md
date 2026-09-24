@@ -346,3 +346,9 @@ Phase 3 of the node catalog.
 - **`focus` takes its lens bound at construction**, `Fn(&mut C) -> &mut D`, so a
   closure returning a borrow infers its lifetimes.
 - **`action_fn` and `produce` dropped** after a spike: see the proposal.
+- **Inlining.** Node `update`s and policy callbacks are `#[inline(always)]`,
+  as core's are: each is called from exactly one parent in a static tree, so
+  forcing it duplicates nothing. Helpers that loop over children get a plain
+  `#[inline]` and are left to LLVM. Diagnostics go through a `#[cold]`,
+  `#[inline(never)]` function, so their formatting stays off the path every
+  update takes; `utility`'s limit check is moved to the same shape.

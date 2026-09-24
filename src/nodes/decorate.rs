@@ -187,8 +187,8 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
 }
 
 /// A terminal result a child's result is mapped to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
+#[derive(Clone, Copy)]
+enum Outcome {
     Success,
     Failure,
 }

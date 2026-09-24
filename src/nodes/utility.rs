@@ -2,6 +2,19 @@ use core::ops::Add;
 
 use crate::{BtControl, ControlNode, ControlOp, control};
 
+/// Children tried in an invocation are one bit each in a `u64`.
+const MAX_CHILDREN: usize = 64;
+
+/// Kept cold and out of line, so the formatting stays off the path every
+/// update takes.
+#[cold]
+#[inline(never)]
+fn too_many_children(child_count: usize) -> ControlOp {
+    ControlOp::error(format_args!(
+        "utility supports at most {MAX_CHILDREN} children, got {child_count}"
+    ))
+}
+
 /// Runs the best-scoring child; on failure, the best one not yet tried.
 ///
 /// `score(ctx, index)` rates each child. Higher wins; a tie keeps the running
@@ -40,7 +53,7 @@ impl<F, S> Utility<F, S> {
     }
 
     /// The untried child with the highest score, if any.
-    #[inline(always)]
+    #[inline]
     fn best<C>(&self, ctx: &C, tried: u64, count: usize, active: Option<usize>) -> Option<usize>
     where
         F: Fn(&C, usize) -> S,
@@ -109,10 +122,8 @@ where
         active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
-        if child_count > 64 {
-            return ControlOp::error(format_args!(
-                "utility supports at most 64 children, got {child_count}"
-            ));
+        if child_count > MAX_CHILDREN {
+            return too_many_children(child_count);
         }
         *tried = 0;
         self.run_best(tried, ctx, child_count, active_child_index)
@@ -136,7 +147,7 @@ where
 }
 
 impl<F, S> Utility<F, S> {
-    #[inline(always)]
+    #[inline]
     fn run_best<C>(
         &self,
         tried: &mut u64,
