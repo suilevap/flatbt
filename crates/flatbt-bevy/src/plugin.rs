@@ -2,8 +2,10 @@ use bevy_app::{App, Plugin, Update};
 use bevy_ecs::component::Mutable;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
-use bevy_ecs::system::ParallelCommands;
+use bevy_utils::Parallel;
 
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use bevy_time::Time;
@@ -125,9 +127,9 @@ where
     /// Spreads agents across the task pool with [`Query::par_iter_mut`].
     ///
     /// A tree touches its own blackboard and its own act, both disjoint per
-    /// entity, so this needs no further declaration. Agents whose act appears
-    /// or disappears still go through a command, which is applied when the
-    /// schedule syncs. Iteration order becomes unspecified, which nothing in a
+    /// entity, so this needs no further declaration. Acts that appear or
+    /// disappear are queued per thread and applied right after the tick, as in
+    /// the serial one. Iteration order becomes unspecified, which nothing in a
     /// tree can observe.
     pub fn parallel(mut self) -> Self {
         self.parallel = true;
@@ -142,16 +144,22 @@ where
     F: TreeBuilder<C, A>,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(BehaviorTree::<C, A, F>::new(&self.builder, self.tick_mode));
+        app.insert_resource(BehaviorTree::<C, A, F>::new(&self.builder, self.tick_mode))
+            .insert_resource(ActChanges::<C, A, F>::default());
+        let apply = apply_act_changes::<C, A, F>.run_if(has_act_changes::<C, A, F>);
         if self.parallel {
             app.add_systems(
                 self.schedule,
-                tick_behaviors_parallel::<C, A, F>.in_set(BehaviorSystems),
+                (tick_behaviors_parallel::<C, A, F>, apply)
+                    .chain()
+                    .in_set(BehaviorSystems),
             );
         } else {
             app.add_systems(
                 self.schedule,
-                tick_behaviors::<C, A, F>.in_set(BehaviorSystems),
+                (tick_behaviors::<C, A, F>, apply)
+                    .chain()
+                    .in_set(BehaviorSystems),
             );
         }
     }
@@ -180,7 +188,7 @@ fn tick_behaviors<C, A, F>(
     tree: Res<BehaviorTree<C, A, F>>,
     time: Option<Res<Time>>,
     mut agents: Agents<C, A, F>,
-    mut commands: Commands,
+    changes: Res<ActChanges<C, A, F>>,
 ) where
     C: Component<Mutability = Mutable>,
     A: Component<Mutability = Mutable> + PartialEq,
@@ -188,8 +196,7 @@ fn tick_behaviors<C, A, F>(
 {
     let clock = clock(time.as_deref());
     for (entity, behavior, bb, held) in agents.iter_mut() {
-        let change = tick_agent(&tree, clock(entity), behavior, bb, held);
-        apply(change, entity, &mut commands);
+        changes.record(entity, tick_agent(&tree, clock(entity), behavior, bb, held));
     }
 }
 
@@ -198,7 +205,7 @@ fn tick_behaviors_parallel<C, A, F>(
     tree: Res<BehaviorTree<C, A, F>>,
     time: Option<Res<Time>>,
     mut agents: Agents<C, A, F>,
-    commands: ParallelCommands,
+    changes: Res<ActChanges<C, A, F>>,
 ) where
     C: Component<Mutability = Mutable>,
     A: Component<Mutability = Mutable> + PartialEq,
@@ -208,13 +215,7 @@ fn tick_behaviors_parallel<C, A, F>(
     agents
         .par_iter_mut()
         .for_each(|(entity, behavior, bb, held)| {
-            let change = tick_agent(&tree, clock(entity), behavior, bb, held);
-            // Only an act that appeared or went needs a command, and that is the
-            // rare case: an agent that keeps doing the same kind of thing had
-            // its act written in place above.
-            if !matches!(change, ActChange::Settled) {
-                commands.command_scope(|mut commands| apply(change, entity, &mut commands));
-            }
+            changes.record(entity, tick_agent(&tree, clock(entity), behavior, bb, held));
         });
 }
 
@@ -277,14 +278,81 @@ enum ActChange<A> {
     Gone,
 }
 
-fn apply<A: Component>(change: ActChange<A>, entity: Entity, commands: &mut Commands) {
-    match change {
-        ActChange::Settled => {}
-        ActChange::Appeared(act) => {
-            commands.entity(entity).try_insert(act);
-        }
-        ActChange::Gone => {
-            commands.entity(entity).try_remove::<A>();
+/// Acts that appeared or went during a tick, waiting for `apply_act_changes`.
+///
+/// Why not `Commands`: a system with deferred parameters makes Bevy's
+/// multi-threaded executor run `ApplyDeferred` every frame, which spawns a task
+/// and allocates whether or not anything was queued. Queues here are per
+/// thread, keep their capacity, and are applied by an exclusive system whose
+/// run condition skips it -- at no cost -- on the common frame where every act
+/// was only written in place.
+#[derive(Resource)]
+struct ActChanges<C, A: Send, F> {
+    queued: Parallel<Vec<(Entity, Option<A>)>>,
+    any: AtomicBool,
+    names: PhantomData<fn() -> (C, F)>,
+}
+
+impl<C, A: Send, F> Default for ActChanges<C, A, F> {
+    fn default() -> Self {
+        Self {
+            queued: Parallel::default(),
+            any: AtomicBool::new(false),
+            names: PhantomData,
         }
     }
+}
+
+impl<C, A: Send, F> ActChanges<C, A, F> {
+    fn record(&self, entity: Entity, change: ActChange<A>) {
+        let act = match change {
+            ActChange::Settled => return,
+            ActChange::Appeared(act) => Some(act),
+            ActChange::Gone => None,
+        };
+        self.queued.scope(|queue| queue.push((entity, act)));
+        self.any.store(true, Ordering::Relaxed);
+    }
+}
+
+fn has_act_changes<C, A, F>(changes: Res<ActChanges<C, A, F>>) -> bool
+where
+    C: Send + Sync + 'static,
+    A: Send + Sync + 'static,
+    F: TreeBuilder<C, A>,
+{
+    changes.any.load(Ordering::Relaxed)
+}
+
+/// Inserts acts that appeared and removes those that went.
+///
+/// Chained right after the tick inside [`BehaviorSystems`], so an act is up to
+/// date when the set ends, with no sync point needed.
+fn apply_act_changes<C, A, F>(world: &mut World)
+where
+    C: Send + Sync + 'static,
+    A: Component,
+    F: TreeBuilder<C, A>,
+{
+    world.resource_scope(|world, mut changes: Mut<ActChanges<C, A, F>>| {
+        *changes.any.get_mut() = false;
+        for queue in changes.queued.iter_mut() {
+            // `drain(..)` rather than `Parallel::drain`, which takes the vector
+            // and its capacity with it.
+            for (entity, act) in queue.drain(..) {
+                // Gone when a system despawned it after the tick.
+                let Ok(mut agent) = world.get_entity_mut(entity) else {
+                    continue;
+                };
+                match act {
+                    Some(act) => {
+                        agent.insert(act);
+                    }
+                    None => {
+                        agent.remove::<A>();
+                    }
+                }
+            }
+        }
+    });
 }
