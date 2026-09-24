@@ -12,7 +12,8 @@ pub use crate::{
     ChooseNode, Focus, IfElse, LeafWith, MapAct, Ordered, ReevaluateWhen, Remap, Repeat,
     RepeatWhile, Retry, Shuffled, Weighted, action, action_while, by_score, check_with, choose,
     focus, force_failure, force_success, if_else, invert, leaf_with, map_act, order_by,
-    reevaluate_when, repeat, repeat_while, retry, shuffled, utility, weighted,
+    random_select, reevaluate_when, repeat, repeat_while, retry, shuffle_seq, shuffled, utility,
+    weighted, weighted_select,
 };
 pub use crate::{
     BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, EntryMode,

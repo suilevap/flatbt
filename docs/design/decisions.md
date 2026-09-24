@@ -344,7 +344,9 @@ and `seq` visit the children in the order a `BtOrder` computes.
 | `shuffle_seq(rng, ..)` | `seq(order_by(shuffled(rng), ..))` |
 
 Combinations that had no node come free: `seq(order_by(by_score(..)))` runs
-everything best first. `utility!` stays, expanding to the first row.
+everything best first. The four old names stay as shorthand functions, each
+exactly the composition in its row, so the common cases stay short while
+`order_by` is the one implementation; `utility!` expands to the first row.
 
 - **Controls stay unchanged.** Wrapping the children rather than the policy
   means no `select_by`/`seq_by`: the control is the one already known, and so

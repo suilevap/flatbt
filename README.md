@@ -188,12 +188,16 @@ them in that order until one succeeds, `seq` runs them all in that order.
 | `shuffled(rng)` | In a random order. |
 | `weighted(rng, \|bb: &C, index\| weight)` | In a random order drawn by weight. |
 
-```rust,ignore
-select(order_by(by_score(score), children))    // utility selector
-select(order_by(shuffled(rng), children))      // random selector
-seq(order_by(shuffled(rng), children))         // shuffled sequence
-select(order_by(weighted(rng, weight), children))
-```
+| Composition | Shorthand |
+| --- | --- |
+| `select(order_by(by_score(score), children))` | `utility(score, children)` |
+| `select(order_by(shuffled(rng), children))` | `random_select(rng, children)` |
+| `select(order_by(weighted(rng, weight), children))` | `weighted_select(rng, weight, children)` |
+| `seq(order_by(shuffled(rng), children))` | `shuffle_seq(rng, children)` |
+
+The shorthands are exactly their compositions. Anything else, such as
+`seq(order_by(by_score(score), children))` to run every child best first, or a
+score order with `.inertia(x)`, is written out.
 
 The order is computed again whenever the control goes back to its first child
 under `Evaluate`: `select` does on every `Evaluate`, so a better-scoring child

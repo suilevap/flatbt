@@ -21,8 +21,8 @@ pub use function::{ActionWhile, CheckWith, LeafWith, action_while, check_with, l
 pub use if_else::{IfElse, if_else};
 pub use map_act::{MapAct, map_act};
 pub use order::{
-    BtOrder, ByScore, Ordered, OrderedState, Shuffled, Weighted, by_score, order_by, shuffled,
-    weighted,
+    BtOrder, ByScore, Ordered, OrderedState, Shuffled, Weighted, by_score, order_by, random_select,
+    shuffle_seq, shuffled, utility, weighted, weighted_select,
 };
 pub use reevaluate::{ReevaluateWhen, reevaluate_when};
 pub use remap::{Remap, force_failure, force_success, invert};

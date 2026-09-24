@@ -187,16 +187,16 @@ fn nan_skips_a_child_and_ties_go_to_the_first() {
 
 #[test]
 fn integer_scores_make_a_dynamic_priority_selector() {
-    let tree = select(order_by(
-        by_score(|alarm: &u8, index: usize| match index {
+    let tree = utility(
+        |alarm: &u8, index: usize| match index {
             0 => *alarm,
             _ => 1,
-        }),
+        },
         (
             leaf(|_: &mut u8| NodeResult::Running("fight")),
             leaf(|_: &mut u8| NodeResult::Running("patrol")),
         ),
-    ));
+    );
     let mut state = BtState::new(&tree);
     let mut alarm = 0;
 
@@ -311,7 +311,7 @@ fn die(index: usize) -> impl BtNode<Dice, usize> {
 }
 
 fn shuffled_select() -> impl BtNode<Dice, usize> {
-    select(order_by(shuffled(roll), (die(0), die(1), die(2), die(3))))
+    random_select(roll, (die(0), die(1), die(2), die(3)))
 }
 
 #[test]
@@ -394,10 +394,7 @@ fn a_shuffled_sequence_runs_every_child_once() {
             }
         })
     };
-    let tree = seq(order_by(
-        shuffled(roll),
-        (step(0), step(1), step(2), step(3)),
-    ));
+    let tree = shuffle_seq(roll, (step(0), step(1), step(2), step(3)));
     let mut dice = Dice {
         seed: 3,
         ..Dice::default()
@@ -426,10 +423,7 @@ fn a_shuffled_sequence_runs_every_child_once() {
 #[test]
 fn weighted_order_follows_weights_and_leaves_out_non_positive_ones() {
     let weights = |_: &Dice, index: usize| [0.0, 1.0, 3.0, f32::NAN][index];
-    let tree = select(order_by(
-        weighted(roll, weights),
-        (die(0), die(1), die(2), die(3)),
-    ));
+    let tree = weighted_select(roll, weights, (die(0), die(1), die(2), die(3)));
     let mut firsts = [0u32; 4];
     for seed in 0..4000 {
         let mut dice = Dice {

@@ -28,7 +28,7 @@ mod score;
 pub use random::{Shuffled, Weighted, shuffled, weighted};
 pub use score::{ByScore, by_score};
 
-use crate::{BtChildren, EntryMode, NodeResult};
+use crate::{BtChildren, ControlNode, EntryMode, NodeResult, Selector, Sequence, select, seq};
 
 /// Children used in an invocation are one bit each in a `u64`.
 const MAX_CHILDREN: usize = 64;
@@ -182,4 +182,44 @@ impl<O, Children> Ordered<O, Children> {
         state.at = Some((position as u8, child));
         child
     }
+}
+
+// Shorthands for the common pairings. Each is exactly the composition it names.
+
+/// `select(order_by(by_score(score), children))`: a utility selector. For
+/// inertia, write the composition with `by_score(score).inertia(x)`, or use
+/// [`crate::utility!`].
+pub fn utility<F, S, Children>(
+    score: F,
+    children: Children,
+) -> ControlNode<Selector, Ordered<ByScore<F, S>, Children>> {
+    select(order_by(by_score(score), children))
+}
+
+/// `select(order_by(shuffled(rng), children))`: runs a random child, falling
+/// back to a random one of the rest.
+pub fn random_select<R, Children>(
+    rng: R,
+    children: Children,
+) -> ControlNode<Selector, Ordered<Shuffled<R>, Children>> {
+    select(order_by(shuffled(rng), children))
+}
+
+/// `select(order_by(weighted(rng, weight), children))`: runs a child drawn by
+/// weight, falling back to one drawn from the rest.
+pub fn weighted_select<R, W, Children>(
+    rng: R,
+    weight: W,
+    children: Children,
+) -> ControlNode<Selector, Ordered<Weighted<R, W>, Children>> {
+    select(order_by(weighted(rng, weight), children))
+}
+
+/// `seq(order_by(shuffled(rng), children))`: runs every child in a random
+/// order.
+pub fn shuffle_seq<R, Children>(
+    rng: R,
+    children: Children,
+) -> ControlNode<Sequence, Ordered<Shuffled<R>, Children>> {
+    seq(order_by(shuffled(rng), children))
 }
