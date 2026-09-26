@@ -1,10 +1,12 @@
-"""Charts from `flatbt-compare scaling` output.
+"""Charts from `flatbt-compare scaling` and `flatbt-compare memory` output.
 
     cargo run --release -- scaling > charts/scaling.tsv
-    python3 charts/plot.py charts/scaling.tsv charts/
+    cargo run --release -- memory > charts/memory.tsv
+    python3 charts/plot.py charts/ charts/
 
 Writes scaling.png (time per agent-tick against population size, one panel per
-scenario) and memory.png (bytes per agent). Needs matplotlib.
+scenario), memory.png (bytes per agent) and heap.png (total memory held and
+heap allocations while ticking). Needs matplotlib.
 """
 
 import csv
@@ -213,11 +215,114 @@ def memory_chart(data, out):
     fig.savefig(out)
 
 
+def load_memory(path):
+    data = defaultdict(dict)  # (scenario, lib) -> {agents: row}
+    with open(path) as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            data[(row["scenario"], row["lib"])][int(row["agents"])] = {
+                key: float(value) for key, value in row.items() if key not in ("scenario", "lib")
+            }
+    return data
+
+
+def bytes_label(value):
+    for unit, size in (("GB", 1e9), ("MB", 1e6), ("KB", 1e3)):
+        if value >= size:
+            return f"{value / size:.0f} {unit}" if value / size >= 10 else f"{value / size:.1f} {unit}"
+    return f"{value:.0f} B"
+
+
+def heap_chart(data, out):
+    fig = plt.figure(figsize=(11, 8.2), dpi=150)
+    grid = fig.add_gridspec(2, 2, height_ratios=(1.15, 1), hspace=0.55, wspace=0.28)
+    top = [fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])]
+    bottom = fig.add_subplot(grid[1, :])
+
+    y_ticks = [1, 1e3, 1e6, 1e9]
+    for ax, scenario, title in (
+        (top[0], "soldier", "soldier · memory held by all agents' trees"),
+        (top[1], "villager", "villager · memory held by all agents' trees"),
+    ):
+        style(ax)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(0.6, 6e6)
+        ax.set_ylim(0.5, 3e10)
+        ax.xaxis.set_major_locator(FixedLocator(AGENTS))
+        ax.xaxis.set_minor_locator(NullLocator())
+        ax.set_xticklabels(AGENT_LABELS)
+        ax.yaxis.set_major_locator(FixedLocator(y_ticks))
+        ax.yaxis.set_minor_locator(NullLocator())
+        ax.set_yticklabels(["1 B", "1 KB", "1 MB", "1 GB"])
+        ax.set_title(title, loc="left", fontsize=10, fontweight="bold", pad=8)
+        ax.set_xlabel("agents", fontsize=8)
+        ends = []
+        for lib, color, marker in LIBS:
+            points = data.get((scenario, lib))
+            if not points:
+                continue
+            xs = sorted(points)
+            ys = [max(points[x]["agents_bytes"], 1) for x in xs]
+            ax.plot(xs, ys, color=color, linewidth=1.3, marker=marker, markersize=4.5,
+                    markeredgecolor=SURFACE, markeredgewidth=0.8,
+                    zorder=3 if lib == "flatbt" else 2)
+            ends.append((lib, xs[-1], ys[-1]))
+        placed = declutter([math.log10(y) for _, _, y in ends], 0.55)
+        for (lib, x, y), ly in zip(ends, placed):
+            ax.annotate(f"{lib} {bytes_label(y)}", xy=(x, y), xytext=(x * 1.35, 10**ly),
+                        fontsize=7, color=INK_2, va="center",
+                        arrowprops=dict(arrowstyle="-", color=AXIS, linewidth=0.5, shrinkA=0, shrinkB=2)
+                        if abs(ly - math.log10(y)) > 0.05 else None)
+    top[0].set_ylabel("bytes (log)", fontsize=8)
+
+    # Allocations per tick are a property of one agent's run, not of the
+    # population: read them from the one-agent run, 200k ticks in steady state.
+    style(bottom)
+    bottom.grid(False, axis="x")
+    width = 0.16
+    peak = 0.0
+    for i, (lib, color, _) in enumerate(LIBS):
+        for j, (scenario, _) in enumerate(SCENARIOS):
+            points = data.get((scenario, lib))
+            x = j + (i - 2) * width
+            if not points:
+                bottom.text(x, 0.15, "–", ha="center", va="bottom", fontsize=8, color=MUTED)
+                continue
+            value = points[1]["allocs_per_agent_tick"]
+            peak = max(peak, value)
+            if value > 0:
+                bottom.bar(x, value, width=width, color=color, edgecolor=SURFACE, linewidth=1.2, zorder=2)
+                bottom.text(x, value + 0.25, f"{value:.2f}" if value < 10 else f"{value:.0f}",
+                            ha="center", va="bottom", fontsize=7, color=INK_2)
+            else:
+                bottom.text(x, 0.15, "0", ha="center", va="bottom", fontsize=7.5, color=INK_2)
+    bottom.set_xticks(range(len(SCENARIOS)))
+    bottom.set_xticklabels([name for name, _ in SCENARIOS], color=INK_2, fontsize=9)
+    bottom.set_ylim(0, peak * 1.2)
+    bottom.set_xlim(-0.6, len(SCENARIOS) - 0.4)
+    bottom.set_ylabel("allocations per agent-tick", fontsize=8)
+    bottom.set_title("Heap allocations per agent-tick (steady state; – : cannot express the tree)",
+                     loc="left", fontsize=10, fontweight="bold", pad=8)
+    handles = [Line2D([], [], color=c, marker=m, linewidth=1.3, markersize=5.5,
+                      markeredgecolor=SURFACE, label=lib) for lib, c, m in LIBS]
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=8.5,
+               labelcolor=INK, bbox_to_anchor=(0.5, 0.0))
+    fig.suptitle("Where the heap goes", x=0.06, y=0.985, ha="left", fontsize=13,
+                 fontweight="bold", color=INK)
+    fig.text(0.06, 0.935,
+             "Tree runtimes only; each agent's 264-byte world state is excluded. "
+             "Populations over 3 GB are skipped. FlatBT main 1818c17.",
+             fontsize=8.5, color=INK_2)
+    fig.subplots_adjust(left=0.08, right=0.9, top=0.87, bottom=0.12)
+    fig.savefig(out)
+
+
 def main():
-    source, out_dir = sys.argv[1], sys.argv[2].rstrip("/")
-    data = load(source)
+    source, out_dir = sys.argv[1].rstrip("/"), sys.argv[2].rstrip("/")
+    data = load(f"{source}/scaling.tsv")
     scaling_chart(data, f"{out_dir}/scaling.png")
     memory_chart(data, f"{out_dir}/memory.png")
+    heap_chart(load_memory(f"{source}/memory.tsv"), f"{out_dir}/heap.png")
 
 
 if __name__ == "__main__":
