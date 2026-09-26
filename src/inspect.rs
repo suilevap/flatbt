@@ -248,6 +248,62 @@ pub struct Describe<'a, N: BtNode<C, A>, C, A = ()> {
     context: PhantomData<fn(&mut C) -> A>,
 }
 
+/// A fingerprint of the running path: equal while the same nodes run, and in
+/// practice different when any node enters or leaves it. Field values are left
+/// out, so a scope local changing does not change it.
+///
+/// For logging only on change: keep the last id, and write
+/// [`describe`] when a new one differs. Compare ids of one tree only.
+///
+/// ```
+/// use flatbt::prelude::*;
+///
+/// let tree = select((
+///     guard(|n: &u32| *n < 2, leaf(|_: &mut u32| NodeResult::RUNNING)),
+///     leaf(|_: &mut u32| NodeResult::RUNNING),
+/// ));
+/// let mut state = BtState::new(&tree);
+/// let mut n = 0;
+/// let mut logged = Vec::new();
+/// let mut last = None;
+/// for _ in 0..4 {
+///     let _ = update(&tree, &mut state, &mut n, EntryMode::Evaluate);
+///     if last.replace(state.path_id()) != Some(state.path_id()) {
+///         logged.push(state.describe().to_string());
+///     }
+///     n += 1;
+/// }
+/// assert_eq!(logged, ["select > guard > leaf", "select > leaf"]);
+/// ```
+pub fn path_id<C, A, N: BtNode<C, A>>(node: &N, state: Option<&N::State>) -> u64 {
+    let mut hash = PathHash(0xcbf2_9ce4_8422_2325);
+    node.inspect(state, &mut hash);
+    hash.0
+}
+
+/// FNV-1a over the path's structure: which nodes are entered, in order.
+/// Inactive siblings count too, so the position of an active child does.
+struct PathHash(u64);
+
+impl PathHash {
+    fn feed(&mut self, byte: u8) {
+        self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+}
+
+impl Inspector for PathHash {
+    fn enter(&mut self, node: NodeInfo<'_>) -> bool {
+        self.feed(if node.active { 1 } else { 2 });
+        node.active
+    }
+
+    fn field(&mut self, _: &str, _: &dyn fmt::Debug) {}
+
+    fn exit(&mut self) {
+        self.feed(3);
+    }
+}
+
 /// Describes `node` over `state`, for a driver holding state without a
 /// [`BtState`](crate::BtState), such as the slot [`update_slot`](crate::update_slot)
 /// takes.

@@ -65,3 +65,36 @@ fn an_agent_describes_its_running_path() {
         "select > reload (leaf)"
     );
 }
+
+#[test]
+fn a_debugged_agent_is_marked_changed_only_when_its_path_changes() {
+    #[derive(Resource, Default)]
+    struct Log(Vec<String>);
+
+    fn log(agents: Query<&DebugBehavior, Changed<DebugBehavior>>, mut log: ResMut<Log>) {
+        log.0
+            .extend(agents.iter().map(|debug| debug.path().to_owned()));
+    }
+
+    let mut app = App::new();
+    app.add_plugins(BehaviorPlugin::for_tree(shoot))
+        .init_resource::<Log>()
+        .add_systems(Update, log.after(BehaviorSystems));
+    let agent = app
+        .world_mut()
+        .spawn((
+            Guard { ammo: 2 },
+            Behavior::for_tree(shoot),
+            DebugBehavior::default(),
+        ))
+        .id();
+    app.update();
+    app.update();
+    app.world_mut().get_mut::<Guard>(agent).unwrap().ammo = 0;
+    app.update();
+    app.update();
+    assert_eq!(
+        app.world().resource::<Log>().0,
+        ["select > has_ammo (guard) > leaf", "select > reload (leaf)"]
+    );
+}

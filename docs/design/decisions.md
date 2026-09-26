@@ -413,3 +413,9 @@ See [Inspection](inspect.md).
 - **Names from `type_name`** of function items and node types; closures stay
   anonymous. `.named(..)` covers the rest. Locations were rejected.
 - **Labels apart from names**, so `choose!` patterns do not hide names.
+- **`path_id` for change-only logs**, not a stored trace: it costs one walk when
+  asked and nothing otherwise.
+- **Execution tracing (results of every node per update) deferred.** It would
+  need hooks in `update`; the path views answer "what is it doing" without them.
+- **Bevy debugging is a marker component**, not a Cargo feature or a
+  `bevy_log` dependency: unmarked agents cost an empty query.

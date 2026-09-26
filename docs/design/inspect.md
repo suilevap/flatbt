@@ -62,6 +62,24 @@ expansion, and `..` otherwise. An unset local reports `unset`.
 sequence's children in its place: initializers show as `name (compute)`
 siblings of the body rather than under an extra `seq`.
 
+## Change detection
+
+`path_id` hashes the walk with FNV-1a: one byte per enter (active or not) and
+per exit, no names or fields. Inactive siblings are fed too, so the position of
+the active child is part of the id. Field values are left out so a counter or a
+local does not make every tick a change; the text still shows them.
+
+Bevy's `DebugBehavior` builds on it: the plugin rewrites the text every tick
+with change detection bypassed, and calls `set_changed` only when the id
+differs. Only agents carrying the component are described, so no feature gate.
+
+## Actions
+
+`BtAction::inspect(&self, Option<&State>, inspector)` defaults to nothing.
+`ActionNode` calls it inside its own node, with the state once started. There is
+no `Debug` bound on action state, and generic code cannot test for one, so the
+action says what to show.
+
 ## Text
 
 `Describe` implements `Display`: one line with ` > ` for `{}`, indented lines

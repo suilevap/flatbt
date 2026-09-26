@@ -19,18 +19,25 @@ fn sees_enemy(world: &World) -> bool {
 struct Walk;
 
 impl BtAction<World, Act, &u32> for Walk {
-    type State = ();
+    /// Where the walk is headed, fixed on start.
+    type State = u32;
 
-    fn start(&self, _: &mut World, _: &u32) -> Option<()> {
-        Some(())
+    fn start(&self, _: &mut World, target: &u32) -> Option<u32> {
+        Some(*target)
     }
 
-    fn is_in_progress(&self, _: &(), world: &World, target: &u32) -> bool {
-        world.at != *target
+    fn is_in_progress(&self, to: &u32, world: &World, _: &u32) -> bool {
+        world.at != *to
     }
 
-    fn tick(&self, _: &mut (), _: &mut World, target: &u32) -> Act {
-        Act::Walk(*target)
+    fn tick(&self, to: &mut u32, _: &mut World, _: &u32) -> Act {
+        Act::Walk(*to)
+    }
+
+    fn inspect(&self, to: Option<&u32>, inspector: &mut dyn Inspector) {
+        if let Some(to) = to {
+            inspector.field("to", to);
+        }
     }
 }
 
@@ -71,7 +78,7 @@ fn the_running_path_is_one_line_with_names_from_code() {
     );
     assert_eq!(
         state.describe().to_string(),
-        "select > chase (scope) {target: 5, unused: unset} > seq > Walk (action)"
+        "select > chase (scope) {target: 5, unused: unset} > seq > Walk (action) {to: 5}"
     );
 }
 
@@ -89,7 +96,7 @@ fn the_alternate_form_writes_one_node_per_line() {
         "select\n\
          \x20 chase (scope) {target: 5, unused: unset}\n\
          \x20   seq\n\
-         \x20     Walk (action)"
+         \x20     Walk (action) {to: 5}"
     );
 }
 
@@ -237,4 +244,31 @@ fn orders_report_their_position_and_the_children_tried() {
         state.describe().to_string(),
         "select {order: by_score, position: 1, tried: {0}} > needs.fatigue => leaf"
     );
+}
+
+#[test]
+fn the_path_id_changes_with_the_path_and_not_with_fields() {
+    let tree = tree();
+    let mut state = BtState::new(&tree);
+    let idle = state.path_id();
+    let mut world = World {
+        enemy: Some(5),
+        at: 0,
+    };
+    let _ = update(&tree, &mut state, &mut world, EntryMode::Evaluate);
+    let chasing = state.path_id();
+    assert_ne!(chasing, idle);
+
+    // A new target is a field, not a new path.
+    world.enemy = Some(7);
+    state.reset();
+    let _ = update(&tree, &mut state, &mut world, EntryMode::Evaluate);
+    assert!(state.describe().to_string().contains("target: 7"));
+    assert_eq!(state.path_id(), chasing);
+
+    world.enemy = None;
+    state.reset();
+    let _ = update(&tree, &mut state, &mut world, EntryMode::Evaluate);
+    assert_ne!(state.path_id(), chasing);
+    assert_ne!(state.path_id(), idle);
 }

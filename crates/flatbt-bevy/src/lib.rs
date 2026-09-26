@@ -119,12 +119,14 @@
 
 #![forbid(unsafe_code)]
 
+mod debug;
 mod plugin;
 mod stagger;
 mod tree;
 
 pub mod prelude;
 
+pub use debug::DebugBehavior;
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
 pub use stagger::{act_every, evaluate_every};
 pub use tree::{

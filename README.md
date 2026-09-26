@@ -576,8 +576,27 @@ whose type is not `Debug` show as `..`.
 another format, implement `inspect::Inspector` and pass it to
 `state.inspect(..)`. A driver using `update_slot` calls
 `inspect::describe(&tree, slot.as_ref())`; a Bevy agent,
-`behavior.describe(tree.get())`. Custom nodes show under their type name; a
-composing node overrides `BtNode::inspect` to report its children.
+`behavior.describe(tree.get())`.
+
+`state.path_id()` fingerprints the running path, ignoring field values: log
+`describe()` only when it differs from the last tick's, and a log holds one
+line per decision.
+
+Custom nodes show under their type name; a composing node overrides
+`BtNode::inspect` to report its children. An action reports its own fields by
+overriding `BtAction::inspect`:
+
+```rust,ignore
+fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    if let Some(walk) = state {
+        inspector.field("to", &walk.target); // Walk (action) {to: 5}
+    }
+}
+```
+
+In Bevy, add `DebugBehavior` to an agent. The plugin keeps its path text
+current after each tick and marks it changed only when the path changes, so
+`Query<&DebugBehavior, Changed<DebugBehavior>>` logs decisions, not frames.
 
 ## Custom nodes
 

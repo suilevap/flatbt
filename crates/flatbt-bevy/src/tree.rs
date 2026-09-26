@@ -5,7 +5,7 @@ use core::time::Duration;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
-use flatbt::inspect::{Describe, describe};
+use flatbt::inspect::{Describe, describe, path_id};
 use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 
 /// A tree that can drive agents whose blackboard is `C` and whose decisions are
@@ -299,6 +299,12 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     /// [`Describe`]. `tree` is the definition from [`BehaviorTree::get`].
     pub fn describe<'a>(&'a self, tree: &'a F::Tree) -> Describe<'a, F::Tree, C, A> {
         describe(tree, self.state.as_ref())
+    }
+
+    /// A fingerprint of this agent's running path, to act only when it
+    /// changes. See [`path_id`].
+    pub fn path_id(&self, tree: &F::Tree) -> u64 {
+        path_id(tree, self.state.as_ref())
     }
 
     /// Runs one update and hands back what the agent is now doing.
