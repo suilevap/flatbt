@@ -247,7 +247,7 @@ def heap_chart(data, out):
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(0.6, 6e6)
-        ax.set_ylim(0.5, 3e10)
+        ax.set_ylim(0.5, 3e11)
         ax.xaxis.set_major_locator(FixedLocator(AGENTS))
         ax.xaxis.set_minor_locator(NullLocator())
         ax.set_xticklabels(AGENT_LABELS)
@@ -267,7 +267,7 @@ def heap_chart(data, out):
                     markeredgecolor=SURFACE, markeredgewidth=0.8,
                     zorder=3 if lib == "flatbt" else 2)
             ends.append((lib, xs[-1], ys[-1]))
-        placed = declutter([math.log10(y) for _, _, y in ends], 0.55)
+        placed = declutter([math.log10(y) for _, _, y in ends], 0.6)
         for (lib, x, y), ly in zip(ends, placed):
             ax.annotate(f"{lib} {bytes_label(y)}", xy=(x, y), xytext=(x * 1.35, 10**ly),
                         fontsize=7, color=INK_2, va="center",
