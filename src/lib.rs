@@ -83,7 +83,7 @@ pub use nodes::{
     weighted_select,
 };
 pub(crate) use runtime::log_error;
-pub use runtime::{BtNode, BtState, EntryMode, NodeResult, update, update_slot};
+pub use runtime::{BtNode, BtState, Entry, EntryMode, NodeResult, update, update_slot};
 #[cfg(feature = "std")]
 pub use runtime::{ErrorHandler, set_error_handler};
 

@@ -1,5 +1,5 @@
 use crate::inspect::{Inspector, NodeInfo};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// Owns invocation-local data outside application context.
 pub struct Scope<L, N> {
@@ -42,8 +42,14 @@ where
 {
     type State = ScopeState<L, S>;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult<A> {
-        BtNode::<C, A, &mut L>::update(&self.child, &mut state.child, ctx, &mut state.locals, mode)
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        _: P,
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
+        BtNode::<C, A, &mut L>::update(&self.child, &mut state.child, ctx, &mut state.locals, entry)
     }
 
     fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
@@ -76,7 +82,7 @@ impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
         _: &mut (),
         ctx: &mut C,
         output: &mut Option<T>,
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult<A> {
         *output = Some((self.0)(ctx));
         NodeResult::Success

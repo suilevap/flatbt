@@ -36,7 +36,7 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// One node, as reported to an [`Inspector`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,9 +141,9 @@ impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Named<N> {
         state: &mut N::State,
         ctx: &mut C,
         params: P,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
-        self.node.update(state, ctx, params, mode)
+        self.node.update(state, ctx, params, entry)
     }
 
     fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
@@ -432,7 +432,7 @@ pub mod __private {
     use core::fmt;
 
     use super::{Inspector, NodeInfo};
-    use crate::{BtNode, EntryMode, NodeResult};
+    use crate::{BtNode, Entry, NodeResult};
 
     /// Runs `N`; reports its children in its place, as children of the parent.
     pub struct Inline<N>(pub N);
@@ -446,9 +446,9 @@ pub mod __private {
             state: &mut N::State,
             ctx: &mut C,
             params: P,
-            mode: EntryMode,
+            entry: Entry<'_>,
         ) -> NodeResult<A> {
-            self.0.update(state, ctx, params, mode)
+            self.0.update(state, ctx, params, entry)
         }
 
         fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {

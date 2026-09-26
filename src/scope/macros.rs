@@ -17,12 +17,12 @@
 /// Parameter tuple limit: `FLATBT_MAX_PARAMS`.
 ///
 /// ```
-/// use flatbt::{BtNode, BtState, EntryMode, NodeResult, update};
+/// use flatbt::{BtNode, BtState, Entry, EntryMode, NodeResult, update};
 /// use flatbt::scope::scope;
 /// struct Observe;
 /// impl BtNode<Vec<u32>, (), &u32> for Observe {
 ///     type State = ();
-///     fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: EntryMode) -> NodeResult {
+///     fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: Entry<'_>) -> NodeResult {
 ///         ctx.push(*input);
 ///         NodeResult::Success
 ///     }
@@ -44,12 +44,12 @@
 /// Two exclusive parameters cannot borrow the same slot:
 ///
 /// ```compile_fail,E0499
-/// use flatbt::{BtNode, BtState, EntryMode, NodeResult};
+/// use flatbt::{BtNode, BtState, Entry, NodeResult};
 /// use flatbt::scope::scope;
 /// struct TwoOutputs;
 /// impl BtNode<(), (), (&mut Option<u32>, &mut Option<u32>)> for TwoOutputs {
 ///     type State = ();
-///     fn update(&self, _: &mut (), _: &mut (), _: (&mut Option<u32>, &mut Option<u32>), _: EntryMode) -> NodeResult {
+///     fn update(&self, _: &mut (), _: &mut (), _: (&mut Option<u32>, &mut Option<u32>), _: Entry<'_>) -> NodeResult {
 ///         NodeResult::Success
 ///     }
 /// }

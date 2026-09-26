@@ -123,7 +123,7 @@ struct WalkTo;
 impl BtNode<Guard, Act, &f32> for WalkTo {
     type State = ();
 
-    fn update(&self, _: &mut (), _: &mut Guard, spot: &f32, _: EntryMode) -> NodeResult<Act> {
+    fn update(&self, _: &mut (), _: &mut Guard, spot: &f32, _: Entry<'_>) -> NodeResult<Act> {
         NodeResult::Running(Act::WalkingTo(*spot))
     }
 }

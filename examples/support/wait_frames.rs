@@ -1,4 +1,4 @@
-use flatbt::{BtNode, EntryMode, NodeResult};
+use flatbt::{BtNode, Entry, NodeResult};
 
 /// Counts updates until completion. No wall-clock timing or tick required.
 pub struct WaitFrames(usize);
@@ -12,7 +12,7 @@ pub fn wait_frames(frames: usize) -> WaitFrames {
 impl<C> BtNode<C> for WaitFrames {
     type State = usize;
 
-    fn update(&self, elapsed: &mut usize, _: &mut C, _: (), _: EntryMode) -> NodeResult {
+    fn update(&self, elapsed: &mut usize, _: &mut C, _: (), _: Entry<'_>) -> NodeResult {
         if *elapsed < self.0 {
             *elapsed += 1;
             NodeResult::RUNNING

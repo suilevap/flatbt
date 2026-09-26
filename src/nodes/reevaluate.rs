@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult, ReadFn};
+use crate::{BtNode, Entry, EntryMode, NodeResult, ReadFn};
 
 /// A child resumed as Evaluate while a condition holds.
 pub struct ReevaluateWhen<F, N, M> {
@@ -37,16 +37,16 @@ where
     type State = S;
 
     #[inline]
-    fn update(&self, state: &mut S, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
+    fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
-        let mode = if mode == EntryMode::Resume
+        let entry = if entry.mode() == EntryMode::Resume
             && self.condition.call(ctx, P::Shape::reborrow(&mut params))
         {
-            EntryMode::Evaluate
+            entry.with_mode(EntryMode::Evaluate)
         } else {
-            mode
+            entry
         };
-        self.child.update(state, ctx, params, mode)
+        self.child.update(state, ctx, params, entry)
     }
 
     fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {

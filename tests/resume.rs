@@ -4,7 +4,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use flatbt::{BtNode, EntryMode, NodeResult, check, control, leaf, select, seq};
+use flatbt::{BtNode, Entry, EntryMode, NodeResult, check, control, leaf, select, seq};
 
 #[path = "../examples/support/mod.rs"]
 mod support;
@@ -112,9 +112,9 @@ impl BtNode<Vec<EntryMode>> for SuspendOnce {
         state: &mut OwnedState,
         modes: &mut Vec<EntryMode>,
         _: (),
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult {
-        modes.push(mode);
+        modes.push(entry.mode());
         if state.drops.is_none() {
             state.drops = Some(self.0.clone());
             Running
@@ -301,12 +301,12 @@ fn composed_state_drops_descendants_before_parents() {
             state: &mut Self::State,
             trace: &mut Trace,
             _: (),
-            mode: EntryMode,
+            entry: Entry<'_>,
         ) -> NodeResult {
             state
                 .lease
                 .get_or_insert_with(|| Lease(self.name, trace.clone()));
-            self.child.update(&mut state.child, trace, (), mode)
+            self.child.update(&mut state.child, trace, (), entry)
         }
     }
 

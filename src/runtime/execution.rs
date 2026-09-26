@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::inspect::{Describe, Inspector, describe, path_id};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, EntryMode, NodeResult};
 
 /// Per-agent state bound to a borrowed root. Includes descendant state.
 pub struct BtState<'root, N: BtNode<C, A>, C, A = ()> {
@@ -103,7 +103,12 @@ pub fn update_slot<C, A, N: BtNode<C, A>>(
     } else {
         mode
     };
-    let result = node.update(slot.get_or_insert_with(Default::default), ctx, (), mode);
+    let result = node.update(
+        slot.get_or_insert_with(Default::default),
+        ctx,
+        (),
+        Entry::new(mode),
+    );
     if !result.is_running() {
         *slot = None;
     }

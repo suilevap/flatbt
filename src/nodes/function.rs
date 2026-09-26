@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult, ReadFn};
+use crate::{BtNode, Entry, NodeResult, ReadFn};
 
 /// Stateless callable that also receives parameters.
 pub struct LeafWith<F>(F);
@@ -38,7 +38,7 @@ impl<C, A, P, F: Fn(&mut C, P) -> NodeResult<A>> BtNode<C, A, P> for LeafWith<F>
     type State = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
+    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: Entry<'_>) -> NodeResult<A> {
         (self.0)(ctx, params)
     }
 
@@ -61,7 +61,7 @@ impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
     type State = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
+    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: Entry<'_>) -> NodeResult<A> {
         if (self.0)(ctx, params) {
             NodeResult::Success
         } else {
@@ -144,7 +144,7 @@ where
     type State = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: EntryMode) -> NodeResult<A> {
+    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
         if self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
             NodeResult::Running(self.act.call(ctx, params))

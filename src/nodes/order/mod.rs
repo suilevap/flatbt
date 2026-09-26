@@ -32,7 +32,8 @@ pub use score::{ByScore, by_score};
 use crate::inspect::{Inspector, type_label};
 use crate::params::ParamShape;
 use crate::{
-    BtChildren, ControlNode, ControlOp, EntryMode, NodeResult, Selector, Sequence, select, seq,
+    BtChildren, ControlNode, ControlOp, Entry, EntryMode, NodeResult, Selector, Sequence, select,
+    seq,
 };
 
 /// Children used in an invocation are one bit each in a `u64`.
@@ -138,7 +139,7 @@ where
         first: usize,
         ctx: &mut C,
         params: &mut S::Value<'_>,
-        mode: EntryMode,
+        entry: Entry<'_>,
         next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
     ) -> Result<NodeResult<A>, ControlOp> {
         // The child count is static, so too many is a build error, not a check
@@ -151,7 +152,7 @@ where
         };
         let mut position = first;
         loop {
-            let succeeded = match self.child_at(state, position, ctx, mode) {
+            let succeeded = match self.child_at(state, position, ctx, entry) {
                 Ok(Some(child)) => {
                     // One child at a time: the order, not the tuple, decides
                     // which child the next position holds.
@@ -165,7 +166,7 @@ where
                         child as usize,
                         ctx,
                         params,
-                        mode,
+                        entry,
                         &mut stop,
                     ) {
                         Ok(running) => return Ok(running),
@@ -226,7 +227,7 @@ impl<O, Children> Ordered<O, Children> {
         state: &mut OrderedState<O::State, Children::State>,
         position: usize,
         ctx: &mut C,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> Result<Option<u8>, ()>
     where
         S: ParamShape,
@@ -236,7 +237,7 @@ impl<O, Children> Ordered<O, Children> {
         Ok(match state.at {
             // A new pass: on entry, or Evaluate back at the start.
             None if position == 0 => self.pick::<C, A, S>(state, ctx, 0),
-            _ if position == 0 && mode == EntryMode::Evaluate => {
+            _ if position == 0 && entry.mode() == EntryMode::Evaluate => {
                 self.pick::<C, A, S>(state, ctx, 0)
             }
             // The same position again: Resume, or Evaluate continuing it.

@@ -25,7 +25,7 @@ impl Drop for PendingState {
 impl BtNode<usize> for Pending {
     type State = PendingState;
 
-    fn update(&self, state: &mut PendingState, _: &mut usize, _: (), _: EntryMode) -> NodeResult {
+    fn update(&self, state: &mut PendingState, _: &mut usize, _: (), _: Entry<'_>) -> NodeResult {
         state.0.get_or_insert_with(|| self.0.clone());
         NodeResult::RUNNING
     }
@@ -70,7 +70,7 @@ fn adding_alternatives_does_not_multiply_persistent_state_size() {
     impl BtNode<()> for Wide {
         type State = [u64; 32];
 
-        fn update(&self, _: &mut Self::State, _: &mut (), _: (), _: EntryMode) -> NodeResult {
+        fn update(&self, _: &mut Self::State, _: &mut (), _: (), _: Entry<'_>) -> NodeResult {
             NodeResult::RUNNING
         }
     }
@@ -96,7 +96,7 @@ fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
     impl BtNode<Vec<u32>, (), &u32> for Observe {
         type State = ();
 
-        fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: EntryMode) -> NodeResult {
+        fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: Entry<'_>) -> NodeResult {
             ctx.push(*input);
             NodeResult::Success
         }

@@ -244,8 +244,8 @@ struct Remember;
 impl BtNode<Trace, Act> for Remember {
     type State = ();
 
-    fn update(&self, _: &mut (), trace: &mut Trace, _: (), mode: EntryMode) -> NodeResult<Act> {
-        trace.0.push(mode);
+    fn update(&self, _: &mut (), trace: &mut Trace, _: (), entry: Entry<'_>) -> NodeResult<Act> {
+        trace.0.push(entry.mode());
         NodeResult::Running(Act::Firing)
     }
 }
@@ -360,7 +360,7 @@ impl BtNode<Walker, WalkingTo> for Approach {
         _: &mut (),
         walker: &mut Walker,
         _: (),
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult<WalkingTo> {
         if walker.position == walker.target {
             return NodeResult::Success;
