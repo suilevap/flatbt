@@ -415,7 +415,9 @@ See [Inspection](inspect.md).
 - **Labels apart from names**, so `choose!` patterns do not hide names.
 - **`path_id` for change-only logs**, not a stored trace: it costs one walk when
   asked and nothing otherwise.
-- **Execution tracing (results of every node per update) deferred.** It would
-  need hooks in `update`; the path views answer "what is it doing" without them.
+- **Execution tracing (results of every node per update) deferred** to a
+  separate proposal, [Trace](trace.md): a typed log keyed by preorder node
+  ids, passed to nodes by an `Entry` argument that replaces `EntryMode`,
+  recorded in debug builds and merged by `inspect`.
 - **Bevy debugging is a marker component**, not a Cargo feature or a
   `bevy_log` dependency: unmarked agents cost an empty query.

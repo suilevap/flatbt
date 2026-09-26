@@ -21,6 +21,7 @@ Code and tests define current behavior; historical proposals may differ.
 | Document | Status |
 | --- | --- |
 | [Node catalog](node-catalog-draft.md) | Decorators, helpers, and selection policies; being implemented |
+| [Trace](trace.md) | Why the tree chose what it runs: a typed per-agent log in dev builds, merged by `inspect` |
 
 ## Archive and history
 
