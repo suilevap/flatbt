@@ -11,7 +11,8 @@ cargo run --release -- --scenario guard --lib bhv
 ./instructions.sh                        # cachegrind; needs valgrind
 csharp/compare.sh                        # against bt-tree (C#); needs .NET 10
 cargo run --release -- scaling > charts/scaling.tsv   # 1 to 1M agents, ~40 minutes
-python3 charts/plot.py charts/scaling.tsv charts/     # needs matplotlib
+cargo run --release -- memory > charts/memory.tsv     # heap at 1 to 1M agents
+python3 charts/plot.py charts charts                  # needs matplotlib
 ```
 
 The run exits non-zero if any library's results differ from FlatBT's.
@@ -250,6 +251,27 @@ than 3 GB. Data: [`charts/scaling.tsv`](charts/scaling.tsv).
   1M of them is 264 MB streamed per frame, the same for every library.
 - At 1M agents a sample is only 3 frames, so those points are noisier; the
   dips of `bhv` and bonsai-bt from 100k to 1M are within that noise.
+
+### Heap
+
+`flatbt-compare memory` builds each population with the counting allocator
+and ticks it. Data: [`charts/memory.tsv`](charts/memory.tsv).
+
+![Memory held by all agents' trees, and heap allocations per agent-tick](charts/heap.png)
+
+- **FlatBT touches the heap nowhere**, at any population from 1 to 1M: no
+  allocation to build an agent, none per tick, no heap growth while ticking.
+  1M soldiers hold 3 MB, 1M villagers 40 MB, all of it the agents' inline
+  state.
+- **bhv and behavior-tree-lite** allocate nothing per tick, but build every
+  agent's tree on the heap: 6–93 and 7–125 allocations per agent. 1M soldiers
+  on `bhv` hold 2.9 GB; 100k on behavior-tree-lite 1.5 GB.
+- **bonsai-bt and behavior-tree** also allocate while ticking: bonsai-bt 19
+  allocations and 1.6 KB per `select8` tick and 5.2 per `soldier` tick,
+  behavior-tree 1–5.5 per tick. 100k soldiers on behavior-tree hold 1.7 GB.
+- The bars are steady-state rates from one agent over 200k ticks. A large
+  population ticks only a few frames per agent in the sweep, so its rows in
+  the data describe agents early in their runs.
 
 ## Reading the results
 
