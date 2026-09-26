@@ -1,4 +1,4 @@
-use crate::common::{Bb, Op, Outcome, SCENARIOS, Spec};
+use crate::common::{BASIC, Bb, Op, Outcome, Spec};
 use crate::harness::{Measure, entry};
 use behavior_tree::{Node, StatefulAction, Status};
 
@@ -24,11 +24,13 @@ fn build(spec: &Spec) -> Node<Bb> {
         Spec::Seq(children) => Node::sequence(children.iter().map(build).collect()),
         Spec::Sel(children) => Node::select(children.iter().map(build).collect()),
         Spec::Leaf(op) => Node::stateful_action("op", Box::new(OpAction(*op))),
+        _ => unreachable!("only BASIC scenarios"),
     }
 }
 
 pub fn entries() -> Vec<Box<dyn Measure>> {
-    SCENARIOS
+    // No custom composites: the enum of node kinds is closed.
+    BASIC
         .into_iter()
         .map(|scenario| {
             // Nodes live in `Rc<RefCell<_>>` and hold their own state: one tree per agent.
