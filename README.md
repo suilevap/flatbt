@@ -534,32 +534,39 @@ one node per line. Scope locals and policy progress appear as fields.
 ```rust
 use flatbt::prelude::*;
 
+#[derive(Debug, PartialEq)]
+enum Act {
+    Fire(u32),
+    Reload,
+}
+
 fn has_ammo(ammo: &u32) -> bool {
     *ammo > 0
 }
 
 let tree = select((
-    scope! {
-        let rounds: u32 = |ammo: &mut u32| *ammo;
+    named("attack", scope! {
+        let burst: u32 = |ammo: &mut u32| (*ammo).min(3);
         sequence {
             check(has_ammo);
-            leaf(|_: &mut u32| NodeResult::Running("fire"));
+            leaf_with(|_: &mut u32, burst: &u32| NodeResult::Running(Act::Fire(*burst)))
+                .with(burst);
         }
-    }
-    .named("attack"),
-    leaf(|_: &mut u32| NodeResult::Running("reload")),
+    }),
+    named("reload", leaf(|_: &mut u32| NodeResult::Running(Act::Reload))),
 ));
 let mut state = BtState::new(&tree);
-let _ = update(&tree, &mut state, &mut 3, EntryMode::Evaluate);
+let doing = update(&tree, &mut state, &mut 5, EntryMode::Evaluate).act();
+assert_eq!(doing, Some(Act::Fire(3)));
 assert_eq!(
     state.describe().to_string(),
-    "select > attack (scope) {rounds: 3} > seq > leaf",
+    "select > attack (scope) {burst: 3} > seq > leaf_with",
 );
 ```
 
 Each node shows as `name (kind)`, or its kind alone. Names come from
-`.named(..)`, or from code: a function item passed to `leaf`, `check` or
-`guard`, an action or custom node type, a `scope!` local. `choose!` and
+`named("..", node)` or `node.named("..")`, or from code: a function item passed
+to `leaf`, `check` or `guard`, an action or custom node type, a `scope!` local. `choose!` and
 `per_child!` prefix each arm with its pattern: `0 => reload (leaf)`. Locals
 whose type is not `Debug` show as `..`.
 

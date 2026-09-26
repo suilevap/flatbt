@@ -135,7 +135,7 @@ fn locals_without_debug_are_elided() {
 #[test]
 fn choose_labels_each_arm_with_its_pattern() {
     let tree = choose!(|ammo: &u32| match *ammo {
-        0 => leaf(|_: &mut u32| NodeResult::RUNNING).named("reload"),
+        0 => named("reload", leaf(|_: &mut u32| NodeResult::RUNNING)),
         n if n > 3 => leaf(|_: &mut u32| NodeResult::RUNNING),
         _ => leaf(|_: &mut u32| NodeResult::RUNNING),
     });

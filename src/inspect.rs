@@ -28,7 +28,7 @@
 //! );
 //! ```
 //!
-//! Names come from [`named`](WithName::named), and otherwise from code where
+//! Names come from [`named`] or `.named(..)`, and otherwise from code where
 //! it has one: a function item passed to `leaf`, `check` or `guard`, an action
 //! type, a custom node type, a `scope!` local, a `choose!` pattern. Closures
 //! have none. Nothing here runs during [`update`](crate::update).
@@ -101,7 +101,13 @@ pub struct Named<N> {
     label: bool,
 }
 
-/// Adds `node.named(name)`.
+/// Names `node` in debug views, replacing any name taken from code. The same
+/// as `node.named(name)`, with the name before a long node rather than after.
+pub fn named<N>(name: &'static str, node: N) -> Named<N> {
+    node.named(name)
+}
+
+/// Adds `node.named(name)`; see [`named`].
 pub trait WithName: Sized {
     /// Names this node in debug views, replacing any name taken from code.
     fn named(self, name: &'static str) -> Named<Self> {
