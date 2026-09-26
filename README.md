@@ -176,32 +176,66 @@ let tree = choose!(|bb: &Blackboard| match bb.order {
 Arm definitions cannot use `bb` or match bindings. Read update-time inputs inside
 the node. See the [choice example](examples/choose.rs).
 
-### By score
+### In a computed order
 
-`utility!` scores every child and runs the best. Unlike `choose!`, it falls
-back: a child that fails is not retried, and the best of the rest runs instead.
+`order_by(order, children)` makes `select` and `seq` visit their children in
+an order computed at run time. The control keeps its meaning: `select` tries
+them in that order until one succeeds, `seq` runs them all in that order.
+
+| Order | Visits children |
+| --- | --- |
+| `by_score(\|bb: &C, index\| score)` | Highest score first. `.inertia(x)` favours the running child. |
+| `shuffled(rng)` | In a random order. |
+| `weighted(rng, \|bb: &C, index\| weight)` | In a random order drawn by weight. |
+
+| Composition | Shorthand |
+| --- | --- |
+| `select(order_by(by_score(score), children))` | `utility(score, children)` |
+| `select(order_by(shuffled(rng), children))` | `random_select(rng, children)` |
+| `select(order_by(weighted(rng, weight), children))` | `weighted_select(rng, weight, children)` |
+| `seq(order_by(shuffled(rng), children))` | `shuffle_seq(rng, children)` |
+
+The shorthands are exactly their compositions. Anything else, such as
+`seq(order_by(by_score(score), children))` to run every child best first, or a
+score order with `.inertia(x)`, is written out.
+
+The order is computed again whenever the control goes back to its first child
+under `Evaluate`: `select` does on every `Evaluate`, so a better-scoring child
+preempts the running one, and `seq` does only while still on its first child.
+`Resume` never reorders.
+
+- Scores: higher goes first; a tie keeps the running child, then goes to the
+  lower index; NaN leaves a child out. Integer scores give a dynamic priority.
+  `inertia` is added to the running child's score.
+- Random orders draw from a generator the context owns, `rng: Fn(&mut C) ->
+  u32`, once per position, so tests stay deterministic. When `Evaluate`
+  restarts a pass they keep the running child first, so a random choice holds
+  while it runs; the rest is drawn afresh. A weight that is not positive leaves
+  its child out.
+- At most 64 children; more fails to build. Custom orders implement `BtOrder`.
+
+`per_child!` writes a value next to each child -- a score, a weight -- and
+returns the per-child function and the children, for any order:
 
 ```rust,ignore
-let tree = utility!(|bb: &Needs| {
-    bb.hunger => action(Eat),
-    bb.fatigue => action(Sleep),
-    bb.boredom * 0.5 => action(Play),
-}, inertia = 0.1);
+let (score, combat) = per_child!(|bb: &Guard| {
+    bb.threat       => action(Fight),
+    1.0 - bb.health => action(Retreat),
+    0.2             => action(Patrol),
+});
+let (weight, idle) = per_child!(|bb: &Guard| {
+    3.0                              => action(LookAround),
+    if bb.bored { 2.0 } else { 0.5 } => action(Whistle),
+    1.0                              => action(Stretch),
+});
+select((
+    select(order_by(by_score(score).inertia(0.1), combat)),
+    select(order_by(weighted(rng, weight), idle)),
+))
 ```
 
-| Event | Behavior |
-| --- | --- |
-| Fresh entry, `Evaluate` | Score all; run the best. A better child preempts the running one. |
-| `Resume` | Continue the running child without scoring. |
-| Child fails | Run the best child not yet tried; fail when none is left. |
-| Child succeeds | Succeed. |
-
-Higher scores win. A tie keeps the running child, and otherwise goes to the
-first. NaN skips a child. `inertia` is added to the running child's score, so a
-challenger must beat it by more than that. Integer scores make a dynamic
-priority selector. The function form is `utility(|bb: &C, index| score,
-children)`; for inertia there, `control(Utility::new(score).inertia(x),
-children)`. At most 64 children.
+Adding or reordering an arm cannot shift a value onto another child. Inside a
+larger expression, such as a `scope!` body, a block holds the `let`.
 
 ## Share local values
 
@@ -277,6 +311,11 @@ Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
 | `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
 | `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
 | `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
+| `invert(child)`, `force_success(child)`, `force_failure(child)` | Map the child's Success/Failure; `Running` passes through. |
+| `repeat(n, child)`, `retry(n, child)` | Run `child` until it has succeeded `n` times, or until it succeeds within `n` attempts. |
+| `if_else(cond, then, otherwise)` | Run one branch by `cond`, without fallback; `Evaluate` may switch it. |
+| `reevaluate_when(cond, child)` | Pass `Resume` down as `Evaluate` on updates where `cond` holds. |
+| `focus(lens, child)` | Run a subtree over the part of the context `lens` selects. |
 
 `repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one
 and fails the other. Both ask `cond` on every update, `Resume` included, and
@@ -543,7 +582,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `utility!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `order_by` and `per_child!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node

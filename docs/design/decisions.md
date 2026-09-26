@@ -324,3 +324,80 @@ Resume continues without scoring, like `select`.
   does not receive parameters.
 - The macro's last arm becomes the scorer's `_` arm, so no unreachable branch
   is generated and nothing can panic.
+
+## 2026-09-24 — Order is a layer over children; the remaining decorators
+
+Phase 3 of the node catalog, reshaped in review. Supersedes the `Utility`
+policy of the 2026-09-23 entry on selection by score.
+
+**Order separates from control.** `utility`, `random_select`,
+`weighted_select` and `shuffle_seq` were each a control that chose a child and
+then behaved like `select` or `seq`. They are now one wrapper and three orders:
+`order_by(order, children)` implements `BtChildren`, so the ordinary `select`
+and `seq` visit the children in the order a `BtOrder` computes.
+
+| Before | Now |
+| --- | --- |
+| `utility(score, ..)` | `select(order_by(by_score(score), ..))` |
+| `random_select(rng, ..)` | `select(order_by(shuffled(rng), ..))` |
+| `weighted_select(rng, w, ..)` | `select(order_by(weighted(rng, w), ..))` |
+| `shuffle_seq(rng, ..)` | `seq(order_by(shuffled(rng), ..))` |
+
+Combinations that had no node come free: `seq(order_by(by_score(..)))` runs
+everything best first. The four old names stay as shorthand functions, each
+exactly the composition in its row, so the common cases stay short while
+`order_by` is the one implementation.
+
+- **Controls stay unchanged.** Wrapping the children rather than the policy
+  means no `select_by`/`seq_by`: the control is the one already known, and so
+  is its reaction to `Evaluate`.
+- **No stored permutation.** `select` and `seq` only ask for position 0, the
+  running position, or the next one, so the wrapper keeps a `u64` of children
+  used at earlier positions and the current position's child. Other access,
+  such as `choose!` over it, reports a diagnostic and fails.
+- **When the order is recomputed** follows from the control: whenever it goes
+  back to position 0 under `Evaluate`. `select` does on every `Evaluate`, so a
+  score order preempts; `seq` does only while on its first child.
+- **Random orders use the caller's generator only.** One draw from
+  `rng: Fn(&mut C) -> u32` per position. A first version seeded the invocation
+  once and hashed (seed, position) so `Evaluate` could replay the order without
+  storing it; review preferred not to ship a generator of our own. Instead a
+  random order keeps the running child first when `Evaluate` restarts a pass,
+  so a random choice holds while it runs and nothing is replayed. The rest of
+  the pass is drawn afresh, so children that failed before the running one
+  may be tried again.
+- **`per_child!` replaces `utility!`.** `utility!` added no feature: it only
+  put each score next to its child instead of in one `match index`. `weighted`
+  has the same need and `shuffled` none, so the macro became order-agnostic:
+  `per_child!(|bb: &C| { value => node, .. })` returns `(values, children)` for
+  any order that takes `Fn(&C, usize) -> T`. Order modifiers such as
+  `.inertia(x)` stay ordinary method calls. The utility case costs a `let`.
+  An `order_by!(by_score, ..)` that injects the closure was rejected: it cannot
+  take a method chain.
+- **Too many children is a build error.** The count is static, so
+  `order_by` asserts it in a `const` block rather than checking every update.
+- **Randomness from the context** keeps the crate dependency-free and `no_std`,
+  lets one seeded generator serve a game, and keeps tests deterministic.
+
+The remaining decorators:
+
+- **`repeat` and `retry` restart in the same update**, bounded by their count,
+  so they need no act of their own and cannot spin. `if_else` is `choose!` with
+  two arms and a condition.
+- **`reevaluate_when` needs a condition.** The proposal's unconditional
+  `reactive` was rejected in review; this converts `Resume` only on the
+  updates the caller names.
+- **`focus` takes its lens bound at construction**, `Fn(&mut C) -> &mut D`, so a
+  closure returning a borrow infers its lifetimes.
+- **`action_fn` and `produce` dropped** after a spike: see the proposal.
+- **One file per node family** under `src/nodes/`, orders under `order/`.
+  Rust has no rule either way; the old `decorate.rs` had become a grab bag.
+- **Inlining: hints in the catalog, forcing in core.** Everything in
+  `flatbt::nodes` is `#[inline]`, a hint LLVM weighs against its own cost
+  model, rather than `#[inline(always)]`. Core keeps forcing its controls,
+  leaves and `guard`, as chosen in the core inlining change (PR #18), since
+  those are on every tree's path. A catalog node LLVM declines to inline
+  becomes one call in an otherwise flat tree; if a benchmark shows that
+  mattering, force the node that shows up rather than all of them.
+  Diagnostics go through a `#[cold]`, `#[inline(never)]` function, so their
+  formatting stays off the path every update takes.

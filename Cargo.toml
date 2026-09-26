@@ -85,5 +85,9 @@ name = "catalog"
 required-features = ["extras"]
 
 [[test]]
-name = "utility"
+name = "order"
+required-features = ["extras"]
+
+[[test]]
+name = "policies"
 required-features = ["extras"]

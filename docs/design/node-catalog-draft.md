@@ -1,6 +1,6 @@
 # Node catalog: brainstorm and plan
 
-Status: proposal; Phases 1 and 2 implemented. Each item says what it is for, whether
+Status: proposal; Phases 1 to 3 implemented. Each item says what it is for, whether
 the current core can express it, and roughly what it costs.
 
 The catalog lives in `flatbt::nodes`, under the existing `extras` feature.
@@ -105,9 +105,9 @@ ordinary `.with(..)` bindings, so `scope!` needs no macro changes.
 | --- | --- | --- | --- | --- |
 | `utility!(\|c: &C\| { score_a => a, score_b => b })` / `utility(scorer, children)` | Runs the child with the highest score. When it fails, rescores and tries the best **untried** child (a `u64` bitmask in policy state). Under `Evaluate` it rescores and may preempt. An optional `inertia` adds a bonus to `active_child_index`, which `begin` already receives, to prevent flip-flopping. Scores are `f32`; NaN counts as "skip". | P1 | M | fits. The macro reuses `__flatbt_child_indices` like `choose!`, and generates `Fn(&C, usize) -> f32`. |
 | `priority(...)` | Folded into `utility`: its score type is generic, and integer scores make a dynamic priority selector. A second name would be the same policy. | -- | -- | done, as `utility` |
-| `random_select(rng, children)` | On fresh entry, picks an untried child uniformly at random. On failure, tries another untried child. Under `Evaluate`, keeps the active child, like `seq`. | P2 | S | fits (`rng: Fn(&mut C) -> u32` from context) |
-| `weighted_select(rng, weights, children)` | Weighted version. `weights: Fn(&C, usize) -> f32`. | P2 | S | fits |
-| `shuffle_seq(rng, children)` | A sequence in random order, without replacement, using the bitmask. | P2 | S | fits |
+| `random_select(rng, children)` (done as `select(order_by(shuffled(rng), ..))`) | On fresh entry, picks an untried child uniformly at random. On failure, tries another untried child. Under `Evaluate`, keeps the active child, like `seq`. | P2 | S | fits (`rng: Fn(&mut C) -> u32` from context) |
+| `weighted_select(rng, weights, children)` (done as `select(order_by(weighted(..), ..))`) | Weighted version. `weights: Fn(&C, usize) -> f32`. | P2 | S | fits |
+| `shuffle_seq(rng, children)` (done as `seq(order_by(shuffled(rng), ..))`) | A sequence in random order, without replacement, using the bitmask. | P2 | S | fits |
 | `if_else(cond, then, else)` | Sugar over `Choose`. | P2 | S | fits |
 | `seq_any` / `try_all` | Runs all children regardless of failures. Success if any succeeded (or if all did, for a variant). | P3 | S | fits |
 | `round_robin(memory, children)` | Continues after the child used last time. The last index lives in the blackboard, reached through `memory`. | P3 | S | fits |
@@ -171,14 +171,24 @@ for what shipped, and a decision-log entry.
   macro (sharing the child-index machinery with `choose!`), and inertia.
   Integer scores cover the dynamic priority selector; no separate `priority`.
 - A tie keeps the running child, then goes to the lower index.
+- Reshaped in Phase 3: the policy became the `by_score` order.
 
-**Phase 3: random policies and remaining decorators** (S each)
+**Phase 3: orders and remaining decorators** (S each) -- done
 
-- `random_select`, `weighted_select`, and `shuffle_seq`, with an RNG from
-  context. Tests use a deterministic counter RNG.
-- `invert`, `force_*`, `repeat`/`retry` (moved out of `examples/support`),
-  `reevaluate_when`, `focus`, `if_else`.
-- `action_fn` after a spike on closure inference; `produce`.
+- Selection by order: `order_by(order, children)` under the ordinary `select`
+  and `seq`, with `by_score`, `shuffled` and `weighted` orders. Replaces
+  `utility(..)` from Phase 2 and the proposed `random_select`,
+  `weighted_select` and `shuffle_seq`, which stay as shorthand functions.
+  `per_child!` replaces `utility!` and works for any per-child order. See the
+  decision log.
+- `invert`, `force_*`, `repeat`/`retry`, `reevaluate_when`, `focus`,
+  `if_else`. The example `Repeat` stays in `examples/support`: it is what the
+  tests use to exercise the custom-policy API.
+- Dropped: `action_fn` and `produce`. The spike compiled, but a closure that
+  ignores parameters still takes a `_: ()` argument, and hiding that needs the
+  arity trick on three closures at once. `action_while` covers the common
+  action, a small `impl BtAction` the rest; `leaf_with` with `.with(out x)`
+  already produces a local.
 
 **Phase 4: P3**
 
