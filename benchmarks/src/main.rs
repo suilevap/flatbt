@@ -31,7 +31,8 @@ const USAGE: &str = "\
 usage: flatbt-compare [--quick] [--lib NAME] [--scenario NAME]
        flatbt-compare ticks LIB SCENARIO N   (ticks one agent N times; for profilers)
        flatbt-compare evaluate [--quick]     (flatbt with Evaluate, as TSV; see csharp/)
-       flatbt-compare scaling [--quick]      (1 to 1M agents, as TSV; see charts/)";
+       flatbt-compare scaling [--quick]      (1 to 1M agents, as TSV; see charts/)
+       flatbt-compare memory                 (heap at 1 to 1M agents, as TSV; see charts/)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -54,6 +55,10 @@ fn main() -> ExitCode {
     }
 
     let quick = args.iter().any(|a| a == "--quick");
+    if args.first().map(String::as_str) == Some("memory") {
+        memory(&entries);
+        return ExitCode::SUCCESS;
+    }
     if args.first().map(String::as_str) == Some("scaling") {
         scaling(&entries, quick);
         return ExitCode::SUCCESS;
@@ -161,6 +166,47 @@ fn scaling(entries: &[Box<dyn Measure>], quick: bool) {
                 e.lib(),
                 r.ns_per_agent_tick,
                 r.bytes_per_agent
+            );
+        }
+    }
+}
+
+/// Tab-separated rows for `charts/plot.py`: scenario, lib, agents, bytes held
+/// by all agents' trees, allocations to build one agent, allocations and bytes
+/// allocated per agent-tick, and peak heap growth while ticking.
+fn memory(entries: &[Box<dyn Measure>]) {
+    println!(
+        "scenario\tlib\tagents\tagents_bytes\tbuild_allocs_per_agent\tallocs_per_agent_tick\tbytes_allocated_per_agent_tick\tpeak_growth"
+    );
+    for e in entries {
+        let per_agent = e.scaling(100, 1_000, 1).bytes_per_agent;
+        for agents in AGENTS {
+            if agents as f64 * per_agent > HEAP_LIMIT {
+                eprintln!(
+                    "skipping {} / {} at {agents} agents",
+                    e.lib(),
+                    e.scenario().name()
+                );
+                continue;
+            }
+            eprintln!(
+                "running {} / {} at {agents} agents",
+                e.lib(),
+                e.scenario().name()
+            );
+            // At least 200k agent-ticks, so rare allocations still show; a
+            // large population ticks only a few frames, so its agents are
+            // early in their runs. Steady-state rates come from the small ones.
+            let m = e.memory(agents, (200_000 / agents).max(3));
+            println!(
+                "{}\t{}\t{agents}\t{:.0}\t{:.2}\t{:.4}\t{:.2}\t{}",
+                e.scenario().name(),
+                e.lib(),
+                m.agents_bytes,
+                m.build_allocs_per_agent,
+                m.allocs_per_agent_tick,
+                m.bytes_allocated_per_agent_tick,
+                m.peak_growth
             );
         }
     }

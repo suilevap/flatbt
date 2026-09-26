@@ -41,6 +41,17 @@ pub struct Scaling {
     pub bytes_per_agent: f64,
 }
 
+/// One population size: where the heap goes.
+pub struct Memory {
+    /// `size_of` every agent's runtime plus the heap they keep, in total.
+    pub agents_bytes: f64,
+    pub build_allocs_per_agent: f64,
+    pub allocs_per_agent_tick: f64,
+    pub bytes_allocated_per_agent_tick: f64,
+    /// Highest heap above the built population while it ticks.
+    pub peak_growth: usize,
+}
+
 pub trait Measure {
     fn lib(&self) -> &'static str;
     fn scenario(&self) -> Scenario;
@@ -51,6 +62,9 @@ pub trait Measure {
     /// Ticks `agents` agents in frames until about `agent_ticks` agent-ticks
     /// per sample; the median of `samples`.
     fn scaling(&self, agents: usize, agent_ticks: usize, samples: usize) -> Scaling;
+    /// Builds `agents` agents and ticks them for `frames` frames, counting
+    /// every allocation.
+    fn memory(&self, agents: usize, frames: usize) -> Memory;
 }
 
 struct Entry<T, A, MakeTree, MakeAgent, Tick> {
@@ -136,6 +150,41 @@ where
             black_box(self.step(&tree, &mut agent, &mut bb));
         }
         bb
+    }
+
+    fn memory(&self, agents: usize, frames: usize) -> Memory {
+        let tree = (self.make_tree)();
+        let mut population: Vec<(A, Bb)> = Vec::with_capacity(agents);
+        let mut bbs: Vec<Bb> = (0..agents)
+            .map(|i| Bb::new(self.scenario, i as u32 * 7919))
+            .collect();
+        // Blackboards are built first: only the tree runtimes are counted.
+        let before = alloc::snapshot();
+        for bb in bbs.drain(..) {
+            population.push(((self.make_agent)(&tree), bb));
+        }
+        let built = alloc::snapshot();
+        let frame = |population: &mut Vec<(A, Bb)>| {
+            for (agent, bb) in population.iter_mut() {
+                black_box(self.step(&tree, agent, bb));
+            }
+        };
+        // One frame first, so lazily built state is part of the resting heap.
+        frame(&mut population);
+        alloc::reset_peak();
+        let resting = alloc::snapshot();
+        for _ in 0..frames {
+            frame(&mut population);
+        }
+        let ticked = alloc::snapshot();
+        let ticks = (frames * agents) as f64;
+        Memory {
+            agents_bytes: (agents * size_of::<A>()) as f64 + (built.live - before.live) as f64,
+            build_allocs_per_agent: (built.allocs - before.allocs) as f64 / agents as f64,
+            allocs_per_agent_tick: (ticked.allocs - resting.allocs) as f64 / ticks,
+            bytes_allocated_per_agent_tick: (ticked.bytes - resting.bytes) as f64 / ticks,
+            peak_growth: alloc::peak() - resting.live,
+        }
     }
 
     fn scaling(&self, agents: usize, agent_ticks: usize, samples: usize) -> Scaling {
