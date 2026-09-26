@@ -8,7 +8,7 @@ enum Outcome {
 }
 
 impl Outcome {
-    #[inline(always)]
+    #[inline]
     fn result<A>(self) -> NodeResult<A> {
         match self {
             Self::Success => NodeResult::Success,
@@ -54,7 +54,7 @@ pub fn force_failure<N>(child: N) -> Remap<N> {
 impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
     type State = N::State;
 
-    #[inline(always)]
+    #[inline]
     fn update(
         &self,
         state: &mut N::State,

@@ -27,17 +27,17 @@ pub fn if_else<F, T, E>(condition: F, then: T, otherwise: E) -> ControlNode<IfEl
 impl<C, F: Fn(&C) -> bool> BtControl<C> for IfElse<F> {
     type State = ();
 
-    #[inline(always)]
+    #[inline]
     fn begin(&self, _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
         ControlOp::RunChild(if (self.0)(ctx) { 0 } else { 1 })
     }
 
-    #[inline(always)]
+    #[inline]
     fn child_succeeded(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Success
     }
 
-    #[inline(always)]
+    #[inline]
     fn child_failed(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Failure
     }

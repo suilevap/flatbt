@@ -92,7 +92,7 @@ where
 {
     type State = RepeatWhileState<S>;
 
-    #[inline(always)]
+    #[inline]
     fn update(
         &self,
         state: &mut Self::State,

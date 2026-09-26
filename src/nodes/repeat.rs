@@ -16,7 +16,7 @@ impl<C> BtControl<C> for Repeat {
     /// Successes so far in this invocation.
     type State = usize;
 
-    #[inline(always)]
+    #[inline]
     fn begin(&self, done: &mut usize, _: &mut C, active: Option<usize>, _: usize) -> ControlOp {
         match active {
             Some(index) => ControlOp::RunChild(index),
@@ -28,7 +28,7 @@ impl<C> BtControl<C> for Repeat {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn child_succeeded(&self, done: &mut usize, _: &mut C, _: usize, _: usize) -> ControlOp {
         *done += 1;
         if *done < self.0 {
@@ -38,7 +38,7 @@ impl<C> BtControl<C> for Repeat {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn child_failed(&self, _: &mut usize, _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Failure
     }
@@ -60,7 +60,7 @@ impl<C> BtControl<C> for Retry {
     /// Failures so far in this invocation.
     type State = usize;
 
-    #[inline(always)]
+    #[inline]
     fn begin(&self, failed: &mut usize, _: &mut C, active: Option<usize>, _: usize) -> ControlOp {
         match active {
             Some(index) => ControlOp::RunChild(index),
@@ -72,12 +72,12 @@ impl<C> BtControl<C> for Retry {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn child_succeeded(&self, _: &mut usize, _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Success
     }
 
-    #[inline(always)]
+    #[inline]
     fn child_failed(&self, failed: &mut usize, _: &mut C, _: usize, _: usize) -> ControlOp {
         *failed += 1;
         if *failed < self.0 {

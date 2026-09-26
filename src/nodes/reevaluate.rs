@@ -35,7 +35,7 @@ where
 {
     type State = S;
 
-    #[inline(always)]
+    #[inline]
     fn update(&self, state: &mut S, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
         let mut params = params.into_value();
         let mode = if mode == EntryMode::Resume

@@ -39,7 +39,7 @@ pub fn map_act<F, N, B>(map: F, child: N) -> MapAct<F, N, B> {
 impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F, N, B> {
     type State = N::State;
 
-    #[inline(always)]
+    #[inline]
     fn update(
         &self,
         state: &mut N::State,

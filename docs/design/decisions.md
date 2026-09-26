@@ -392,9 +392,12 @@ The remaining decorators:
 - **`action_fn` and `produce` dropped** after a spike: see the proposal.
 - **One file per node family** under `src/nodes/`, orders under `order/`.
   Rust has no rule either way; the old `decorate.rs` had become a grab bag.
-- **Inlining.** Node `update`s, policy callbacks and `order_by`'s dispatch are
-  `#[inline(always)]`, as core's are: each is called from exactly one parent in
-  a static tree, so forcing it duplicates nothing. Code that loops over
-  children -- the orders' `next` -- gets a plain `#[inline]` and is left to
-  LLVM. Diagnostics go through a `#[cold]`, `#[inline(never)]` function, so
-  their formatting stays off the path every update takes.
+- **Inlining: hints in the catalog, forcing in core.** Everything in
+  `flatbt::nodes` is `#[inline]`, a hint LLVM weighs against its own cost
+  model, rather than `#[inline(always)]`. Core keeps forcing its controls,
+  leaves and `guard`, as chosen in the core inlining change (PR #18), since
+  those are on every tree's path. A catalog node LLVM declines to inline
+  becomes one call in an otherwise flat tree; if a benchmark shows that
+  mattering, force the node that shows up rather than all of them.
+  Diagnostics go through a `#[cold]`, `#[inline(never)]` function, so their
+  formatting stays off the path every update takes.

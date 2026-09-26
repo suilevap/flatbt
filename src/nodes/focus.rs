@@ -46,7 +46,7 @@ where
 {
     type State = N::State;
 
-    #[inline(always)]
+    #[inline]
     fn update(
         &self,
         state: &mut N::State,

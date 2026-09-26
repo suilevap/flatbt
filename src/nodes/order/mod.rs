@@ -109,14 +109,14 @@ where
     type State = OrderedState<O::State, Children::State>;
     const LEN: usize = Children::LEN;
 
-    #[inline(always)]
+    #[inline]
     fn active_child_index(&self, state: &Self::State) -> Option<usize> {
         self.children
             .active_child_index(&state.children)
             .and(state.at.map(|(position, _)| position as usize))
     }
 
-    #[inline(always)]
+    #[inline]
     fn run_child(
         &self,
         state: &mut Self::State,
