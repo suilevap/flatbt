@@ -526,6 +526,78 @@ every component.
 cargo run -p flatbt-bevy --example guards
 ```
 
+## Debugging
+
+`state.describe()` writes the running path: `{}` on one line for logs, `{:#}`
+one node per line. Scope locals and policy progress appear as fields, such as
+`repeat {times: 3, done: 1}` or
+`select {order: by_score, position: 1, tried: {0}}`.
+
+```rust
+use flatbt::prelude::*;
+
+#[derive(Debug, PartialEq)]
+enum Act {
+    Fire(u32),
+    Reload,
+}
+
+fn has_ammo(ammo: &u32) -> bool {
+    *ammo > 0
+}
+
+let tree = select((
+    named("attack", scope! {
+        let burst: u32 = |ammo: &mut u32| (*ammo).min(3);
+        sequence {
+            check(has_ammo);
+            leaf_with(|_: &mut u32, burst: &u32| NodeResult::Running(Act::Fire(*burst)))
+                .with(burst);
+        }
+    }),
+    named("reload", leaf(|_: &mut u32| NodeResult::Running(Act::Reload))),
+));
+let mut state = BtState::new(&tree);
+let doing = update(&tree, &mut state, &mut 5, EntryMode::Evaluate).act();
+assert_eq!(doing, Some(Act::Fire(3)));
+assert_eq!(
+    state.describe().to_string(),
+    "select > attack (scope) {burst: 3} > seq > leaf_with",
+);
+```
+
+Each node shows as `name (kind)`, or its kind alone. Names come from
+`named("..", node)` or `node.named("..")`, or from code: a function item passed
+to `leaf`, `check` or `guard`, an action or custom node type, a `scope!` local. `choose!` and
+`per_child!` prefix each arm with its pattern: `0 => reload (leaf)`. Locals
+whose type is not `Debug` show as `..`.
+
+`.with_inactive()` adds the nodes off the path to `{:#}`, marked `-`. For
+another format, implement `inspect::Inspector` and pass it to
+`state.inspect(..)`. A driver using `update_slot` calls
+`inspect::describe(&tree, slot.as_ref())`; a Bevy agent,
+`behavior.describe(tree.get())`.
+
+`state.path_id()` fingerprints the running path, ignoring field values: log
+`describe()` only when it differs from the last tick's, and a log holds one
+line per decision.
+
+Custom nodes show under their type name; a composing node overrides
+`BtNode::inspect` to report its children. An action reports its own fields by
+overriding `BtAction::inspect`:
+
+```rust,ignore
+fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    if let Some(walk) = state {
+        inspector.field("to", &walk.target); // Walk (action) {to: 5}
+    }
+}
+```
+
+In Bevy, add `DebugBehavior` to an agent. The plugin keeps its path text
+current after each tick and marks it changed only when the path changes, so
+`Query<&DebugBehavior, Changed<DebugBehavior>>` logs decisions, not frames.
+
 ## Custom nodes
 
 Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and

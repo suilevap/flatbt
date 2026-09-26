@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use crate::inspect::Inspector;
 use crate::params::ParamShape;
 use crate::{BtNode, EntryMode, NodeResult};
 
@@ -133,6 +134,10 @@ where
         };
         self.node.update(state, ctx, params, mode)
     }
+
+    fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
+        BtNode::<C, A, B::Params<'_>>::inspect(&self.node, state, inspector);
+    }
 }
 
 pub struct WithoutParams<N>(N);
@@ -147,5 +152,9 @@ impl<C, A, P, N: BtNode<C, A>> BtNode<C, A, P> for WithoutParams<N> {
 
     fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult<A> {
         self.0.update(state, ctx, (), mode)
+    }
+
+    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+        self.0.inspect(state, inspector);
     }
 }

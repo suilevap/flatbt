@@ -1,11 +1,10 @@
-use core::marker::PhantomData;
-
+use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// Owns invocation-local data outside application context.
 pub struct Scope<L, N> {
     child: N,
-    locals: PhantomData<fn() -> L>,
+    inspect_locals: fn(&L, &mut dyn Inspector),
 }
 
 /// Initializes locals with Default on entry. Bindings select fields explicitly.
@@ -13,7 +12,18 @@ pub struct Scope<L, N> {
 pub fn scope<L, N>(child: N) -> Scope<L, N> {
     Scope {
         child,
-        locals: PhantomData,
+        inspect_locals: |_, _| {},
+    }
+}
+
+impl<L, N> Scope<L, N> {
+    /// Sets how debug views report the locals while the scope runs, as
+    /// [`Inspector::field`]s. `scope!` reports each local by name.
+    pub fn inspect_locals(self, inspect: fn(&L, &mut dyn Inspector)) -> Self {
+        Self {
+            inspect_locals: inspect,
+            ..self
+        }
     }
 }
 
@@ -34,6 +44,16 @@ where
 
     fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult<A> {
         BtNode::<C, A, &mut L>::update(&self.child, &mut state.child, ctx, &mut state.locals, mode)
+    }
+
+    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new("scope", state.is_some()), |inspector| {
+            if let Some(state) = state {
+                (self.inspect_locals)(&state.locals, inspector);
+            }
+            let child = state.map(|state| &state.child);
+            BtNode::<C, A, &mut L>::inspect(&self.child, child, inspector);
+        });
     }
 }
 
@@ -60,5 +80,9 @@ impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
     ) -> NodeResult<A> {
         *output = Some((self.0)(ctx));
         NodeResult::Success
+    }
+
+    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new("compute", state.is_some()), |_| {});
     }
 }

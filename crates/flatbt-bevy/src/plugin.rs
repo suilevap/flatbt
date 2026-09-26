@@ -10,6 +10,7 @@ use core::time::Duration;
 
 use bevy_time::Time;
 
+use crate::debug::describe_behaviors;
 use crate::{Behavior, BehaviorTree, Tick, TickAt, TickFn, TreeBuilder};
 
 /// All behavior ticks, whatever their tree. Order other systems against this.
@@ -150,14 +151,22 @@ where
         if self.parallel {
             app.add_systems(
                 self.schedule,
-                (tick_behaviors_parallel::<C, A, F>, apply)
+                (
+                    tick_behaviors_parallel::<C, A, F>,
+                    apply,
+                    describe_behaviors::<C, A, F>,
+                )
                     .chain()
                     .in_set(BehaviorSystems),
             );
         } else {
             app.add_systems(
                 self.schedule,
-                (tick_behaviors::<C, A, F>, apply)
+                (
+                    tick_behaviors::<C, A, F>,
+                    apply,
+                    describe_behaviors::<C, A, F>,
+                )
                     .chain()
                     .in_set(BehaviorSystems),
             );

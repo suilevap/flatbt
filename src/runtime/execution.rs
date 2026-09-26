@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use crate::inspect::{Describe, Inspector, describe, path_id};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// Per-agent state bound to a borrowed root. Includes descendant state.
@@ -25,6 +26,23 @@ impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
     /// Drops state and descendants; keeps the root binding.
     pub fn reset(&mut self) {
         self.root_state = None;
+    }
+
+    /// A text view of the running path, for logs and debugging. See
+    /// [`Describe`].
+    pub fn describe(&self) -> Describe<'_, N, C, A> {
+        describe(self.root_node, self.root_state.as_ref())
+    }
+
+    /// A fingerprint of the running path, to log only when it changes. See
+    /// [`path_id`](crate::inspect::path_id).
+    pub fn path_id(&self) -> u64 {
+        path_id(self.root_node, self.root_state.as_ref())
+    }
+
+    /// Reports the tree and its invocation state to `inspector`.
+    pub fn inspect(&self, inspector: &mut dyn Inspector) {
+        self.root_node.inspect(self.root_state.as_ref(), inspector);
     }
 }
 

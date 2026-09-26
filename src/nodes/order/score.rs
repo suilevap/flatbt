@@ -40,6 +40,10 @@ where
 {
     type State = ();
 
+    fn kind(&self) -> &'static str {
+        "by_score"
+    }
+
     #[inline]
     fn next(
         &self,

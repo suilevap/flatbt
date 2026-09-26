@@ -29,6 +29,7 @@ mod score;
 pub use random::{Shuffled, Weighted, shuffled, weighted};
 pub use score::{ByScore, by_score};
 
+use crate::inspect::{Inspector, type_label};
 use crate::params::ParamShape;
 use crate::{
     BtChildren, ControlNode, ControlOp, EntryMode, NodeResult, Selector, Sequence, select, seq,
@@ -58,6 +59,16 @@ pub trait BtOrder<C> {
         running: Option<usize>,
         child_count: usize,
     ) -> Option<usize>;
+
+    /// What debug views call this order, such as `by_score`. Defaults to the
+    /// type name.
+    fn kind(&self) -> &'static str {
+        type_label::<Self>()
+    }
+
+    /// Reports fields of this order: configuration, and its state while the
+    /// control runs. Reports nothing by default.
+    fn inspect(&self, _state: Option<&Self::State>, _inspector: &mut dyn Inspector) {}
 }
 
 /// Children visited in the order a [`BtOrder`] decides.
@@ -170,6 +181,39 @@ where
                 op => return Err(op),
             }
         }
+    }
+
+    fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+        inspector.field(
+            "order",
+            &format_args!("{}", BtOrder::<C>::kind(&self.order)),
+        );
+        BtOrder::<C>::inspect(&self.order, state.map(|state| &state.order), inspector);
+        if let Some(OrderedState {
+            used,
+            at: Some((position, _)),
+            ..
+        }) = state
+        {
+            inspector.field("position", position);
+            if *used != 0 {
+                inspector.field("tried", &Tried(*used));
+            }
+        }
+        self.children
+            .inspect_children(state.map(|state| &state.children), inspector);
+    }
+}
+
+/// Children used at earlier positions, as a set of indices.
+struct Tried(u64);
+
+impl core::fmt::Debug for Tried {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let used = self.0;
+        f.debug_set()
+            .entries((0..MAX_CHILDREN).filter(|index| used & (1 << index) != 0))
+            .finish()
     }
 }
 

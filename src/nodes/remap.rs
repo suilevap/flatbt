@@ -1,3 +1,4 @@
+use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// A terminal result a child's result is mapped to.
@@ -67,5 +68,16 @@ impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
             NodeResult::Success => self.success.result(),
             NodeResult::Failure => self.failure.result(),
         }
+    }
+
+    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+        let kind = match (self.success, self.failure) {
+            (Outcome::Failure, Outcome::Success) => "invert",
+            (Outcome::Success, _) => "force_success",
+            (Outcome::Failure, _) => "force_failure",
+        };
+        inspector.node(NodeInfo::new(kind, state.is_some()), |inspector| {
+            self.child.inspect(state, inspector);
+        });
     }
 }

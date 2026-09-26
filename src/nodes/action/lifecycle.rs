@@ -1,3 +1,4 @@
+use crate::inspect::{Inspector, NodeInfo, type_label};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, EntryMode, NodeResult};
 
@@ -33,6 +34,11 @@ pub trait BtAction<C, A = (), P = ()> {
     fn complete(&self, _state: &mut Self::State, _ctx: &mut C, _params: P) -> bool {
         true
     }
+
+    /// Reports fields for debug views, such as a target or progress: from
+    /// configuration, and from `state` once the action has started. Reports
+    /// nothing by default. See [`crate::inspect`].
+    fn inspect(&self, _state: Option<&Self::State>, _inspector: &mut dyn Inspector) {}
 }
 
 /// Adapts an action to [`BtNode`].
@@ -81,5 +87,15 @@ where
             *state = None;
             result
         }
+    }
+
+    fn inspect(&self, state: Option<&Option<S>>, inspector: &mut dyn Inspector) {
+        let node = NodeInfo::new("action", state.is_some()).name(Some(type_label::<T>()));
+        inspector.node(node, |inspector| {
+            let started = state.and_then(Option::as_ref);
+            BtAction::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+                &self.0, started, inspector,
+            );
+        });
     }
 }

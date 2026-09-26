@@ -66,23 +66,33 @@ macro_rules! __flatbt_scope {
         let $field:ident: $ty:ty = $callback:expr; $($rest:tt)*) => {
         $crate::__flatbt_scope!(@locals [$locals $value]
             [$($fields)* $field: ::core::option::Option<$ty>,]
-            [$($init)* $crate::scope::bind($crate::scope::compute($callback),
-                $crate::scope::write(|$value: &mut $locals| &mut $value.$field)),]; $($rest)*)
+            [$($init)* $crate::inspect::WithName::named($crate::scope::bind($crate::scope::compute($callback),
+                $crate::scope::write(|$value: &mut $locals| &mut $value.$field)), stringify!($field)),]; $($rest)*)
     };
     (@locals [$locals:ident $value:ident] [$($fields:tt)*] [$($init:tt)*];
         let $field:ident: $ty:ty; $($rest:tt)*) => {
         $crate::__flatbt_scope!(@locals [$locals $value]
             [$($fields)* $field: ::core::option::Option<$ty>,] [$($init)*]; $($rest)*)
     };
-    (@locals [$locals:ident $value:ident] [$($fields:tt)*] [$($init:tt)*];
+    (@locals [$locals:ident $value:ident] [$($field:ident: $ty:ty,)*] [$($init:tt)*];
         $control:ident { $($body:tt)* } $(;)?) => {{
         #[derive(Default)]
-        struct $locals { $($fields)* }
+        struct $locals { $($field: $ty,)* }
+        // Reports each local, with `Debug` when its type has it and `..` otherwise.
+        fn inspect_locals(locals: &$locals, inspector: &mut dyn $crate::inspect::Inspector) {
+            #[allow(unused_imports)]
+            use $crate::inspect::__private::{Probe, ViaDebug as _, ViaOpaque as _};
+            $($crate::inspect::__private::local(inspector, stringify!($field),
+                locals.$field.as_ref().map(|value| (&Probe(value)).probe()));)*
+        }
         $crate::scope::scope::<$locals, _>($crate::__flatbt_scope!(@initialized [$($init)*]
             $crate::__flatbt_scope!(@children [$locals $value] $control []; $($body)*)))
+            .inspect_locals(inspect_locals)
     }};
     (@initialized [] $body:expr) => { $body };
-    (@initialized [$($init:tt)+] $body:expr) => { $crate::seq(($($init)+ $body,)) };
+    (@initialized [$($init:tt)+] $body:expr) => {
+        $crate::inspect::__private::Inline($crate::seq(($($init)+ $body,)))
+    };
     (@children $setup:tt $control:ident [$($nodes:tt)*]; sequence { $($body:tt)* } $($rest:tt)*) => {
         $crate::__flatbt_scope!(@children $setup $control
             [$($nodes)* $crate::__flatbt_scope!(@children $setup sequence []; $($body)*),]; $($rest)*)

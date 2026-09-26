@@ -7,6 +7,10 @@ pub struct Choose<F>(pub F);
 impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
     type State = ();
 
+    fn kind(&self) -> &'static str {
+        "choose"
+    }
+
     fn begin(&self, _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
         ControlOp::RunChild((self.0)(ctx))
     }
@@ -92,7 +96,7 @@ macro_rules! choose {
         [$pattern:pat $(if $guard:expr)?] [$node:expr] $($rest:tt)*) => {
         $crate::choose!(@arms [$($indices)*]
             [$($capture)*] [$bb: $context] [$($value)+]
-            [$($nodes)* $node,]
+            [$($nodes)* $crate::inspect::label(stringify!($pattern $(if $guard)?), $node),]
             [$($selection)* $pattern $(if $guard)? => $index,]
             ; $($rest)*
         )

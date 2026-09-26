@@ -59,6 +59,7 @@
 extern crate std;
 
 pub mod composition;
+pub mod inspect;
 #[cfg(feature = "extras")]
 pub mod nodes;
 pub mod params;

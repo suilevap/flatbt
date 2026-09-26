@@ -1,3 +1,5 @@
+use crate::inspect::{Inspector, NodeInfo, type_label};
+
 /// Success/Failure ends an invocation; Running preserves it.
 ///
 /// `A` is what an agent is *doing* while it runs. A node that occupies the
@@ -120,4 +122,14 @@ pub trait BtNode<C, A = (), P = ()> {
         params: P,
         mode: EntryMode,
     ) -> NodeResult<A>;
+
+    /// Reports this node, and its descendants, for debugging. `state` is its
+    /// invocation state when the node is on the running path.
+    ///
+    /// The default reports a node without children, named by its type. A
+    /// composing node overrides it to report its children with the state it
+    /// holds for each; see [`crate::inspect`].
+    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new(type_label::<Self>(), state.is_some()), |_| {});
+    }
 }
