@@ -526,6 +526,50 @@ every component.
 cargo run -p flatbt-bevy --example guards
 ```
 
+## Debugging
+
+`state.describe()` writes the running path: `{}` on one line for logs, `{:#}`
+one node per line. Scope locals and policy progress appear as fields.
+
+```rust
+use flatbt::prelude::*;
+
+fn has_ammo(ammo: &u32) -> bool {
+    *ammo > 0
+}
+
+let tree = select((
+    scope! {
+        let rounds: u32 = |ammo: &mut u32| *ammo;
+        sequence {
+            check(has_ammo);
+            leaf(|_: &mut u32| NodeResult::Running("fire"));
+        }
+    }
+    .named("attack"),
+    leaf(|_: &mut u32| NodeResult::Running("reload")),
+));
+let mut state = BtState::new(&tree);
+let _ = update(&tree, &mut state, &mut 3, EntryMode::Evaluate);
+assert_eq!(
+    state.describe().to_string(),
+    "select > attack (scope) {rounds: 3} > seq > leaf",
+);
+```
+
+Each node shows as `name (kind)`, or its kind alone. Names come from
+`.named(..)`, or from code: a function item passed to `leaf`, `check` or
+`guard`, an action or custom node type, a `scope!` local. `choose!` and
+`per_child!` prefix each arm with its pattern: `0 => reload (leaf)`. Locals
+whose type is not `Debug` show as `..`.
+
+`.with_inactive()` adds the nodes off the path to `{:#}`, marked `-`. For
+another format, implement `inspect::Inspector` and pass it to
+`state.inspect(..)`. A driver using `update_slot` calls
+`inspect::describe(&tree, slot.as_ref())`; a Bevy agent,
+`behavior.describe(tree.get())`. Custom nodes show under their type name; a
+composing node overrides `BtNode::inspect` to report its children.
+
 ## Custom nodes
 
 Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and

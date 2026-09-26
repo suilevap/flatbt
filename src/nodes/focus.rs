@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// A subtree run over part of the context.
@@ -55,5 +56,11 @@ where
         mode: EntryMode,
     ) -> NodeResult<A> {
         self.child.update(state, (self.lens)(ctx), params, mode)
+    }
+
+    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new("focus", state.is_some()), |inspector| {
+            self.child.inspect(state, inspector);
+        });
     }
 }

@@ -1,3 +1,4 @@
+use crate::inspect::Inspector;
 use crate::{BtControl, ControlNode, ControlOp, control};
 
 /// Runs one child `times` times in a row.
@@ -15,6 +16,17 @@ pub fn repeat<N>(times: usize, child: N) -> ControlNode<Repeat, (N,)> {
 impl<C> BtControl<C> for Repeat {
     /// Successes so far in this invocation.
     type State = usize;
+
+    fn kind(&self) -> &'static str {
+        "repeat"
+    }
+
+    fn inspect(&self, done: Option<&usize>, _: Option<usize>, inspector: &mut dyn Inspector) {
+        inspector.field("times", &self.0);
+        if let Some(done) = done {
+            inspector.field("done", done);
+        }
+    }
 
     #[inline]
     fn begin(&self, done: &mut usize, _: &mut C, active: Option<usize>, _: usize) -> ControlOp {
@@ -59,6 +71,17 @@ pub fn retry<N>(attempts: usize, child: N) -> ControlNode<Retry, (N,)> {
 impl<C> BtControl<C> for Retry {
     /// Failures so far in this invocation.
     type State = usize;
+
+    fn kind(&self) -> &'static str {
+        "retry"
+    }
+
+    fn inspect(&self, failed: Option<&usize>, _: Option<usize>, inspector: &mut dyn Inspector) {
+        inspector.field("attempts", &self.0);
+        if let Some(failed) = failed {
+            inspector.field("failed", failed);
+        }
+    }
 
     #[inline]
     fn begin(&self, failed: &mut usize, _: &mut C, active: Option<usize>, _: usize) -> ControlOp {

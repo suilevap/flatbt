@@ -14,6 +14,7 @@ Code and tests define current behavior; historical proposals may differ.
 | [Local state](local-state.md) | Scopes, parameter contracts, bindings |
 | [Actions](action.md) | Inline lifecycle and cancellation |
 | [Bevy integration](bevy-integration.md) | Blackboard as a component, tree resource, tick plugin |
+| [Inspection](inspect.md) | Node names and text views of running state |
 
 ## Proposals
 

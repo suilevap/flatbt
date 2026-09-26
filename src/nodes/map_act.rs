@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::{BtNode, EntryMode, NodeResult};
 
 /// A child whose act is converted.
@@ -52,5 +53,10 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
             NodeResult::Success => NodeResult::Success,
             NodeResult::Failure => NodeResult::Failure,
         }
+    }
+
+    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+        let node = NodeInfo::new("map_act", state.is_some()).name(fn_name::<F>());
+        inspector.node(node, |inspector| self.child.inspect(state, inspector));
     }
 }

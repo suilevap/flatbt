@@ -1,5 +1,6 @@
 //! Tree authoring APIs. Items from `nodes` and `scope` need the `extras` feature.
 
+pub use crate::inspect::WithName;
 pub use crate::params::{ParamShape, ParamValue, Read, Write};
 #[cfg(feature = "extras")]
 pub use crate::scope::{

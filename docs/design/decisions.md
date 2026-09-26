@@ -401,3 +401,15 @@ The remaining decorators:
   mattering, force the node that shows up rather than all of them.
   Diagnostics go through a `#[cold]`, `#[inline(never)]` function, so their
   formatting stays off the path every update takes.
+
+## 2026-09-26 — Inspection
+
+See [Inspection](inspect.md).
+
+- **A default method on `BtNode`**, not a separate trait. A separate trait
+  would need bounds through every composing node, and every custom node would
+  have to implement it before a tree containing one could be described.
+- **One walk, `Option<&State>`**, serves the path and the whole definition.
+- **Names from `type_name`** of function items and node types; closures stay
+  anonymous. `.named(..)` covers the rest. Locations were rejected.
+- **Labels apart from names**, so `choose!` patterns do not hide names.

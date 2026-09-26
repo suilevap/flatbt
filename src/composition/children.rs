@@ -1,3 +1,4 @@
+use crate::inspect::Inspector;
 use crate::params::ParamShape;
 use crate::{BtNode, ControlOp, EntryMode, NodeResult};
 
@@ -30,6 +31,10 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
         mode: EntryMode,
         next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
     ) -> Result<NodeResult<A>, ControlOp>;
+
+    /// Reports each child in order, with its state when it is the saved one.
+    /// See [`BtNode::inspect`].
+    fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector);
 }
 
 impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
@@ -51,6 +56,8 @@ impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
     ) -> Result<NodeResult<A>, ControlOp> {
         Err(ControlOp::RunChild(first))
     }
+
+    fn inspect_children(&self, _: Option<&()>, _: &mut dyn Inspector) {}
 }
 
 macro_rules! tuple_children {
@@ -125,6 +132,16 @@ macro_rules! tuple_children {
                 )+
                 Err(ControlOp::RunChild(index))
             }
+
+            fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+                $(
+                    let active = match state {
+                        Some($state::$variant(active)) => Some(active),
+                        _ => None,
+                    };
+                    BtNode::<C, A, S::Value<'_>>::inspect(&self.$index, active, inspector);
+                )+
+            }
         }
     };
     (@generate_prefix [$($done_index:tt $done_node:ident $done_variant:ident $done_child_state:ident,)*] $state:ident $index:tt $node:ident $variant:ident $child_state:ident $(, $tail_state:ident $tail_index:tt $tail_node:ident $tail_variant:ident $tail_child_state:ident)*) => {
@@ -136,7 +153,7 @@ macro_rules! tuple_children {
 
 /// Generated tuple state enums, parameterized by child state types.
 pub mod child_state {
-    use super::{BtChildren, BtNode, ControlOp, EntryMode, NodeResult, ParamShape};
+    use super::{BtChildren, BtNode, ControlOp, EntryMode, Inspector, NodeResult, ParamShape};
 
     include!(concat!(env!("OUT_DIR"), "/tuple_children.rs"));
 }

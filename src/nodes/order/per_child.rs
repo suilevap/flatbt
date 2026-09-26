@@ -56,7 +56,7 @@ macro_rules! per_child {
         [$value:expr] [$node:expr]) => {
         (
             $($capture)* |$bb: $context, index: usize| match index { $($values)* _ => $value },
-            ($($nodes)* $node,),
+            ($($nodes)* $crate::inspect::label(stringify!($value), $node),),
         )
     };
     (@arms [$index:literal $($indices:literal)*]
@@ -65,7 +65,7 @@ macro_rules! per_child {
         [$value:expr] [$node:expr] $($rest:tt)+) => {
         $crate::per_child!(@arms [$($indices)*]
             [$($capture)*] [$bb: $context]
-            [$($nodes)* $node,]
+            [$($nodes)* $crate::inspect::label(stringify!($value), $node),]
             [$($values)* $index => $value,]
             ; $($rest)+
         )

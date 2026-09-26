@@ -29,6 +29,7 @@ mod score;
 pub use random::{Shuffled, Weighted, shuffled, weighted};
 pub use score::{ByScore, by_score};
 
+use crate::inspect::{Inspector, type_label};
 use crate::params::ParamShape;
 use crate::{
     BtChildren, ControlNode, ControlOp, EntryMode, NodeResult, Selector, Sequence, select, seq,
@@ -170,6 +171,12 @@ where
                 op => return Err(op),
             }
         }
+    }
+
+    fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+        inspector.field("order", &format_args!("{}", type_label::<O>()));
+        self.children
+            .inspect_children(state.map(|state| &state.children), inspector);
     }
 }
 

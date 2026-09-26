@@ -1,6 +1,7 @@
 use core::marker::PhantomData;
 
 use super::read::ReadFn;
+use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, EntryMode, NodeResult};
 
@@ -28,6 +29,11 @@ impl<C, A, P, F: Fn(&mut C) -> NodeResult<A>> BtNode<C, A, P> for Leaf<F> {
     fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
         (self.0)(ctx)
     }
+
+    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+        let node = NodeInfo::new("leaf", state.is_some()).name(fn_name::<F>());
+        inspector.node(node, |_| {});
+    }
 }
 
 /// Predicate over shared context.
@@ -51,6 +57,11 @@ impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
         } else {
             NodeResult::Failure
         }
+    }
+
+    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+        let node = NodeInfo::new("check", state.is_some()).name(fn_name::<F>());
+        inspector.node(node, |_| {});
     }
 }
 
@@ -108,5 +119,16 @@ where
         } else {
             NodeResult::Failure
         }
+    }
+
+    fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
+        let node = NodeInfo::new("guard", state.is_some()).name(fn_name::<F>());
+        inspector.node(node, |inspector| {
+            BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+                &self.child,
+                state,
+                inspector,
+            );
+        });
     }
 }

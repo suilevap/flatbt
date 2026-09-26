@@ -1,3 +1,4 @@
+use crate::inspect::{Inspector, NodeInfo, type_label};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtChildren, BtNode, EntryMode, NodeResult};
 
@@ -61,6 +62,24 @@ pub trait BtControl<C> {
         completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp;
+
+    /// What debug views call this control, such as `seq`. Defaults to the
+    /// type name.
+    fn kind(&self) -> &'static str {
+        type_label::<Self>()
+    }
+
+    /// Reports fields of this control to `inspector`, before its children:
+    /// configuration, and policy state while it runs. `active_child_index` is
+    /// the saved selection, as [`begin`](Self::begin) receives it. Reports
+    /// nothing by default.
+    fn inspect(
+        &self,
+        _state: Option<&Self::State>,
+        _active_child_index: Option<usize>,
+        _inspector: &mut dyn Inspector,
+    ) {
+    }
 }
 
 /// Policy with statically typed children.
@@ -107,6 +126,23 @@ where
             Ok(result) => result,
             Err(op) => self.run_rest(state, op, ctx, &mut params, mode),
         }
+    }
+
+    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+        let kind = BtControl::<C>::kind(&self.policy);
+        inspector.node(NodeInfo::new(kind, state.is_some()), |inspector| {
+            let children = state.map(|state| &state.children);
+            let active = children.and_then(|children| {
+                BtChildren::<C, A, Params::Shape>::active_child_index(&self.children, children)
+            });
+            let policy = state.map(|state| &state.inner);
+            BtControl::<C>::inspect(&self.policy, policy, active, inspector);
+            BtChildren::<C, A, Params::Shape>::inspect_children(
+                &self.children,
+                children,
+                inspector,
+            );
+        });
     }
 }
 
@@ -198,6 +234,10 @@ pub fn seq<Children>(children: Children) -> ControlNode<Sequence, Children> {
 impl<C> BtControl<C> for Sequence {
     type State = ();
 
+    fn kind(&self) -> &'static str {
+        "seq"
+    }
+
     #[inline(always)]
     fn begin(
         &self,
@@ -252,6 +292,10 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
 
 impl<C> BtControl<C> for Selector {
     type State = ();
+
+    fn kind(&self) -> &'static str {
+        "select"
+    }
 
     #[inline(always)]
     fn begin(
