@@ -215,10 +215,9 @@ subtree size and pass offsets to give each child its own id.
 Formatting walks the definition with `inspect`, as `describe().with_inactive()`
 does, numbering nodes in the same preorder. Each node's records are attached
 to its line; nodes without records are hidden. State supplies the live fields
-of the running path, the log everything else. Plumbing that inspection hides
--- `bind`, `named`, `scope!`'s initializer sequence -- keeps its id so the
-numbering matches; `scope!`'s hidden sequence becomes a flag in `NodeInfo`
-rather than a swallowed `enter`.
+of the running path, the log everything else. Plumbing -- `bind`,
+`no_params`, `named` -- has no id of its own: it passes its entry on and adds
+nothing to `NODES`, as it adds no line to inspection.
 
 ## Bevy
 

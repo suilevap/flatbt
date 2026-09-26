@@ -454,9 +454,15 @@ Phase 2 of [Trace](trace.md).
   offsets in one inline `const` block from their `NODES`.
 - **`Entry::child` inherits freshness**, so a node under a fresh parent is
   recorded as new; `candidate` marks it, and switches the mode to Evaluate.
-- **Hidden nodes are counted.** `scope!`'s initializer sequence is reported
-  through `Inspector::enter_hidden`, so inspection and traces number nodes
-  alike, while `describe()` still does not show it.
+- **No hidden nodes.** `scope!` used to wrap its initializers and body in a
+  `seq` that inspection hid, so traces needed a way to count a node nobody
+  sees. `Scope` now runs its initializers itself, through `Scope::init`, when
+  an invocation starts: the tree inspection walks, the tree `describe()` shows
+  and the tree traces number are one tree.
+  A scope without initializers is `Scope<L, N, NoInit>` and carries no
+  "initialized" flag, so its release code is unchanged; with them it is
+  `Init<T>`, whose flag lives in `InitState`. The `scoped_params` example
+  compiles to 33 fewer instructions than with the old wrapping `seq`.
 - **Formatting allocates; recording does not once warm.** The trace view
   builds the tree's shape in `Vec`s when formatted. An allocation test runs
   128 traced updates after warm-up with none.

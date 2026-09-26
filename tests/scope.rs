@@ -4,7 +4,9 @@ use NodeResult::{Failure, Success};
 #[allow(non_upper_case_globals)]
 const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::scope::{Read, WithParams, Write, bind, no_params, params, read, scope, write};
-use flatbt::{BtNode, BtState, Entry, EntryMode, NodeResult, action, leaf, select, seq, update};
+use flatbt::{
+    BtNode, BtState, Entry, EntryMode, NodeResult, action, leaf, leaf_with, select, seq, update,
+};
 
 #[path = "../examples/support/scoped_params.rs"]
 mod support;
@@ -697,4 +699,62 @@ fn scope_keeps_constructor_arguments_and_node_expressions_as_ordinary_rust() {
     assert_eq!(world.looked_at, [Vector2(5.0, 6.0), world.next_patrol]);
     assert_eq!(world.selections, 1);
     assert_eq!(constructions.get(), 1);
+}
+
+#[test]
+fn initializers_run_once_per_invocation() {
+    struct Counter {
+        inits: u32,
+        steps: u32,
+    }
+    let tree = scope! {
+        let start: u32 = |counter: &mut Counter| {
+            counter.inits += 1;
+            counter.steps
+        };
+        sequence {
+            leaf_with(|counter: &mut Counter, start: &u32| {
+                counter.steps += 1;
+                if counter.steps < *start + 3 {
+                    NodeResult::RUNNING
+                } else {
+                    NodeResult::Success
+                }
+            })
+            .with(start);
+        }
+    };
+    let mut state: BtState<_, _> = BtState::new(&tree);
+    let mut counter = Counter { inits: 0, steps: 0 };
+    for mode in [EntryMode::Evaluate, EntryMode::Resume, EntryMode::Evaluate] {
+        let _ = update(&tree, &mut state, &mut counter, mode);
+    }
+    assert_eq!(counter.inits, 1);
+    assert!(!state.is_running());
+    // A new invocation initializes again.
+    let _ = update(&tree, &mut state, &mut counter, EntryMode::Evaluate);
+    assert_eq!(counter.inits, 2);
+}
+
+#[test]
+fn a_failing_initializer_fails_the_scope_without_entering_it() {
+    #[derive(Default)]
+    struct Locals {
+        value: Option<u32>,
+    }
+    let tree = scope::<Locals, _>(leaf(|entered: &mut bool| {
+        *entered = true;
+        NodeResult::Success
+    }))
+    .init((bind(
+        leaf_with(|_: &mut bool, _: &mut Option<u32>| NodeResult::Failure),
+        write(|locals: &mut Locals| &mut locals.value),
+    ),));
+    let mut state: BtState<_, _> = BtState::new(&tree);
+    let mut entered = false;
+    assert_eq!(
+        update(&tree, &mut state, &mut entered, EntryMode::Evaluate),
+        NodeResult::Failure
+    );
+    assert!(!entered);
 }

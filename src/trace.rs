@@ -381,23 +381,16 @@ mod text {
     use super::{Call, Entered, Outcome, TraceLog};
     use crate::inspect::{Inspector, NodeInfo};
 
-    /// The definition's shape, in preorder: each node's depth, and whether
-    /// inspection hides it.
+    /// The definition's shape: each node's depth, in preorder.
     #[derive(Default)]
     struct Shape {
         depth: u32,
-        nodes: Vec<(u32, bool)>,
+        nodes: Vec<u32>,
     }
 
     impl Inspector for Shape {
         fn enter(&mut self, _: NodeInfo<'_>) -> bool {
-            self.nodes.push((self.depth, false));
-            self.depth += 1;
-            true
-        }
-
-        fn enter_hidden(&mut self) -> bool {
-            self.nodes.push((self.depth, true));
+            self.nodes.push(self.depth);
             self.depth += 1;
             true
         }
@@ -405,10 +398,6 @@ mod text {
         fn field(&mut self, _: &str, _: &dyn fmt::Debug) {}
 
         fn exit(&mut self) {
-            self.depth -= 1;
-        }
-
-        fn exit_hidden(&mut self) {
             self.depth -= 1;
         }
     }
@@ -434,7 +423,7 @@ mod text {
         // A subtree ends at the next node no deeper than its root.
         let end = |node: usize| {
             (node + 1..nodes.len())
-                .find(|&next| nodes[next].0 <= nodes[node].0)
+                .find(|&next| nodes[next] <= nodes[node])
                 .unwrap_or(nodes.len())
         };
         let failed = |node: usize| {
@@ -446,7 +435,7 @@ mod text {
             .map(|node| {
                 failed(node)
                     && !(node + 1..end(node))
-                        .any(|child| nodes[child].0 == nodes[node].0 + 1 && failed(child))
+                        .any(|child| nodes[child] == nodes[node] + 1 && failed(child))
             })
             .collect();
         let alternate = f.alternate();
@@ -597,14 +586,6 @@ mod text {
             true
         }
 
-        fn enter_hidden(&mut self) -> bool {
-            if self.begin().is_none() {
-                return false;
-            }
-            self.shown.push(false);
-            true
-        }
-
         fn field(&mut self, name: &str, value: &dyn fmt::Debug) {
             if self.open.is_none() {
                 return;
@@ -622,11 +603,6 @@ mod text {
             if self.shown.pop() == Some(true) {
                 self.depth -= 1;
             }
-        }
-
-        fn exit_hidden(&mut self) {
-            self.close();
-            self.shown.pop();
         }
     }
 }

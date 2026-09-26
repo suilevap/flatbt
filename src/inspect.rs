@@ -82,17 +82,6 @@ pub trait Inspector {
 
     /// Ends the node last entered.
     fn exit(&mut self);
-
-    /// Starts a node that is not shown, such as `scope!`'s initializer
-    /// sequence: its children are reported as the parent's, and it has no
-    /// fields. Returns whether to receive its children. Traces count it, since
-    /// they number nodes by position.
-    fn enter_hidden(&mut self) -> bool {
-        true
-    }
-
-    /// Ends the hidden node last entered.
-    fn exit_hidden(&mut self) {}
 }
 
 impl dyn Inspector + '_ {
@@ -198,14 +187,6 @@ impl Inspector for Rename<'_, '_> {
 
     fn exit(&mut self) {
         self.inner.exit();
-    }
-
-    fn enter_hidden(&mut self) -> bool {
-        self.inner.enter_hidden()
-    }
-
-    fn exit_hidden(&mut self) {
-        self.inner.exit_hidden();
     }
 }
 
@@ -445,87 +426,13 @@ impl Inspector for Text<'_, '_> {
     }
 }
 
-/// Used by `scope!`: its initializer sequence, and locals reported whether or
-/// not their types implement `Debug`.
+/// Used by `scope!` to report locals whether or not their types implement
+/// `Debug`.
 #[doc(hidden)]
 pub mod __private {
     use core::fmt;
 
-    use super::{Inspector, NodeInfo};
-    use crate::{BtNode, Entry, NodeResult};
-
-    /// Runs `N`; reports its children in its place, as children of the parent.
-    pub struct Inline<N>(pub N);
-
-    impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Inline<N> {
-        type State = N::State;
-        const NODES: usize = N::NODES;
-
-        #[inline(always)]
-        fn update(
-            &self,
-            state: &mut N::State,
-            ctx: &mut C,
-            params: P,
-            entry: Entry<'_>,
-        ) -> NodeResult<A> {
-            self.0.update(state, ctx, params, entry)
-        }
-
-        fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
-            self.0.inspect(
-                state,
-                &mut Skip {
-                    inner: inspector,
-                    depth: 0,
-                },
-            );
-        }
-    }
-
-    /// Reports the first node entered as hidden, keeping its descendants.
-    struct Skip<'a, 'b> {
-        inner: &'a mut (dyn Inspector + 'b),
-        depth: usize,
-    }
-
-    impl Inspector for Skip<'_, '_> {
-        fn enter(&mut self, node: NodeInfo<'_>) -> bool {
-            let entered = if self.depth == 0 {
-                self.inner.enter_hidden()
-            } else {
-                self.inner.enter(node)
-            };
-            self.depth += usize::from(entered);
-            entered
-        }
-
-        fn field(&mut self, name: &str, value: &dyn fmt::Debug) {
-            if self.depth > 1 {
-                self.inner.field(name, value);
-            }
-        }
-
-        fn exit(&mut self) {
-            if self.depth == 1 {
-                self.inner.exit_hidden();
-            } else {
-                self.inner.exit();
-            }
-            self.depth -= 1;
-        }
-
-        fn enter_hidden(&mut self) -> bool {
-            let entered = self.inner.enter_hidden();
-            self.depth += usize::from(entered);
-            entered
-        }
-
-        fn exit_hidden(&mut self) {
-            self.inner.exit_hidden();
-            self.depth -= 1;
-        }
-    }
+    use super::Inspector;
 
     pub struct Probe<'a, T>(pub &'a T);
 
