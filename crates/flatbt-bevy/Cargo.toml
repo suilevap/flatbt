@@ -3,6 +3,7 @@ name = "flatbt-bevy"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Bevy ECS integration for FlatBT"
 rust-version = "1.95"
 
