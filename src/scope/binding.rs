@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use crate::inspect::Inspector;
 use crate::params::ParamShape;
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// Projects local fields into borrowed node parameters.
 pub trait ParamBinding<L> {
@@ -125,14 +125,20 @@ where
 {
     type State = S;
 
-    fn update(&self, state: &mut S, ctx: &mut C, locals: &mut L, mode: EntryMode) -> NodeResult<A> {
+    fn update(
+        &self,
+        state: &mut S,
+        ctx: &mut C,
+        locals: &mut L,
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
         let Some(params) = self.binding.get(locals) else {
             return NodeResult::error(format_args!(
                 "bound input is unavailable for {}",
                 core::any::type_name::<N>()
             ));
         };
-        self.node.update(state, ctx, params, mode)
+        self.node.update(state, ctx, params, entry)
     }
 
     fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
@@ -150,8 +156,14 @@ pub fn no_params<N>(node: N) -> WithoutParams<N> {
 impl<C, A, P, N: BtNode<C, A>> BtNode<C, A, P> for WithoutParams<N> {
     type State = N::State;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: P, mode: EntryMode) -> NodeResult<A> {
-        self.0.update(state, ctx, (), mode)
+    fn update(
+        &self,
+        state: &mut Self::State,
+        ctx: &mut C,
+        _: P,
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
+        self.0.update(state, ctx, (), entry)
     }
 
     fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {

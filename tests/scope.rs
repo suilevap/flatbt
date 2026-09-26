@@ -4,7 +4,7 @@ use NodeResult::{Failure, Success};
 #[allow(non_upper_case_globals)]
 const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::scope::{Read, WithParams, Write, bind, no_params, params, read, scope, write};
-use flatbt::{BtNode, BtState, EntryMode, NodeResult, action, leaf, select, seq, update};
+use flatbt::{BtNode, BtState, Entry, EntryMode, NodeResult, action, leaf, select, seq, update};
 
 #[path = "../examples/support/scoped_params.rs"]
 mod support;
@@ -118,7 +118,7 @@ fn a_node_can_request_an_input_and_a_different_output_of_the_same_type() {
             _: &mut (),
             _: &mut World,
             (input, output): (&Vector2, &mut Option<Vector2>),
-            _: EntryMode,
+            _: Entry<'_>,
         ) -> NodeResult {
             *output = Some(Vector2(input.0 + 5.0, input.1 + 6.0));
             Success
@@ -170,7 +170,7 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
     struct Increment;
     impl BtNode<(), (), &mut usize> for Increment {
         type State = ();
-        fn update(&self, _: &mut (), _: &mut (), value: &mut usize, _: EntryMode) -> NodeResult {
+        fn update(&self, _: &mut (), _: &mut (), value: &mut usize, _: Entry<'_>) -> NodeResult {
             *value += 1;
             Failure
         }
@@ -178,7 +178,7 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
     struct AssertTwo;
     impl BtNode<(), (), &usize> for AssertTwo {
         type State = ();
-        fn update(&self, _: &mut (), _: &mut (), value: &usize, _: EntryMode) -> NodeResult {
+        fn update(&self, _: &mut (), _: &mut (), value: &usize, _: Entry<'_>) -> NodeResult {
             assert_eq!(*value, 2);
             Success
         }
@@ -211,7 +211,7 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
             _: &mut (),
             _: &mut World,
             (input, output): (&Vector2, &mut Option<Vector2>),
-            _: EntryMode,
+            _: Entry<'_>,
         ) -> NodeResult {
             *output = Some(Vector2(input.0 + self.0, input.1));
             Success
@@ -225,7 +225,7 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
             _: &mut (),
             _: &mut World,
             (a, b): (&Vector2, &Vector2),
-            _: EntryMode,
+            _: Entry<'_>,
         ) -> NodeResult {
             assert_eq!(b.0 - a.0, 10.0);
             Success
@@ -273,7 +273,7 @@ fn a_leading_with_binds_the_whole_node_after_it() {
             _: &mut (),
             _: &mut World,
             (input, output): (&Vector2, &mut Option<Vector2>),
-            _: EntryMode,
+            _: Entry<'_>,
         ) -> NodeResult {
             *output = Some(Vector2(input.0 + 10.0, input.1));
             Success
@@ -329,7 +329,7 @@ fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_c
             state: &mut Self::State,
             ctx: &mut Context,
             _: &Resource,
-            _: EntryMode,
+            _: Entry<'_>,
         ) -> NodeResult {
             state.get_or_insert_with(|| Resource(ctx.log.clone(), "child"));
             if ctx.done { Success } else { Running }
@@ -439,7 +439,7 @@ fn bindings_support_more_than_three_ordered_inputs_and_outputs() {
                 &mut Option<Vector2>,
                 &mut Option<Vector2>,
             ),
-            _: EntryMode,
+            _: Entry<'_>,
         ) -> NodeResult {
             *first = Some(Vector2(a.0, b.1));
             *second = Some(Vector2(b.0 + c.0, a.1 + c.1));
@@ -481,7 +481,7 @@ impl BtNode<World, (), &mut Option<Vector2>> for GetNextPatrolPos {
         _: &mut (),
         world: &mut World,
         output: &mut Option<Vector2>,
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult {
         *output = Some(world.next_patrol);
         world.selections += 1;
@@ -498,7 +498,7 @@ impl BtNode<World, (), &mut Option<Vector2>> for GetVisibleDoorPos {
         started: &mut bool,
         world: &mut World,
         output: &mut Option<Vector2>,
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult {
         // Suspend before producing the value.
         if !*started {
@@ -531,10 +531,10 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
             count: &mut usize,
             ctx: &mut Context,
             input: &u32,
-            mode: EntryMode,
+            entry: Entry<'_>,
         ) -> NodeResult {
             *count += 1;
-            ctx.visits.push((*input, mode, *count));
+            ctx.visits.push((*input, entry.mode(), *count));
             if *count < 3 { Running } else { Success }
         }
     }
@@ -661,7 +661,7 @@ fn scope_keeps_constructor_arguments_and_node_expressions_as_ordinary_rust() {
     }
     impl BtNode<World> for Mark {
         type State = ();
-        fn update(&self, _: &mut (), world: &mut World, _: (), _: EntryMode) -> NodeResult {
+        fn update(&self, _: &mut (), world: &mut World, _: (), _: Entry<'_>) -> NodeResult {
             world.looked_at.push(self.position);
             Success
         }

@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 use super::read::ReadFn;
 use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// Stateless callable. Captures hold configuration; context holds mutable data.
 pub struct Leaf<F>(F);
@@ -26,7 +26,7 @@ impl<C, A, P, F: Fn(&mut C) -> NodeResult<A>> BtNode<C, A, P> for Leaf<F> {
     type State = ();
 
     #[inline(always)]
-    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
+    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
         (self.0)(ctx)
     }
 
@@ -51,7 +51,7 @@ impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
     type State = ();
 
     #[inline(always)]
-    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: EntryMode) -> NodeResult<A> {
+    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
         if (self.0)(ctx) {
             NodeResult::Success
         } else {
@@ -112,10 +112,10 @@ where
     type State = S;
 
     #[inline(always)]
-    fn update(&self, state: &mut S, ctx: &mut C, params: P, mode: EntryMode) -> NodeResult<A> {
+    fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
         if self.predicate.call(ctx, P::Shape::reborrow(&mut params)) {
-            self.child.update(state, ctx, params, mode)
+            self.child.update(state, ctx, params, entry)
         } else {
             NodeResult::Failure
         }

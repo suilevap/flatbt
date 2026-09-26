@@ -1,6 +1,6 @@
 use crate::inspect::{Inspector, NodeInfo, type_label};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// Inline lifecycle: start, query progress, tick while Running, then complete.
 /// All callbacks may run on rejected candidates; effects are not rolled back.
@@ -61,7 +61,7 @@ where
         state: &mut Self::State,
         ctx: &mut C,
         params: P,
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult<A> {
         let mut params = params.into_value();
         if state.is_none() {

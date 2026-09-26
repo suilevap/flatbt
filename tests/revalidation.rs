@@ -10,7 +10,7 @@ use NodeResult::{Failure, Success};
 #[allow(non_upper_case_globals)]
 const Running: NodeResult = NodeResult::RUNNING;
 
-use flatbt::{BtNode, EntryMode, NodeResult, check, guard, leaf, select, seq};
+use flatbt::{BtNode, Entry, EntryMode, NodeResult, check, guard, leaf, select, seq};
 
 #[path = "../examples/support/wait_frames.rs"]
 mod wait;
@@ -97,11 +97,11 @@ impl BtNode<Context> for Probe {
         state: &mut ProbeState,
         ctx: &mut Context,
         _: (),
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult {
         state.drops.get_or_insert_with(|| self.drops.clone());
         state.updates += 1;
-        ctx.entries.push((self.name, mode, state.updates));
+        ctx.entries.push((self.name, entry.mode(), state.updates));
         if state.updates <= self.suspend_updates {
             Running
         } else {

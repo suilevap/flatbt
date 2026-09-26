@@ -9,7 +9,7 @@ use NodeResult::{Failure, Success};
 /// `Running` for a tree that decides nothing; see `NodeResult::RUNNING`.
 #[allow(non_upper_case_globals)]
 const Running: NodeResult = NodeResult::RUNNING;
-use flatbt::{BtNode, BtState, EntryMode, NodeResult, choose, leaf, select, seq, update};
+use flatbt::{BtNode, BtState, Entry, EntryMode, NodeResult, choose, leaf, select, seq, update};
 
 #[derive(Default)]
 struct Context {
@@ -45,11 +45,11 @@ impl BtNode<Context> for Probe {
         state: &mut Self::State,
         ctx: &mut Context,
         _: (),
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult {
         state.drops.get_or_insert_with(|| self.drops.clone());
         state.updates += 1;
-        ctx.entries.push((self.name, mode, state.updates));
+        ctx.entries.push((self.name, entry.mode(), state.updates));
         Running
     }
 }

@@ -1,5 +1,5 @@
 use crate::inspect::{Inspector, NodeInfo};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// A terminal result a child's result is mapped to.
 #[derive(Clone, Copy)]
@@ -61,9 +61,9 @@ impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
         state: &mut N::State,
         ctx: &mut C,
         params: P,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
-        match self.child.update(state, ctx, params, mode) {
+        match self.child.update(state, ctx, params, entry) {
             running @ NodeResult::Running(_) => running,
             NodeResult::Success => self.success.result(),
             NodeResult::Failure => self.failure.result(),

@@ -1,4 +1,4 @@
-use flatbt::{BtAction, BtNode, EntryMode, NodeResult};
+use flatbt::{BtAction, BtNode, Entry, NodeResult};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vector2(pub f32, pub f32);
@@ -20,7 +20,7 @@ impl BtNode<World, (), &Vector2> for LookAt {
         _: &mut (),
         world: &mut World,
         position: &Vector2,
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult {
         world.looked_at.push(*position);
         NodeResult::Success

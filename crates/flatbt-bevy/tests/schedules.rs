@@ -145,7 +145,7 @@ impl BtNode<Agent, Acting> for Act {
         turns: &mut u32,
         agent: &mut Agent,
         _: (),
-        _: EntryMode,
+        _: Entry<'_>,
     ) -> NodeResult<Acting> {
         *turns += 1;
         agent.fired += 1;

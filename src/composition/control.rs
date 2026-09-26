@@ -1,6 +1,6 @@
 use crate::inspect::{Inspector, NodeInfo, type_label};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtChildren, BtNode, EntryMode, NodeResult};
+use crate::{BtChildren, BtNode, Entry, EntryMode, NodeResult};
 
 /// Next step requested by a policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,11 +108,11 @@ where
         state: &mut Self::State,
         ctx: &mut C,
         params: Params,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
         let mut params = params.into_value();
         let active_child_index = self.children.active_child_index(&state.children);
-        let op = match (mode, active_child_index) {
+        let op = match (entry.mode(), active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
             _ => self
                 .policy
@@ -122,9 +122,9 @@ where
         // the compiler hoist every descendant's address out of it and spill them.
         // `run_from` already follows children in order, which is all that
         // `Sequence` and `Selector` ask for.
-        match self.run(state, op, ctx, &mut params, mode) {
+        match self.run(state, op, ctx, &mut params, entry) {
             Ok(result) => result,
-            Err(op) => self.run_rest(state, op, ctx, &mut params, mode),
+            Err(op) => self.run_rest(state, op, ctx, &mut params, entry),
         }
     }
 
@@ -156,7 +156,7 @@ impl<P, Children> ControlNode<P, Children> {
         op: ControlOp,
         ctx: &mut C,
         params: &mut S::Value<'_>,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> Result<NodeResult<A>, ControlOp>
     where
         P: BtControl<C>,
@@ -188,7 +188,7 @@ impl<P, Children> ControlNode<P, Children> {
             child_index,
             ctx,
             params,
-            mode,
+            entry,
             &mut next,
         ) {
             Ok(running) => Ok(running),
@@ -206,14 +206,14 @@ impl<P, Children> ControlNode<P, Children> {
         mut op: ControlOp,
         ctx: &mut C,
         params: &mut S::Value<'_>,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A>
     where
         P: BtControl<C>,
         Children: BtChildren<C, A, S>,
     {
         loop {
-            match self.run(state, op, ctx, params, mode) {
+            match self.run(state, op, ctx, params, entry) {
                 Ok(result) => return result,
                 Err(next) => op = next,
             }

@@ -27,11 +27,11 @@ pub trait ParamValue {
 /// Shared input shape. Its view prevents direct mutation:
 ///
 /// ```compile_fail,E0594
-/// use flatbt::{BtNode, EntryMode, NodeResult};
+/// use flatbt::{BtNode, Entry, NodeResult};
 /// struct InvalidWriter;
 /// impl BtNode<(), (), &u32> for InvalidWriter {
 ///     type State = ();
-///     fn update(&self, _: &mut (), _: &mut (), input: &u32, _: EntryMode) -> NodeResult {
+///     fn update(&self, _: &mut (), _: &mut (), input: &u32, _: Entry<'_>) -> NodeResult {
 ///         *input = 10;
 ///         NodeResult::Success
 ///     }

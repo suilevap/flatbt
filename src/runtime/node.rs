@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use crate::inspect::{Inspector, NodeInfo, type_label};
 
 /// Success/Failure ends an invocation; Running preserves it.
@@ -95,6 +97,45 @@ pub enum EntryMode {
     Resume,
 }
 
+/// How a node is entered in one update: its [`EntryMode`], and in debug builds
+/// the channel a trace of the update will be recorded through.
+///
+/// `Copy`: pass it on to children as it is, or with
+/// [`with_mode`](Self::with_mode) for a fresh candidate. In release builds it
+/// is the mode alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entry<'t> {
+    mode: EntryMode,
+    trace: PhantomData<&'t ()>,
+}
+
+impl Entry<'_> {
+    /// An entry that records nothing, for calling a node directly.
+    pub const fn new(mode: EntryMode) -> Self {
+        Self {
+            mode,
+            trace: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn mode(self) -> EntryMode {
+        self.mode
+    }
+
+    /// The same entry under another mode.
+    #[inline(always)]
+    pub fn with_mode(self, mode: EntryMode) -> Self {
+        Self { mode, ..self }
+    }
+}
+
+impl From<EntryMode> for Entry<'_> {
+    fn from(mode: EntryMode) -> Self {
+        Self::new(mode)
+    }
+}
+
 /// Immutable definition with owned invocation state.
 ///
 /// `C` is application context; `A` is what a running invocation is doing, and
@@ -106,9 +147,11 @@ pub enum EntryMode {
 /// generic over `A` and never name it, so the act type unifies from the nodes
 /// that do decide and is never written out.
 ///
-/// Fresh entry receives Evaluate. Existing entry receives Resume or Evaluate;
-/// Evaluate must not reset state. Composers own descendant state, initialization,
-/// and cleanup, and pass the appropriate fields to child updates.
+/// `entry` carries the [`EntryMode`]. Fresh entry receives Evaluate. Existing
+/// entry receives Resume or Evaluate; Evaluate must not reset state. Composers
+/// own descendant state, initialization, and cleanup, pass the appropriate
+/// fields to child updates, and pass `entry` on, with
+/// [`Entry::with_mode`] for a fresh candidate.
 ///
 /// Drive roots with [`crate::update`] and [`crate::BtState`]. Report recoverable
 /// errors with [`NodeResult::error`]. User panics propagate.
@@ -120,7 +163,7 @@ pub trait BtNode<C, A = (), P = ()> {
         state: &mut Self::State,
         ctx: &mut C,
         params: P,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A>;
 
     /// Reports this node, and its descendants, for debugging. `state` is its

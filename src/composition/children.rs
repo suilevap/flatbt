@@ -1,6 +1,6 @@
 use crate::inspect::Inspector;
 use crate::params::ParamShape;
-use crate::{BtNode, ControlOp, EntryMode, NodeResult};
+use crate::{BtNode, ControlOp, Entry, EntryMode, NodeResult};
 
 /// Static tuple dispatch with at most one active child.
 /// Generated through `FLATBT_MAX_CHILDREN` (default 32).
@@ -28,7 +28,7 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
         first: usize,
         ctx: &mut C,
         params: &mut S::Value<'_>,
-        mode: EntryMode,
+        entry: Entry<'_>,
         next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
     ) -> Result<NodeResult<A>, ControlOp>;
 
@@ -51,7 +51,7 @@ impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
         first: usize,
         _: &mut C,
         _: &mut S::Value<'_>,
-        _: EntryMode,
+        _: Entry<'_>,
         _: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
     ) -> Result<NodeResult<A>, ControlOp> {
         Err(ControlOp::RunChild(first))
@@ -93,7 +93,7 @@ macro_rules! tuple_children {
                 first: usize,
                 ctx: &mut C,
                 params: &mut S::Value<'_>,
-                mode: EntryMode,
+                entry: Entry<'_>,
                 next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
             ) -> Result<NodeResult<A>, ControlOp> {
                 // One block per child, in order. When the policy asks for the
@@ -104,7 +104,7 @@ macro_rules! tuple_children {
                 $(
                     if index == $index {
                         let result = if let $state::$variant(active) = state {
-                            let result = self.$index.update(active, ctx, S::reborrow(params), mode);
+                            let result = self.$index.update(active, ctx, S::reborrow(params), entry);
                             if !result.is_running() {
                                 *state = $state::Empty;
                             }
@@ -112,7 +112,7 @@ macro_rules! tuple_children {
                         } else {
                             // Preserve the old variant until this candidate is selected.
                             let mut candidate = $child_state::default();
-                            let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), EntryMode::Evaluate);
+                            let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), entry.with_mode(EntryMode::Evaluate));
                             if result.is_running() {
                                 *state = $state::$variant(candidate);
                             }
@@ -153,7 +153,9 @@ macro_rules! tuple_children {
 
 /// Generated tuple state enums, parameterized by child state types.
 pub mod child_state {
-    use super::{BtChildren, BtNode, ControlOp, EntryMode, Inspector, NodeResult, ParamShape};
+    use super::{
+        BtChildren, BtNode, ControlOp, Entry, EntryMode, Inspector, NodeResult, ParamShape,
+    };
 
     include!(concat!(env!("OUT_DIR"), "/tuple_children.rs"));
 }

@@ -17,7 +17,7 @@ pub use crate::{
     weighted, weighted_select,
 };
 pub use crate::{
-    BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, EntryMode,
-    Guarded, Leaf, NodeResult, Selector, Sequence, check, control, guard, leaf, select, seq,
-    update, update_slot,
+    BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, Entry,
+    EntryMode, Guarded, Leaf, NodeResult, Selector, Sequence, check, control, guard, leaf, select,
+    seq, update, update_slot,
 };

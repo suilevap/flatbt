@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo, fn_name};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// A child whose act is converted.
 pub struct MapAct<F, N, B> {
@@ -46,9 +46,9 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
         state: &mut N::State,
         ctx: &mut C,
         params: P,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
-        match self.child.update(state, ctx, params, mode) {
+        match self.child.update(state, ctx, params, entry) {
             NodeResult::Running(act) => NodeResult::Running((self.map)(act)),
             NodeResult::Success => NodeResult::Success,
             NodeResult::Failure => NodeResult::Failure,

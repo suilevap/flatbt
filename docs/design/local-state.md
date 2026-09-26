@@ -19,7 +19,7 @@ re-exports Read/Write for bindings.
 trait BtNode<C, P = ()> {
     type State: Default + Send + 'static;
     fn update(&self, state: &mut Self::State, ctx: &mut C,
-              params: P, mode: EntryMode) -> NodeResult;
+              params: P, entry: Entry<'_>) -> NodeResult;
 }
 ```
 

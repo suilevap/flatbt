@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, EntryMode, NodeResult, ReadFn};
+use crate::{BtNode, Entry, EntryMode, NodeResult, ReadFn};
 
 /// A child restarted while a condition holds.
 pub struct RepeatWhile<F, N, M> {
@@ -99,7 +99,7 @@ where
         state: &mut Self::State,
         ctx: &mut C,
         params: P,
-        mut mode: EntryMode,
+        mut entry: Entry<'_>,
     ) -> NodeResult<A> {
         let mut params = params.into_value();
         if !self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
@@ -107,9 +107,12 @@ where
         }
         let mut restarted = false;
         loop {
-            let result =
-                self.child
-                    .update(&mut state.child, ctx, P::Shape::reborrow(&mut params), mode);
+            let result = self.child.update(
+                &mut state.child,
+                ctx,
+                P::Shape::reborrow(&mut params),
+                entry,
+            );
             if result.is_running() {
                 state.ran = true;
                 return result;
@@ -129,7 +132,7 @@ where
                 _ => return NodeResult::Failure,
             }
             restarted = true;
-            mode = EntryMode::Evaluate;
+            entry = entry.with_mode(EntryMode::Evaluate);
         }
     }
 

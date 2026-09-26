@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo};
-use crate::{BtNode, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// A subtree run over part of the context.
 pub struct Focus<F, N, D> {
@@ -53,9 +53,9 @@ where
         state: &mut N::State,
         ctx: &mut C,
         params: P,
-        mode: EntryMode,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
-        self.child.update(state, (self.lens)(ctx), params, mode)
+        self.child.update(state, (self.lens)(ctx), params, entry)
     }
 
     fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {

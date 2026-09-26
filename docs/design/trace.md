@@ -1,6 +1,6 @@
 # Trace: why the tree chose what it runs
 
-Status: proposal, not implemented.
+Status: proposal. Phase 1, `Entry`, is implemented; the trace itself is not.
 
 `describe()` shows *what* runs. A trace shows *why*: which nodes the last
 update entered, how, what each returned and decided, including branches that
@@ -139,7 +139,19 @@ their `Call`s.
 ## Passing the log: `Entry`
 
 The log belongs to the agent and reaches nodes as an argument, the way the
-entry mode already does. `update`'s `mode: EntryMode` becomes an `Entry`:
+entry mode already does. `update`'s `mode: EntryMode` becomes an `Entry`.
+
+Each kind of data a node sees then has one owner and one lifetime:
+
+| Data | Owner | Lives |
+| --- | --- | --- |
+| Context (`ctx`), the blackboard | the application | across invocations |
+| Invocation state (`BtState`) | the agent | while the tree runs |
+| Scope locals (`params`) | a `scope` in that state | while the scope runs |
+| `Entry` | the update | one call |
+
+`Entry` is the per-update part: how this node was entered, and in dev builds
+where this update is being recorded.
 
 ```rust
 fn update(&self, state: &mut Self::State, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A>;
@@ -250,7 +262,9 @@ before and after, and the suite runs in both profiles.
 ## Phases
 
 1. `Entry` replacing `EntryMode` in `update`, migrated across the crate, the
-   examples and the Bevy crate; release assembly check.
+   examples and the Bevy crate; release assembly check. Done: release
+   assembly of the `acts`, `choose` and `resume` examples is instruction for
+   instruction the same as before.
 2. `NODES`, ids through `entry.child`, the log with `Call`s, `set_trace`, the
    trace view with `← cause`; allocation test.
 3. `entry.record` and `records::<R>()`; policy answers, conditions,

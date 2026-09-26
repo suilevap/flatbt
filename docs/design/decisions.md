@@ -421,3 +421,20 @@ See [Inspection](inspect.md).
   recorded in debug builds and merged by `inspect`.
 - **Bevy debugging is a marker component**, not a Cargo feature or a
   `bevy_log` dependency: unmarked agents cost an empty query.
+
+## 2026-09-26 — `Entry` replaces `EntryMode` in `update`
+
+`BtNode::update` takes `entry: Entry<'_>` instead of `mode: EntryMode`, so a
+trace can later reach every node as an argument rather than through a
+thread-local or a global. See [Trace](trace.md).
+
+- **`Copy`, like the mode**, so controls pass it to several children as before.
+  `entry.mode()` reads the mode; `entry.with_mode(..)` makes a fresh
+  candidate's.
+- **The mode alone for now.** Its lifetime is for the trace handle to come.
+  Release assembly of three examples is unchanged.
+- **Drivers keep `EntryMode`**: `update`, `update_slot` and Bevy's
+  `Behavior::tick` build the root's `Entry` themselves. `Entry::new(mode)`
+  calls a node directly, as tests do.
+- **Breaking for custom nodes.** The migration is mechanical: rename the
+  argument, read `entry.mode()`, pass `entry` on.

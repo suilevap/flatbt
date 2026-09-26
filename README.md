@@ -607,9 +607,11 @@ runs stays generic over it and never names it.
 `P` carries parameters separately from context; the root supplies `()`.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
-A composing node stores descendant states and calls
-`child.update(&mut state.child, ctx, params, mode)`. It owns initialization,
-fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
+`update` receives an `Entry`: `entry.mode()` is Resume or Evaluate. A composing
+node stores descendant states and calls
+`child.update(&mut state.child, ctx, params, entry)`, passing its own entry on,
+or `entry.with_mode(EntryMode::Evaluate)` for a fresh candidate. It owns
+initialization, fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
 suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 
 - Context mutations and ticks take effect immediately, including on failed branches.
