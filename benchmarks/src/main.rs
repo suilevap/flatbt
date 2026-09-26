@@ -5,6 +5,7 @@ mod common;
 mod harness;
 mod libs;
 mod soldier;
+mod villager;
 
 use common::{SCENARIOS, Scenario};
 use harness::{Config, Measure, Report};
@@ -79,11 +80,14 @@ fn main() -> ExitCode {
         .filter(|s| scenario.is_none_or(|x| x == *s))
     {
         // Every library must behave identically to FlatBT on the same inputs.
-        let reference = entries
+        // Skipped without the `catalog` feature.
+        let Some(reference) = entries
             .iter()
             .find(|e| e.lib() == libs::flatbt::NAME && e.scenario() == s)
-            .expect("flatbt covers every scenario")
-            .trace(100_000);
+        else {
+            continue;
+        };
+        let reference = reference.trace(100_000);
         let reports: Vec<Report> = entries
             .iter()
             .filter(|e| e.scenario() == s && lib.as_deref().is_none_or(|l| l == e.lib()))
@@ -123,7 +127,10 @@ fn config(quick: bool) -> Config {
 /// `csharp/compare.sh`: lib, scenario, ns/tick for 1 agent and for 10k,
 /// bytes allocated per tick, bytes per agent, ns to build an agent, checksum.
 fn evaluate(config: &Config) {
-    for e in libs::flatbt::evaluate_entries() {
+    for e in libs::flatbt::evaluate_entries()
+        .into_iter()
+        .filter(|e| common::BASIC.contains(&e.scenario()))
+    {
         eprintln!("running {} / {}", e.lib(), e.scenario().name());
         let r = e.run(config);
         println!(
@@ -179,6 +186,19 @@ fn print_table(s: Scenario, reports: &[Report], reference: &(common::Bb, [u64; 3
             .map(|(name, n)| format!("{name} {n}"))
             .collect();
         println!("Actions completed per 100k ticks: {}.\n", mix.join(", "));
+    }
+    if s == Scenario::Villager {
+        let v = &reference.0.villager;
+        let mix: Vec<String> = villager::Effect::NAMES
+            .iter()
+            .zip(&v.effects)
+            .map(|(name, n)| format!("{name} {n}"))
+            .collect();
+        println!(
+            "Actions completed per 100k ticks: {}; {} random draws.\n",
+            mix.join(", "),
+            v.draws
+        );
     }
     println!(
         "| library | ns/tick, 1 agent | ns/tick, 10k agents | allocs/tick | bytes/tick | bytes/agent (inline + heap) | allocs to build an agent | ns to build an agent | peak transient heap | shared tree | same result |"

@@ -1,4 +1,4 @@
-use crate::common::{Bb, Op, Outcome, SCENARIOS, Spec};
+use crate::common::{BASIC, Bb, Op, Outcome, Spec};
 use crate::harness::{Measure, entry};
 use bonsai_bt::{ActionArgs, BT, Behavior, Event, RUNNING, Status, UpdateArgs};
 
@@ -9,6 +9,7 @@ fn build(spec: &Spec) -> Behavior<Op> {
         Spec::Seq(children) => Behavior::Sequence(children.iter().map(build).collect()),
         Spec::Sel(children) => Behavior::Select(children.iter().map(build).collect()),
         Spec::Leaf(op) => Behavior::Action(*op),
+        _ => unreachable!("only BASIC scenarios"),
     }
 }
 
@@ -37,7 +38,8 @@ fn tick(bt: &mut BT<Op, ()>, bb: &mut Bb) -> Outcome {
 }
 
 pub fn entries() -> Vec<Box<dyn Measure>> {
-    SCENARIOS
+    // No custom composites: the enum of node kinds is closed.
+    BASIC
         .into_iter()
         .map(|scenario| {
             entry(

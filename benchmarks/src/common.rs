@@ -2,9 +2,10 @@
 //! operations, and trees described once as a [`Spec`].
 
 use crate::soldier::{self, Soldier, SoldierOp};
+use crate::villager::{self, Villager, VillagerOp};
 
 /// Per-agent world state. Every library reads and writes it through [`Op::run`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Bb {
     pub t: u32,
     pub mode: u8,
@@ -16,6 +17,9 @@ pub struct Bb {
     /// Only the `soldier` scenario's world moves it.
     pub rich: bool,
     pub soldier: Soldier,
+    /// Only the `villager` scenario's world moves it.
+    pub village: bool,
+    pub villager: Villager,
 }
 
 impl Bb {
@@ -30,6 +34,8 @@ impl Bb {
             score: 0,
             rich: scenario == Scenario::Soldier,
             soldier: Soldier::new(),
+            village: scenario == Scenario::Villager,
+            villager: Villager::new(t.wrapping_mul(747_796_405).wrapping_add(1)),
         }
     }
 
@@ -45,6 +51,9 @@ impl Bb {
         }
         if self.rich {
             soldier::step(&mut self.soldier, h);
+        }
+        if self.village {
+            villager::step(&mut self.villager, h);
         }
     }
 }
@@ -69,6 +78,13 @@ pub enum Op {
     Heal,
     Attack,
     Soldier(SoldierOp),
+    Villager(VillagerOp),
+}
+
+impl From<VillagerOp> for Op {
+    fn from(op: VillagerOp) -> Self {
+        Op::Villager(op)
+    }
 }
 
 impl From<SoldierOp> for Op {
@@ -109,6 +125,7 @@ impl Op {
                 Success
             }
             Op::Soldier(op) => op.run(bb),
+            Op::Villager(op) => op.run(bb),
         }
     }
 }
@@ -128,6 +145,77 @@ pub enum Spec {
     Seq(Vec<Spec>),
     Sel(Vec<Spec>),
     Leaf(Op),
+    /// `select` (true) or `seq` over children in the order `Order` picks.
+    Ordered(bool, Order, Vec<Spec>),
+    Repeat(usize, Box<Spec>),
+    Retry(usize, Box<Spec>),
+    IfElse(fn(&Bb) -> bool, Box<Spec>, Box<Spec>),
+    Invert(Box<Spec>),
+    ForceSuccess(Box<Spec>),
+    RepeatWhile(fn(&Bb) -> bool, Box<Spec>),
+}
+
+/// How an ordered control picks its next child. Ports FlatBT's `by_score`,
+/// `shuffled` and `weighted` exactly, for the libraries without them.
+#[derive(Clone, Copy)]
+pub enum Order {
+    Score(fn(&Bb, usize) -> i32),
+    Shuffle,
+    Weighted(fn(&Bb, usize) -> f32),
+}
+
+impl Order {
+    /// The next of `count` children not in `used`, as FlatBT picks it when no
+    /// child is running: always the case under `Resume`.
+    pub fn next(self, bb: &mut Bb, used: u64, count: usize) -> Option<usize> {
+        let free = |index: &usize| used & (1 << index) == 0;
+        match self {
+            Order::Score(score) => {
+                let mut best: Option<(usize, i32)> = None;
+                for index in (0..count).filter(free) {
+                    let score = score(bb, index);
+                    // Ties go to the lower index.
+                    if best.is_none_or(|(_, best)| score > best) {
+                        best = Some((index, score));
+                    }
+                }
+                best.map(|(index, _)| index)
+            }
+            Order::Shuffle => {
+                let left = count - used.count_ones() as usize;
+                if left == 0 {
+                    return None;
+                }
+                let nth = villager::draw(bb) as usize % left;
+                (0..count).filter(free).nth(nth)
+            }
+            Order::Weighted(weight) => {
+                let weight = |bb: &Bb, index: usize| {
+                    let weight = weight(bb, index);
+                    if weight > 0.0 { weight } else { 0.0 }
+                };
+                let total: f32 = (0..count).filter(free).map(|index| weight(bb, index)).sum();
+                if total <= 0.0 || !total.is_finite() {
+                    return None;
+                }
+                let draw = villager::draw(bb) as f32 / (u32::MAX as f32 + 1.0) * total;
+                let mut last = None;
+                let mut sum = 0.0;
+                for index in (0..count).filter(free) {
+                    let weight = weight(bb, index);
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    sum += weight;
+                    last = Some(index);
+                    if draw < sum {
+                        break;
+                    }
+                }
+                last
+            }
+        }
+    }
 }
 
 impl Spec {
@@ -135,7 +223,20 @@ impl Spec {
     pub fn shape(&self) -> (usize, usize, usize) {
         match self {
             Spec::Leaf(_) => (1, 1, 1),
-            Spec::Seq(children) | Spec::Sel(children) => children
+            Spec::Repeat(_, child)
+            | Spec::Retry(_, child)
+            | Spec::Invert(child)
+            | Spec::ForceSuccess(child)
+            | Spec::RepeatWhile(_, child) => {
+                let (n, l, d) = child.shape();
+                (n + 1, l, d + 1)
+            }
+            Spec::IfElse(_, then, otherwise) => {
+                let (tn, tl, td) = then.shape();
+                let (on, ol, od) = otherwise.shape();
+                (1 + tn + on, tl + ol, 1 + td.max(od))
+            }
+            Spec::Seq(children) | Spec::Sel(children) | Spec::Ordered(_, _, children) => children
                 .iter()
                 .map(Spec::shape)
                 .fold((1, 0, 0), |(n, l, d), (cn, cl, cd)| {
@@ -155,9 +256,21 @@ pub enum Scenario {
     Guard,
     /// A game NPC: 7 priorities, 7 levels, see `soldier`.
     Soldier,
+    /// Utility, weighted and shuffled orders with decorators, see `villager`.
+    Villager,
 }
 
-pub const SCENARIOS: [Scenario; 4] = [
+pub const SCENARIOS: [Scenario; 5] = [
+    Scenario::Select8,
+    Scenario::Patrol,
+    Scenario::Guard,
+    Scenario::Soldier,
+    Scenario::Villager,
+];
+
+/// The scenarios built from sequences, selectors and leaves only: all that
+/// every library can express.
+pub const BASIC: [Scenario; 4] = [
     Scenario::Select8,
     Scenario::Patrol,
     Scenario::Guard,
@@ -171,6 +284,7 @@ impl Scenario {
             Scenario::Patrol => "patrol",
             Scenario::Guard => "guard",
             Scenario::Soldier => "soldier",
+            Scenario::Villager => "villager",
         }
     }
 
@@ -191,6 +305,7 @@ impl Scenario {
                 Seq(patrol()),
             ]),
             Scenario::Soldier => soldier::spec(),
+            Scenario::Villager => villager::spec(),
         }
     }
 }

@@ -133,6 +133,74 @@ fn soldier() -> impl BtNode<Bb> {
     ))
 }
 
+#[cfg(feature = "catalog")]
+fn v(villager_op: crate::villager::VillagerOp) -> impl BtNode<Bb> {
+    op(villager_op.into())
+}
+
+/// The same tree as `villager::spec`, with the node catalog.
+#[cfg(feature = "catalog")]
+fn villager() -> impl BtNode<Bb> {
+    use crate::villager::{
+        Abort::*, Cond as If, Effect as E, Place as At, VillagerOp::*, draw, healthy, tired,
+    };
+    let work = |slot, ticks, abort, effect| v(Work(slot, ticks, abort, effect));
+    let chat = |i| {
+        seq((
+            v(If(If::FriendHome(i))),
+            v(Goto(At::Friend(i), true)),
+            work(4, 3, OnThreat, E::Chat(i)),
+        ))
+    };
+    let chore = |place, effect| seq((v(Goto(place, true)), work(5, 2, OnThreat, effect)));
+    let (need, needs) = per_child!(|bb: &Bb| {
+        bb.villager.hunger => seq((
+            retry(3, v(Forage)),
+            v(Goto(At::Kitchen, true)),
+            repeat(2, work(2, 3, OnThreat, E::Chew)),
+            v(Do(E::Eat)),
+        )),
+        bb.villager.fatigue => seq((
+            v(Goto(At::Bed, true)),
+            repeat_while(tired, work(3, 2, OnThreat, E::Rest)),
+        )),
+        bb.villager.boredom => {
+            let (weight, friends) = per_child!(|bb: &Bb| {
+                1.0 + bb.villager.friendship[0].min(20) as f32 => chat(0),
+                1.0 + bb.villager.friendship[1].min(20) as f32 => chat(1),
+                1.0 + bb.villager.friendship[2].min(20) as f32 => chat(2),
+            });
+            weighted_select(draw, weight, friends)
+        },
+        bb.villager.duty => shuffle_seq(
+            draw,
+            (
+                chore(At::Woodpile, E::Chop),
+                chore(At::Well, E::Carry),
+                chore(At::Hall, E::Sweep),
+            ),
+        ),
+    });
+    select((
+        seq((
+            v(If(If::Threat)),
+            if_else(
+                healthy,
+                seq((
+                    repeat(3, work(0, 2, OnNoThreat, E::Swing)),
+                    force_success(seq((v(If(If::Loot)), v(Do(E::TakeLoot))))),
+                )),
+                seq((
+                    invert(v(If(If::Cornered))),
+                    v(Goto(At::Safe, false)),
+                    work(1, 4, Never, E::Hide),
+                )),
+            ),
+        )),
+        utility(need, needs),
+    ))
+}
+
 /// One shared tree; each agent owns only `Option<Tree::State>`.
 fn measure<N: BtNode<Bb> + 'static>(
     scenario: Scenario,
@@ -174,5 +242,7 @@ fn with_mode(mode: EntryMode) -> Vec<Box<dyn Measure>> {
         measure(Scenario::Patrol, patrol, mode),
         measure(Scenario::Guard, guard, mode),
         measure(Scenario::Soldier, soldier, mode),
+        #[cfg(feature = "catalog")]
+        measure(Scenario::Villager, villager, mode),
     ]
 }
