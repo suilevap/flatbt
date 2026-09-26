@@ -6,6 +6,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 flatbt = { path = "." }
@@ -15,6 +16,7 @@ name = "flatbt"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "An experimental behavior tree runtime with static dispatch and inline state"
 
 [features]
