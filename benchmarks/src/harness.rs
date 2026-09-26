@@ -34,6 +34,13 @@ pub struct Report {
     pub shared: Option<usize>,
 }
 
+/// One population size: time per agent-tick and memory per agent.
+pub struct Scaling {
+    pub ns_per_agent_tick: f64,
+    /// `size_of` the per-agent runtime plus the heap each agent keeps.
+    pub bytes_per_agent: f64,
+}
+
 pub trait Measure {
     fn lib(&self) -> &'static str;
     fn scenario(&self) -> Scenario;
@@ -41,6 +48,9 @@ pub trait Measure {
     /// Ticks one agent `ticks` times; for external profilers.
     fn ticks(&self, ticks: u64) -> Bb;
     fn trace(&self, ticks: u32) -> (Bb, [u64; 3]);
+    /// Ticks `agents` agents in frames until about `agent_ticks` agent-ticks
+    /// per sample; the median of `samples`.
+    fn scaling(&self, agents: usize, agent_ticks: usize, samples: usize) -> Scaling;
 }
 
 struct Entry<T, A, MakeTree, MakeAgent, Tick> {
@@ -126,6 +136,43 @@ where
             black_box(self.step(&tree, &mut agent, &mut bb));
         }
         bb
+    }
+
+    fn scaling(&self, agents: usize, agent_ticks: usize, samples: usize) -> Scaling {
+        let tree = (self.make_tree)();
+        let mut population: Vec<(A, Bb)> = Vec::with_capacity(agents);
+        let before = alloc::snapshot();
+        for i in 0..agents {
+            population.push((
+                (self.make_agent)(&tree),
+                Bb::new(self.scenario, i as u32 * 7919),
+            ));
+        }
+        let heap = (alloc::snapshot().live - before.live) as f64 / agents as f64;
+        let frames = (agent_ticks / agents).max(3);
+        let frame = |population: &mut Vec<(A, Bb)>| {
+            for (agent, bb) in population.iter_mut() {
+                black_box(self.step(&tree, agent, bb));
+            }
+        };
+        for _ in 0..(frames / 5).max(1) {
+            frame(&mut population);
+        }
+        let ns_per_agent_tick = median(
+            (0..samples)
+                .map(|_| {
+                    let start = Instant::now();
+                    for _ in 0..frames {
+                        frame(&mut population);
+                    }
+                    start.elapsed().as_nanos() as f64 / (frames * agents) as f64
+                })
+                .collect(),
+        );
+        Scaling {
+            ns_per_agent_tick,
+            bytes_per_agent: size_of::<A>() as f64 + heap,
+        }
     }
 
     fn run(&self, config: &Config) -> Report {
