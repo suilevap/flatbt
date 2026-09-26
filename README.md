@@ -604,9 +604,9 @@ A trace shows every node the last update entered, including branches that
 were tried and dropped, and a tree that failed outright:
 
 ```rust,ignore
-state.set_trace(true);
-let _ = update(&tree, &mut state, &mut 0, EntryMode::Evaluate);
-println!("{:#}", state.trace());
+let log = TraceLog::new(); // one per traced agent, kept by the caller
+let _ = update(&tree, &mut state, &mut 0, log.entry(EntryMode::Evaluate));
+println!("{:#}", state.trace(&log));
 ```
 
 ```text
@@ -620,10 +620,12 @@ A saved invocation shows `(resume)` or `(evaluate)`; fresh ones are unmarked.
 `← cause` marks a node that failed while none of the children it entered
 did. `{}` writes the nodes still running on one line.
 
-Traces record only in debug builds with `std` (`flatbt::trace::ENABLED`):
-release code is unchanged, and `set_trace` does nothing there. Turning a trace
-on allocates its log once; updates reuse it. A driver using `update_slot`
-keeps a `trace::TraceLog` of its own and calls `update_slot_traced`.
+Drivers take `log.entry(mode)` wherever they take a mode; the log reaches every
+node through its `Entry`. Each update clears the log and reuses its buffer. A
+driver using `update_slot` formats with `trace::trace(&tree, slot.as_ref(),
+&log)`. Traces record only in debug builds with `std`
+(`flatbt::trace::ENABLED`): elsewhere `log.entry(mode)` is the mode alone and
+release code is unchanged.
 
 ## Custom nodes
 

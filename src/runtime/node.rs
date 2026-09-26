@@ -99,6 +99,9 @@ pub enum EntryMode {
 /// How a node is entered in one update: its [`EntryMode`], and in debug builds
 /// the [trace](crate::trace) of the update, if one is on.
 ///
+/// Drivers take anything that converts into one: an [`EntryMode`] for an
+/// untraced update, or [`TraceLog::entry`] to trace it.
+///
 /// `Copy`. A composing node calls each child with an entry made for it:
 /// [`child`](Self::child) for a child whose invocation it holds, or
 /// [`candidate`](Self::candidate) for a fresh one; then reports the result
@@ -120,12 +123,26 @@ impl<'t> Entry<'t> {
         }
     }
 
-    /// The root's entry, recording to `log` when there is one.
+    /// An entry recording into `log`, from [`TraceLog::entry`].
     #[inline(always)]
-    pub(crate) fn root(mode: EntryMode, log: Option<&'t TraceLog>, fresh: bool) -> Self {
+    pub(crate) fn traced(mode: EntryMode, log: &'t TraceLog) -> Self {
         Self {
             mode,
-            trace: Handle::root(log, fresh),
+            trace: Handle::root(log),
+        }
+    }
+
+    /// This entry, starting an update at the root: Evaluate for a fresh
+    /// invocation, and a cleared log.
+    #[inline(always)]
+    pub(crate) fn start(self, fresh: bool) -> Self {
+        Self {
+            mode: if fresh {
+                EntryMode::Evaluate
+            } else {
+                self.mode
+            },
+            trace: self.trace.start(fresh),
         }
     }
 

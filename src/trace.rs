@@ -3,6 +3,7 @@
 //!
 //! ```
 //! use flatbt::prelude::*;
+//! use flatbt::trace::TraceLog;
 //!
 //! fn has_ammo(ammo: &u32) -> bool {
 //!     *ammo > 0
@@ -13,11 +14,11 @@
 //!     leaf(|_: &mut u32| NodeResult::Running("reload")).named("reload"),
 //! ));
 //! let mut state = BtState::new(&tree);
-//! state.set_trace(true);
-//! let _ = update(&tree, &mut state, &mut 0, EntryMode::Evaluate);
+//! let log = TraceLog::new();
+//! let _ = update(&tree, &mut state, &mut 0, log.entry(EntryMode::Evaluate));
 //! if flatbt::trace::ENABLED {
 //!     assert_eq!(
-//!         format!("{:#}", state.trace()),
+//!         format!("{:#}", state.trace(&log)),
 //!         "select → Running\n\
 //!          \x20 attack (seq) → Failure\n\
 //!          \x20   has_ammo (check) → Failure    ← cause\n\
@@ -26,9 +27,14 @@
 //! }
 //! ```
 //!
-//! Recording exists only in debug builds with the `std` feature. Elsewhere a
-//! [`TraceLog`] records nothing, [`Entry`] is the mode alone, and a trace
-//! writes that it is unavailable.
+//! The caller keeps a [`TraceLog`] per traced agent and passes
+//! [`log.entry(mode)`](TraceLog::entry) to the driver instead of a mode; the
+//! log reaches every node through its [`Entry`]. Each update clears the log
+//! first and reuses its buffer.
+//!
+//! Recording exists only in debug builds with the `std` feature
+//! ([`ENABLED`]). Elsewhere a [`TraceLog`] records nothing, [`Entry`] is the
+//! mode alone, and a trace writes that it is unavailable.
 //!
 //! Nodes are named by their preorder index in the definition, so a log needs
 //! no state to point at: dropped candidates and a tree that ended are still in
@@ -38,7 +44,7 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::{BtNode, Entry, NodeResult};
+use crate::{BtNode, Entry, EntryMode, NodeResult};
 
 /// Whether this build records traces: debug assertions on, and the `std`
 /// feature. Otherwise every trace call does nothing.
@@ -120,6 +126,14 @@ impl TraceLog {
         core::iter::empty()
     }
 
+    /// An entry for a driver that records the update into this log:
+    /// `update(&tree, &mut state, &mut ctx, log.entry(EntryMode::Evaluate))`.
+    /// Each update clears the log first, so it holds the last one. Unless
+    /// [`ENABLED`], the entry is the mode alone.
+    pub fn entry(&self, mode: EntryMode) -> Entry<'_> {
+        Entry::traced(mode, self)
+    }
+
     /// Whether the last update recorded more calls than the limit.
     pub fn overflowed(&self) -> bool {
         #[cfg(all(debug_assertions, feature = "std"))]
@@ -164,16 +178,31 @@ impl<'t> Handle<'t> {
 
     #[inline(always)]
     #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
-    pub(crate) fn root(log: Option<&'t TraceLog>, fresh: bool) -> Self {
+    pub(crate) fn root(log: &'t TraceLog) -> Self {
         Self {
             #[cfg(all(debug_assertions, feature = "std"))]
-            to: log.map(|log| imp::To {
+            to: Some(imp::To {
                 log,
                 node: 0,
-                fresh,
+                fresh: false,
             }),
             lifetime: PhantomData,
         }
+    }
+
+    /// The root's handle for a new update: its log cleared.
+    #[inline(always)]
+    #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
+    pub(crate) fn start(self, fresh: bool) -> Self {
+        #[cfg(all(debug_assertions, feature = "std"))]
+        if let Some(to) = self.to {
+            to.log.clear();
+            return Self {
+                to: Some(imp::To { fresh, ..to }),
+                lifetime: PhantomData,
+            };
+        }
+        self
     }
 
     #[inline(always)]
@@ -288,7 +317,7 @@ mod imp {
     }
 }
 
-/// A text view of the last traced update, from
+/// A text view of the last update recorded in a [`TraceLog`], from
 /// [`BtState::trace`](crate::BtState::trace) or [`trace`].
 ///
 /// `{:#}` writes one line per node the update entered, indented by depth:
@@ -301,16 +330,17 @@ mod imp {
 pub struct Trace<'a, N: BtNode<C, A>, C, A = ()> {
     node: &'a N,
     state: Option<&'a N::State>,
-    log: Option<&'a TraceLog>,
+    log: &'a TraceLog,
     context: PhantomData<fn(&mut C) -> A>,
 }
 
 /// A trace of `node` from `log`, with `state` for the running path's fields,
-/// for a driver using [`update_slot_traced`](crate::update_slot_traced).
+/// for a driver without a [`BtState`](crate::BtState), such as one using
+/// [`update_slot`](crate::update_slot).
 pub fn trace<'a, C, A, N: BtNode<C, A>>(
     node: &'a N,
     state: Option<&'a N::State>,
-    log: Option<&'a TraceLog>,
+    log: &'a TraceLog,
 ) -> Trace<'a, N, C, A> {
     Trace {
         node,
@@ -323,17 +353,12 @@ pub fn trace<'a, C, A, N: BtNode<C, A>>(
 impl<N: BtNode<C, A>, C, A> fmt::Display for Trace<'_, N, C, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(all(debug_assertions, feature = "std"))]
-        return match self.log {
-            Some(log) => text::write(
-                f,
-                log,
-                |inspector| {
-                    self.node.inspect(self.state, inspector);
-                },
-                N::NODES,
-            ),
-            None => f.write_str("trace off"),
-        };
+        return text::write(
+            f,
+            self.log,
+            |inspector| self.node.inspect(self.state, inspector),
+            N::NODES,
+        );
         #[cfg(not(all(debug_assertions, feature = "std")))]
         {
             let _ = (self.node, self.state, self.log);

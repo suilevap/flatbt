@@ -49,14 +49,14 @@ fn traced_updates_reuse_the_log() {
         }),
     ));
     let mut state: BtState<_, _> = BtState::new(&tree);
-    state.set_trace(true);
+    let log = flatbt::trace::TraceLog::new();
     let mut n = 0;
     for _ in 0..4 {
-        let _ = update(&tree, &mut state, &mut n, EntryMode::Evaluate);
+        let _ = update(&tree, &mut state, &mut n, log.entry(EntryMode::Evaluate));
     }
     TRACKING.store(true, Ordering::Relaxed);
     for _ in 0..128 {
-        let _ = update(&tree, &mut state, &mut n, EntryMode::Evaluate);
+        let _ = update(&tree, &mut state, &mut n, log.entry(EntryMode::Evaluate));
     }
     TRACKING.store(false, Ordering::Relaxed);
     assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0);

@@ -12,9 +12,9 @@ were tried and dropped, and a tree that failed outright.
 A trace is one more view of the `inspect` walk, formatted only when asked:
 
 ```rust
-state.set_trace(true); // no-op in release
-let _ = update(&tree, &mut state, &mut ctx, EntryMode::Evaluate);
-println!("{:#}", state.trace());
+let log = TraceLog::new(); // one per traced agent, kept by the caller
+let _ = update(&tree, &mut state, &mut ctx, log.entry(EntryMode::Evaluate));
+println!("{:#}", state.trace(&log));
 ```
 
 ```text
@@ -64,8 +64,9 @@ the log does not depend on state surviving.
 
 ## The log
 
-One per traced agent, owned by its `BtState` (or Bevy `DebugBehavior`),
-allocated by `set_trace(true)`. It has two parts.
+One per traced agent, kept by the caller (or Bevy's `DebugBehavior`) beside
+the agent's state, and handed to the driver as `log.entry(mode)` in place of a
+mode. `BtState` holds only invocation state. The log has two parts.
 
 **Calls**, written by the core for every node: one flat buffer of
 
@@ -108,7 +109,7 @@ reach each node, an update allocates only when it records more than any update
 before it. A test counts allocations over repeated traced updates, as
 `flatbt-bevy`'s allocation test does for ticks.
 
-`set_trace` takes a limit on calls per update; past it recording stops and the
+`TraceLog::with_limit` sets a limit on calls per update; past it recording stops and the
 trace ends with `… (limit reached)`, so a `repeat` restarting many times
 cannot grow the log without bound.
 
@@ -175,9 +176,9 @@ pub struct Entry<'t> {
   which also switches the mode to `Evaluate`. Both set the child's node id.
 - **Nodes record through it:** `entry.record(|| Picked { position, child })`.
   The closure runs only while a trace is on; in release the call is empty.
-- **Drivers pass the log.** `update` takes it from the `BtState`;
-  `update_slot` gains a variant taking `Option<&TraceLog>`, which Bevy's tick
-  uses for agents carrying a traced `DebugBehavior`.
+- **Drivers take the entry.** `update` and `update_slot` take
+  `impl Into<Entry>`: an `EntryMode` as before, or `log.entry(mode)` to trace.
+  Bevy's tick will pass one for agents carrying a traced `DebugBehavior`.
 
 No thread-local, no global, and one signature in every build. Tracing works
 wherever the log can be allocated: `std`, or later `alloc`.
@@ -266,7 +267,7 @@ before and after, and the suite runs in both profiles.
    examples and the Bevy crate; release assembly check. Done: release
    assembly of the `acts`, `choose` and `resume` examples is instruction for
    instruction the same as before.
-2. `NODES`, ids through `entry.child`, the log with `Call`s, `set_trace`, the
+2. `NODES`, ids through `entry.child`, the log with `Call`s, `log.entry`, the
    trace view with `← cause`; allocation test.
 3. `entry.record` and `records::<R>()`; policy answers, conditions,
    `choose!`, orders and scores, counters, actions, diagnostics.

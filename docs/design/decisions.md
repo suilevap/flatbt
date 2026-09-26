@@ -445,8 +445,8 @@ Phase 2 of [Trace](trace.md).
 
 - **Gate: `debug_assertions` and `std`**, as `trace::ENABLED`. The handle in
   `Entry`, the log's storage and every recording call are compiled out
-  otherwise; `set_trace`, `trace()` and `TraceLog` still exist so code compiles
-  the same. Release assembly of all ten examples is instruction for
+  otherwise; `TraceLog`, `log.entry` and `state.trace(&log)` still exist so
+  code compiles the same. Release assembly of all ten examples is instruction for
   instruction the same as before. An empty `if let Some(log)` around
   `log.clear()` was enough to reorder blocks in one example, so it is
   compiled out too rather than left to the optimizer.
@@ -462,3 +462,10 @@ Phase 2 of [Trace](trace.md).
   128 traced updates after warm-up with none.
 - **`calls()` copies the log** so the iterator does not hold its `RefCell`
   borrow.
+- **The caller keeps the log, not `BtState`.** A first cut stored it in the
+  state behind `set_trace(true)`. The log is per update and reaches nodes
+  through `Entry`, so the driver takes the entry instead: `update` and
+  `update_slot` take `impl Into<Entry>`, an `EntryMode` or `log.entry(mode)`.
+  One driver each, and `BtState` stays invocation state. The conversion
+  happens at the edge, before a shared body over `Entry`, which keeps release
+  code identical.
