@@ -124,6 +124,7 @@ where
 {
     type State = OrderedState<O::State, Children::State>;
     const LEN: usize = Children::LEN;
+    const NODES: usize = Children::NODES;
 
     #[inline]
     fn active_child_index(&self, state: &Self::State) -> Option<usize> {

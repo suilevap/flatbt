@@ -46,6 +46,7 @@ where
     N: BtNode<D, A, P>,
 {
     type State = N::State;
+    const NODES: usize = 1 + N::NODES;
 
     #[inline]
     fn update(
@@ -55,7 +56,10 @@ where
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        self.child.update(state, (self.lens)(ctx), params, entry)
+        let entry = entry.child(1);
+        let result = self.child.update(state, (self.lens)(ctx), params, entry);
+        entry.finish(&result);
+        result
     }
 
     fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {

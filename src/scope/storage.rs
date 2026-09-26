@@ -41,6 +41,7 @@ where
     S: Default + Send + 'static,
 {
     type State = ScopeState<L, S>;
+    const NODES: usize = 1 + <N as BtNode<C, A, &'static mut L>>::NODES;
 
     fn update(
         &self,
@@ -49,7 +50,16 @@ where
         _: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        BtNode::<C, A, &mut L>::update(&self.child, &mut state.child, ctx, &mut state.locals, entry)
+        let entry = entry.child(1);
+        let result = BtNode::<C, A, &mut L>::update(
+            &self.child,
+            &mut state.child,
+            ctx,
+            &mut state.locals,
+            entry,
+        );
+        entry.finish(&result);
+        result
     }
 
     fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {

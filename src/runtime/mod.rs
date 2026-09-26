@@ -3,7 +3,7 @@
 mod execution;
 mod node;
 
-pub use execution::{BtState, update, update_slot};
+pub use execution::{BtState, update, update_slot, update_slot_traced};
 #[cfg(feature = "std")]
 pub use node::diagnostics::{ErrorHandler, set_error_handler};
 pub(crate) use node::log_error;

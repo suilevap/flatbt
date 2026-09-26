@@ -110,12 +110,16 @@ where
     S: Default + Send + 'static,
 {
     type State = S;
+    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline(always)]
     fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
         if self.predicate.call(ctx, P::Shape::reborrow(&mut params)) {
-            self.child.update(state, ctx, params, entry)
+            let entry = entry.child(1);
+            let result = self.child.update(state, ctx, params, entry);
+            entry.finish(&result);
+            result
         } else {
             NodeResult::Failure
         }

@@ -67,6 +67,7 @@ pub mod prelude;
 pub mod runtime;
 #[cfg(feature = "extras")]
 pub mod scope;
+pub mod trace;
 
 pub use composition::{
     BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Guarded, Leaf, ReadFn,
@@ -83,7 +84,9 @@ pub use nodes::{
     weighted_select,
 };
 pub(crate) use runtime::log_error;
-pub use runtime::{BtNode, BtState, Entry, EntryMode, NodeResult, update, update_slot};
+pub use runtime::{
+    BtNode, BtState, Entry, EntryMode, NodeResult, update, update_slot, update_slot_traced,
+};
 #[cfg(feature = "std")]
 pub use runtime::{ErrorHandler, set_error_handler};
 

@@ -1,6 +1,7 @@
 # Trace: why the tree chose what it runs
 
-Status: proposal. Phase 1, `Entry`, is implemented; the trace itself is not.
+Status: phases 1 and 2 implemented: `Entry`, node ids, the calls log and the
+trace view. Per-node records (phase 3) and Bevy (phase 4) are proposals.
 
 `describe()` shows *what* runs. A trace shows *why*: which nodes the last
 update entered, how, what each returned and decided, including branches that

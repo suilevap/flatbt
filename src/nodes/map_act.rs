@@ -39,6 +39,7 @@ pub fn map_act<F, N, B>(map: F, child: N) -> MapAct<F, N, B> {
 
 impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F, N, B> {
     type State = N::State;
+    const NODES: usize = 1 + N::NODES;
 
     #[inline]
     fn update(
@@ -48,7 +49,10 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        match self.child.update(state, ctx, params, entry) {
+        let entry = entry.child(1);
+        let result = self.child.update(state, ctx, params, entry);
+        entry.finish(&result);
+        match result {
             NodeResult::Running(act) => NodeResult::Running((self.map)(act)),
             NodeResult::Success => NodeResult::Success,
             NodeResult::Failure => NodeResult::Failure,

@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo, fn_name};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, Entry, EntryMode, NodeResult, ReadFn};
+use crate::{BtNode, Entry, NodeResult, ReadFn};
 
 /// A child restarted while a condition holds.
 pub struct RepeatWhile<F, N, M> {
@@ -92,6 +92,7 @@ where
     S: Default + Send + 'static,
 {
     type State = RepeatWhileState<S>;
+    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
     fn update(
@@ -99,13 +100,15 @@ where
         state: &mut Self::State,
         ctx: &mut C,
         params: P,
-        mut entry: Entry<'_>,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
         let mut params = params.into_value();
         if !self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
             return NodeResult::Success;
         }
         let mut restarted = false;
+        let parent = entry;
+        let mut entry = entry.child(1);
         loop {
             let result = self.child.update(
                 &mut state.child,
@@ -113,6 +116,7 @@ where
                 P::Shape::reborrow(&mut params),
                 entry,
             );
+            entry.finish(&result);
             if result.is_running() {
                 state.ran = true;
                 return result;
@@ -132,7 +136,8 @@ where
                 _ => return NodeResult::Failure,
             }
             restarted = true;
-            entry = entry.with_mode(EntryMode::Evaluate);
+            // A restart is a fresh invocation of the child, one node down.
+            entry = parent.candidate(1);
         }
     }
 

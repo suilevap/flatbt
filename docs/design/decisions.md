@@ -438,3 +438,27 @@ thread-local or a global. See [Trace](trace.md).
   calls a node directly, as tests do.
 - **Breaking for custom nodes.** The migration is mechanical: rename the
   argument, read `entry.mode()`, pass `entry` on.
+
+## 2026-09-26 — Traces: calls and the trace view
+
+Phase 2 of [Trace](trace.md).
+
+- **Gate: `debug_assertions` and `std`**, as `trace::ENABLED`. The handle in
+  `Entry`, the log's storage and every recording call are compiled out
+  otherwise; `set_trace`, `trace()` and `TraceLog` still exist so code compiles
+  the same. Release assembly of all ten examples is instruction for
+  instruction the same as before. An empty `if let Some(log)` around
+  `log.clear()` was enough to reorder blocks in one example, so it is
+  compiled out too rather than left to the optimizer.
+- **Offsets are constants.** Each tuple computes its children's preorder
+  offsets in one inline `const` block from their `NODES`.
+- **`Entry::child` inherits freshness**, so a node under a fresh parent is
+  recorded as new; `candidate` marks it, and switches the mode to Evaluate.
+- **Hidden nodes are counted.** `scope!`'s initializer sequence is reported
+  through `Inspector::enter_hidden`, so inspection and traces number nodes
+  alike, while `describe()` still does not show it.
+- **Formatting allocates; recording does not once warm.** The trace view
+  builds the tree's shape in `Vec`s when formatted. An allocation test runs
+  128 traced updates after warm-up with none.
+- **`calls()` copies the log** so the iterator does not hold its `RefCell`
+  borrow.

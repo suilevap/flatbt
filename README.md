@@ -598,6 +598,33 @@ In Bevy, add `DebugBehavior` to an agent. The plugin keeps its path text
 current after each tick and marks it changed only when the path changes, so
 `Query<&DebugBehavior, Changed<DebugBehavior>>` logs decisions, not frames.
 
+### Why a branch was chosen
+
+A trace shows every node the last update entered, including branches that
+were tried and dropped, and a tree that failed outright:
+
+```rust,ignore
+state.set_trace(true);
+let _ = update(&tree, &mut state, &mut 0, EntryMode::Evaluate);
+println!("{:#}", state.trace());
+```
+
+```text
+select → Running
+  attack (seq) → Failure
+    has_ammo (check) → Failure    ← cause
+  reload (leaf) → Running
+```
+
+A saved invocation shows `(resume)` or `(evaluate)`; fresh ones are unmarked.
+`← cause` marks a node that failed while none of the children it entered
+did. `{}` writes the nodes still running on one line.
+
+Traces record only in debug builds with `std` (`flatbt::trace::ENABLED`):
+release code is unchanged, and `set_trace` does nothing there. Turning a trace
+on allocates its log once; updates reuse it. A driver using `update_slot`
+keeps a `trace::TraceLog` of its own and calls `update_slot_traced`.
+
 ## Custom nodes
 
 Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and
@@ -608,9 +635,20 @@ runs stays generic over it and never names it.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
 `update` receives an `Entry`: `entry.mode()` is Resume or Evaluate. A composing
-node stores descendant states and calls
-`child.update(&mut state.child, ctx, params, entry)`, passing its own entry on,
-or `entry.with_mode(EntryMode::Evaluate)` for a fresh candidate. It owns
+node stores descendant states and calls each child with an entry made for it,
+then reports the result, which traces record:
+
+```rust,ignore
+let entry = entry.child(1); // or entry.candidate(1) for a fresh one, under Evaluate
+let result = self.child.update(&mut state.child, ctx, params, entry);
+entry.finish(&result);
+```
+
+The offset is the child's position after this node in preorder: 1, plus the
+`NODES` of each child before it. Such a node declares
+`const NODES: usize = 1 + <N as BtNode<C, A, P>>::NODES;`. Passing `entry` on
+unchanged also runs correctly; the child's calls are then traced as this
+node's. A composing node owns
 initialization, fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
 suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 

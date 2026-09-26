@@ -1,6 +1,6 @@
 use crate::inspect::Inspector;
 use crate::params::ParamShape;
-use crate::{BtNode, ControlOp, Entry, EntryMode, NodeResult};
+use crate::{BtNode, ControlOp, Entry, NodeResult};
 
 /// Static tuple dispatch with at most one active child.
 /// Generated through `FLATBT_MAX_CHILDREN` (default 32).
@@ -35,11 +35,17 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
     /// Reports each child in order, with its state when it is the saved one.
     /// See [`BtNode::inspect`].
     fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector);
+
+    /// Nodes in all children together; see [`BtNode::NODES`]. Child `i` is
+    /// called with an entry whose offset is 1 plus the `NODES` of the children
+    /// before it, so a control's own id comes first.
+    const NODES: usize;
 }
 
 impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
     type State = ();
     const LEN: usize = 0;
+    const NODES: usize = 0;
 
     fn active_child_index(&self, _: &()) -> Option<usize> {
         None
@@ -77,6 +83,7 @@ macro_rules! tuple_children {
         {
             type State = $state<$($child_state),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
+            const NODES: usize = 0 $(+ <$node as BtNode<C, A, S::Value<'static>>>::NODES)+;
 
             #[inline(always)]
             fn active_child_index(&self, state: &Self::State) -> Option<usize> {
@@ -101,10 +108,26 @@ macro_rules! tuple_children {
                 // policy the compiler can see through, such as `Sequence`, the
                 // index is a constant and the chain is straight-line code.
                 let mut index = first;
+                // Each child's preorder offset from the control, for traces.
+                let offsets = const {
+                    let nodes = [$(<$node as BtNode<C, A, S::Value<'static>>>::NODES),+];
+                    let mut offsets = [$($index * 0),+];
+                    let mut at = 1;
+                    let mut child = 0;
+                    while child < nodes.len() {
+                        offsets[child] = at;
+                        at += nodes[child];
+                        child += 1;
+                    }
+                    offsets
+                };
                 $(
                     if index == $index {
+                        let offset = offsets[$index];
                         let result = if let $state::$variant(active) = state {
+                            let entry = entry.child(offset);
                             let result = self.$index.update(active, ctx, S::reborrow(params), entry);
+                            entry.finish(&result);
                             if !result.is_running() {
                                 *state = $state::Empty;
                             }
@@ -112,7 +135,9 @@ macro_rules! tuple_children {
                         } else {
                             // Preserve the old variant until this candidate is selected.
                             let mut candidate = $child_state::default();
-                            let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), entry.with_mode(EntryMode::Evaluate));
+                            let entry = entry.candidate(offset);
+                            let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), entry);
+                            entry.finish(&result);
                             if result.is_running() {
                                 *state = $state::$variant(candidate);
                             }
@@ -153,9 +178,7 @@ macro_rules! tuple_children {
 
 /// Generated tuple state enums, parameterized by child state types.
 pub mod child_state {
-    use super::{
-        BtChildren, BtNode, ControlOp, Entry, EntryMode, Inspector, NodeResult, ParamShape,
-    };
+    use super::{BtChildren, BtNode, ControlOp, Entry, Inspector, NodeResult, ParamShape};
 
     include!(concat!(env!("OUT_DIR"), "/tuple_children.rs"));
 }

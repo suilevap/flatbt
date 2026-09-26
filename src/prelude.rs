@@ -19,5 +19,5 @@ pub use crate::{
 pub use crate::{
     BtChildren, BtControl, BtNode, BtState, Check, ControlNode, ControlOp, ControlState, Entry,
     EntryMode, Guarded, Leaf, NodeResult, Selector, Sequence, check, control, guard, leaf, select,
-    seq, update, update_slot,
+    seq, update, update_slot, update_slot_traced,
 };
