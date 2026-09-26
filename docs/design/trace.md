@@ -171,9 +171,11 @@ pub struct Entry<'t> {
 - **`Copy`, like `EntryMode`.** A control passes it to several children in one
   update, as it passes the mode now. The handle holds a shared
   `&RefCell<TraceLog>`, so copies can all record; `RefCell` is `core`.
-- **Children get their own.** A parent calls a child with
-  `entry.child(offset)`, or `entry.candidate(offset)` for a fresh candidate,
-  which also switches the mode to `Evaluate`. Both set the child's node id.
+- **Children get their own.** A parent runs a child with
+  `entry.run(offset, &child, state, ctx, params)`, or `run_candidate` for a
+  fresh one, which also switches the mode to `Evaluate`. Both set the child's
+  node id and range, and record the call. `entry.child` / `candidate` and
+  `finish` are the same in parts, for tuples.
 - **Nodes record through it:** `entry.record(|| Picked { position, child })`.
   The closure runs only while a trace is on; in release the call is empty.
 - **Drivers take the entry.** `update` and `update_slot` take
@@ -203,12 +205,14 @@ dropped candidates and a finished tree are still addressable.
   consts have defaults on stable, so custom nodes need nothing.
 - Composites sum their children: the tuple impls add each child's `NODES`, and
   single-child nodes add one.
-- The offset a parent passes to `entry.child(offset)` is a constant: one, plus
-  the `NODES` of the children before it.
-
-A custom composing node keeps `NODES = 1` by default: its descendants then
-share its id and their records merge into its line. It can declare its
-subtree size and pass offsets to give each child its own id.
+- The offset a parent passes to `entry.run(offset, ..)` is a constant: one,
+  plus the `NODES` of the children before it.
+- **Each entry carries its subtree's range**, `[id, id + NODES)`, and an entry
+  made for a child outside it records nothing. A custom composing node that
+  keeps `NODES = 1` and passes its own entry on is traced as one node: its
+  descendants would number from its id and land on unrelated nodes, so they
+  are not recorded instead. Declaring `NODES`, running children with
+  `entry.run` and reporting them in `inspect` traces inside it.
 
 ## Merging into `inspect`
 
@@ -266,7 +270,7 @@ before and after, and the suite runs in both profiles.
    examples and the Bevy crate; release assembly check. Done: release
    assembly of the `acts`, `choose` and `resume` examples is instruction for
    instruction the same as before.
-2. `NODES`, ids through `entry.child`, the log with `Call`s, `log.entry`, the
+2. `NODES`, ids through `entry.run`, the log with `Call`s, `log.entry`, the
    trace view with `← cause`; allocation test.
 3. `entry.record` and `records::<R>()`; policy answers, conditions,
    `choose!`, orders and scores, counters, actions, diagnostics.

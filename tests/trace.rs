@@ -1,6 +1,7 @@
 //! Traces record only with debug assertions.
 #![cfg(debug_assertions)]
 
+use flatbt::inspect::{Inspector, NodeInfo};
 use flatbt::prelude::*;
 use flatbt::trace::{TraceLog, trace};
 
@@ -137,5 +138,76 @@ fn a_slot_driver_keeps_its_own_log_with_a_limit() {
     assert!(
         format!("{:#}", trace::<u32, &str, _>(&tree, slot.as_ref(), &log))
             .ends_with("… (limit reached)")
+    );
+}
+
+/// Passes its entry on unchanged, as a node written before traces would.
+struct PassThrough<N>(N);
+
+impl<C, A, N: BtNode<C, A>> BtNode<C, A> for PassThrough<N> {
+    type State = N::State;
+
+    fn update(&self, state: &mut N::State, ctx: &mut C, _: (), entry: Entry<'_>) -> NodeResult<A> {
+        self.0.update(state, ctx, (), entry)
+    }
+}
+
+/// Calls its child through its entry and reports it, so traces see inside.
+struct Wrapped<N>(N);
+
+impl<C, A, N: BtNode<C, A>> BtNode<C, A> for Wrapped<N> {
+    type State = N::State;
+    const NODES: usize = 1 + N::NODES;
+
+    fn update(&self, state: &mut N::State, ctx: &mut C, _: (), entry: Entry<'_>) -> NodeResult<A> {
+        entry.run(1, &self.0, state, ctx, ())
+    }
+
+    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new("wrapped", state.is_some()), |inspector| {
+            self.0.inspect(state, inspector)
+        });
+    }
+}
+
+fn failing_branch() -> impl BtNode<u32, &'static str> {
+    seq((
+        check(has_ammo),
+        leaf(|_: &mut u32| NodeResult::Running("fire")),
+    ))
+}
+
+fn fallback() -> impl BtNode<u32, &'static str> {
+    named("reload", leaf(|_: &mut u32| NodeResult::Running("reload")))
+}
+
+#[test]
+fn a_node_passing_its_entry_on_is_traced_as_one_node() {
+    let tree = select((PassThrough(failing_branch()), fallback()));
+    let mut state = BtState::new(&tree);
+    let log = TraceLog::new();
+    let _ = update(&tree, &mut state, &mut 0, log.entry(EntryMode::Evaluate));
+    // Nothing from inside it lands on `reload`, the next node in preorder.
+    assert_eq!(
+        format!("{:#}", state.trace(&log)),
+        "select → Running\n\
+         \x20 PassThrough → Failure    ← cause\n\
+         \x20 reload (leaf) → Running"
+    );
+}
+
+#[test]
+fn a_node_running_its_child_through_its_entry_is_traced_inside() {
+    let tree = select((Wrapped(failing_branch()), fallback()));
+    let mut state = BtState::new(&tree);
+    let log = TraceLog::new();
+    let _ = update(&tree, &mut state, &mut 0, log.entry(EntryMode::Evaluate));
+    assert_eq!(
+        format!("{:#}", state.trace(&log)),
+        "select → Running\n\
+         \x20 wrapped → Failure\n\
+         \x20   seq → Failure\n\
+         \x20     has_ammo (check) → Failure    ← cause\n\
+         \x20 reload (leaf) → Running"
     );
 }

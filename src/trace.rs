@@ -184,21 +184,27 @@ impl<'t> Handle<'t> {
             to: Some(imp::To {
                 log,
                 node: 0,
+                end: usize::MAX,
                 fresh: false,
             }),
             lifetime: PhantomData,
         }
     }
 
-    /// The root's handle for a new update: its log cleared.
+    /// The root's handle for a new update over a tree of `nodes`: its log
+    /// cleared.
     #[inline(always)]
     #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
-    pub(crate) fn start(self, fresh: bool) -> Self {
+    pub(crate) fn start(self, fresh: bool, nodes: usize) -> Self {
         #[cfg(all(debug_assertions, feature = "std"))]
         if let Some(to) = self.to {
             to.log.clear();
             return Self {
-                to: Some(imp::To { fresh, ..to }),
+                to: Some(imp::To {
+                    fresh,
+                    end: nodes,
+                    ..to
+                }),
                 lifetime: PhantomData,
             };
         }
@@ -207,13 +213,18 @@ impl<'t> Handle<'t> {
 
     #[inline(always)]
     #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
-    pub(crate) fn child(self, offset: usize, fresh: bool) -> Self {
+    pub(crate) fn child(self, offset: usize, nodes: usize, fresh: bool) -> Self {
         Self {
             #[cfg(all(debug_assertions, feature = "std"))]
-            to: self.to.map(|to| imp::To {
-                node: to.node + offset,
-                fresh: fresh || to.fresh,
-                ..to
+            to: self.to.and_then(|to| {
+                let node = to.node + offset;
+                let end = node + nodes;
+                (offset > 0 && end <= to.end).then_some(imp::To {
+                    node,
+                    end,
+                    fresh: fresh || to.fresh,
+                    ..to
+                })
             }),
             lifetime: PhantomData,
         }
@@ -291,6 +302,10 @@ mod imp {
     pub(super) struct To<'t> {
         pub(super) log: &'t TraceLog,
         pub(super) node: usize,
+        /// End of the id range this node's parent gave it: its subtree. Ids
+        /// past it belong to other nodes, so a descendant numbering from a
+        /// wrong base records nothing rather than something misattributed.
+        pub(super) end: usize,
         pub(super) fresh: bool,
     }
 

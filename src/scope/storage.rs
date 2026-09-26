@@ -166,16 +166,13 @@ where
         {
             return result;
         }
-        let entry = entry.child(1 + I::NODES);
-        let result = BtNode::<C, A, &mut L>::update(
+        entry.run(
+            1 + I::NODES,
             &self.child,
             &mut state.child,
             ctx,
             &mut state.locals,
-            entry,
-        );
-        entry.finish(&result);
-        result
+        )
     }
 
     fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {

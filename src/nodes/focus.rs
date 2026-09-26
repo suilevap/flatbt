@@ -56,10 +56,7 @@ where
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        let entry = entry.child(1);
-        let result = self.child.update(state, (self.lens)(ctx), params, entry);
-        entry.finish(&result);
-        result
+        entry.run(1, &self.child, state, (self.lens)(ctx), params)
     }
 
     fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {

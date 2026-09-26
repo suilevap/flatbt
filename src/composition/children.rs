@@ -125,7 +125,7 @@ macro_rules! tuple_children {
                     if index == $index {
                         let offset = offsets[$index];
                         let result = if let $state::$variant(active) = state {
-                            let entry = entry.child(offset);
+                            let entry = entry.child(offset, <$node as BtNode<C, A, S::Value<'static>>>::NODES);
                             let result = self.$index.update(active, ctx, S::reborrow(params), entry);
                             entry.finish(&result);
                             if !result.is_running() {
@@ -135,7 +135,7 @@ macro_rules! tuple_children {
                         } else {
                             // Preserve the old variant until this candidate is selected.
                             let mut candidate = $child_state::default();
-                            let entry = entry.candidate(offset);
+                            let entry = entry.candidate(offset, <$node as BtNode<C, A, S::Value<'static>>>::NODES);
                             let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), entry);
                             entry.finish(&result);
                             if result.is_running() {

@@ -49,10 +49,7 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        let entry = entry.child(1);
-        let result = self.child.update(state, ctx, params, entry);
-        entry.finish(&result);
-        match result {
+        match entry.run(1, &self.child, state, ctx, params) {
             NodeResult::Running(act) => NodeResult::Running((self.map)(act)),
             NodeResult::Success => NodeResult::Success,
             NodeResult::Failure => NodeResult::Failure,

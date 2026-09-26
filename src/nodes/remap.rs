@@ -64,10 +64,7 @@ impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        let entry = entry.child(1);
-        let result = self.child.update(state, ctx, params, entry);
-        entry.finish(&result);
-        match result {
+        match entry.run(1, &self.child, state, ctx, params) {
             running @ NodeResult::Running(_) => running,
             NodeResult::Success => self.success.result(),
             NodeResult::Failure => self.failure.result(),

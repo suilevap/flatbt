@@ -475,3 +475,9 @@ Phase 2 of [Trace](trace.md).
   One driver each, and `BtState` stays invocation state. The conversion
   happens at the edge, before a shared body over `Entry`, which keeps release
   code identical.
+- **Ranges, so a node that opts out cannot misattribute.** A custom
+  composite that passes its own entry on would have its descendants numbered
+  from its id, landing on the lines of unrelated nodes. Each entry now carries
+  the end of its subtree's id range, and a child entry outside it records
+  nothing: such a node is traced as one line. `Entry::run` takes the child's
+  `NODES` from its type, so opting in is one call.

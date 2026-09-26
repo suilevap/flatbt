@@ -637,20 +637,21 @@ runs stays generic over it and never names it.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
 `update` receives an `Entry`: `entry.mode()` is Resume or Evaluate. A composing
-node stores descendant states and calls each child with an entry made for it,
-then reports the result, which traces record:
+node stores descendant states and runs each child through its entry, so traces
+record the call:
 
 ```rust,ignore
-let entry = entry.child(1); // or entry.candidate(1) for a fresh one, under Evaluate
-let result = self.child.update(&mut state.child, ctx, params, entry);
-entry.finish(&result);
+const NODES: usize = 1 + <N as BtNode<C, A, P>>::NODES;
+
+let result = entry.run(1, &self.child, &mut state.child, ctx, params);
+// entry.run_candidate(..) for a fresh invocation, entered with Evaluate
 ```
 
 The offset is the child's position after this node in preorder: 1, plus the
-`NODES` of each child before it. Such a node declares
-`const NODES: usize = 1 + <N as BtNode<C, A, P>>::NODES;`. Passing `entry` on
-unchanged also runs correctly; the child's calls are then traced as this
-node's. A composing node owns
+`NODES` of each child before it; `NODES` counts the node and its subtree.
+Nothing requires this: a node that calls `self.child.update(.., entry)` with
+its own entry runs the same, and is traced as one node, with nothing below it.
+A composing node owns
 initialization, fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
 suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 

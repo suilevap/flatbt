@@ -120,7 +120,7 @@ fn run_root<C, A, N: BtNode<C, A>>(
     ctx: &mut C,
     entry: Entry<'_>,
 ) -> NodeResult<A> {
-    let entry = entry.start(slot.is_none());
+    let entry = entry.start(slot.is_none(), N::NODES);
     let result = node.update(slot.get_or_insert_with(Default::default), ctx, (), entry);
     entry.finish(&result);
     if !result.is_running() {

@@ -107,16 +107,14 @@ where
             return NodeResult::Success;
         }
         let mut restarted = false;
-        let parent = entry;
-        let mut entry = entry.child(1);
         loop {
-            let result = self.child.update(
-                &mut state.child,
-                ctx,
-                P::Shape::reborrow(&mut params),
-                entry,
-            );
-            entry.finish(&result);
+            let child_params = P::Shape::reborrow(&mut params);
+            // A restart is a fresh invocation of the child.
+            let result = if restarted {
+                entry.run_candidate(1, &self.child, &mut state.child, ctx, child_params)
+            } else {
+                entry.run(1, &self.child, &mut state.child, ctx, child_params)
+            };
             if result.is_running() {
                 state.ran = true;
                 return result;
@@ -136,8 +134,6 @@ where
                 _ => return NodeResult::Failure,
             }
             restarted = true;
-            // A restart is a fresh invocation of the child, one node down.
-            entry = parent.candidate(1);
         }
     }
 

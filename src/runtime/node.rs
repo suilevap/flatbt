@@ -102,12 +102,13 @@ pub enum EntryMode {
 /// Drivers take anything that converts into one: an [`EntryMode`] for an
 /// untraced update, or [`TraceLog::entry`] to trace it.
 ///
-/// `Copy`. A composing node calls each child with an entry made for it:
-/// [`child`](Self::child) for a child whose invocation it holds, or
-/// [`candidate`](Self::candidate) for a fresh one; then reports the result
-/// with [`finish`](Self::finish). A node passing its own entry on unchanged
-/// still runs correctly; its child's calls are then recorded as its own. In
-/// release builds an entry is the mode alone and these calls do nothing.
+/// `Copy`. A composing node calls each child through it --
+/// [`run`](Self::run), or [`run_candidate`](Self::run_candidate) for a fresh
+/// invocation -- so the call is traced under the child's id. A node that
+/// passes its own entry on unchanged still runs correctly, and is traced as
+/// one node: calls below it are not recorded, since they would be numbered
+/// from its id. In release builds an entry is the mode alone and none of this
+/// does anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Entry<'t> {
     mode: EntryMode,
@@ -132,17 +133,17 @@ impl<'t> Entry<'t> {
         }
     }
 
-    /// This entry, starting an update at the root: Evaluate for a fresh
-    /// invocation, and a cleared log.
+    /// This entry, starting an update at the root of a tree of `nodes`:
+    /// Evaluate for a fresh invocation, and a cleared log.
     #[inline(always)]
-    pub(crate) fn start(self, fresh: bool) -> Self {
+    pub(crate) fn start(self, fresh: bool, nodes: usize) -> Self {
         Self {
             mode: if fresh {
                 EntryMode::Evaluate
             } else {
                 self.mode
             },
-            trace: self.trace.start(fresh),
+            trace: self.trace.start(fresh, nodes),
         }
     }
 
@@ -157,24 +158,61 @@ impl<'t> Entry<'t> {
         Self { mode, ..self }
     }
 
-    /// The entry for a child whose invocation this node holds, `offset` nodes
-    /// after it in preorder: 1 for the first child, plus the
+    /// Runs `child`, whose invocation this node holds, and records the call:
+    /// what a composing node does for each child. `offset` is the child's
+    /// position after this node in preorder: 1 for the first child, plus the
     /// [`NODES`](BtNode::NODES) of each child before it. Same mode.
     #[inline(always)]
-    pub fn child(self, offset: usize) -> Self {
+    pub fn run<C, A, P, N: BtNode<C, A, P>>(
+        self,
+        offset: usize,
+        child: &N,
+        state: &mut N::State,
+        ctx: &mut C,
+        params: P,
+    ) -> NodeResult<A> {
+        let entry = self.child(offset, N::NODES);
+        let result = child.update(state, ctx, params, entry);
+        entry.finish(&result);
+        result
+    }
+
+    /// [`run`](Self::run) for a fresh invocation of `child`: mode Evaluate,
+    /// recorded as new.
+    #[inline(always)]
+    pub fn run_candidate<C, A, P, N: BtNode<C, A, P>>(
+        self,
+        offset: usize,
+        child: &N,
+        state: &mut N::State,
+        ctx: &mut C,
+        params: P,
+    ) -> NodeResult<A> {
+        let entry = self.candidate(offset, N::NODES);
+        let result = child.update(state, ctx, params, entry);
+        entry.finish(&result);
+        result
+    }
+
+    /// The entry for a child whose invocation this node holds, `offset`
+    /// nodes after it in preorder, with a subtree of `nodes`. Same mode. For a
+    /// caller that updates the child itself; then report with
+    /// [`finish`](Self::finish). [`run`](Self::run) does all three.
+    #[inline(always)]
+    pub fn child(self, offset: usize, nodes: usize) -> Self {
         Self {
             mode: self.mode,
-            trace: self.trace.child(offset, false),
+            trace: self.trace.child(offset, nodes, false),
         }
     }
 
-    /// The entry for a fresh candidate `offset` nodes after this one: mode
-    /// Evaluate, recorded as a new invocation.
+    /// [`child`](Self::child) for a fresh invocation: mode Evaluate, recorded
+    /// as new.
     #[inline(always)]
-    pub fn candidate(self, offset: usize) -> Self {
+    pub fn candidate(self, offset: usize, nodes: usize) -> Self {
         Self {
             mode: EntryMode::Evaluate,
-            trace: self.trace.child(offset, true),
+            trace: self.trace.child(offset, nodes, true),
         }
     }
 

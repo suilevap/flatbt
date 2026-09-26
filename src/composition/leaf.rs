@@ -116,10 +116,7 @@ where
     fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
         if self.predicate.call(ctx, P::Shape::reborrow(&mut params)) {
-            let entry = entry.child(1);
-            let result = self.child.update(state, ctx, params, entry);
-            entry.finish(&result);
-            result
+            entry.run(1, &self.child, state, ctx, params)
         } else {
             NodeResult::Failure
         }
