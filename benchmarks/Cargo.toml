@@ -1,0 +1,27 @@
+[package]
+name = "flatbt-compare"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Compares FlatBT with other Rust behavior tree crates on time, allocation and memory"
+
+# Standalone: keeps the comparison's dependencies out of the FlatBT workspace.
+[workspace]
+
+[features]
+default = ["catalog"]
+# FlatBT's `villager` tree, built from its node catalog. Turn it off to
+# benchmark a FlatBT revision from before the catalog.
+catalog = []
+
+[dependencies]
+flatbt = { path = ".." }
+bonsai-bt = "=0.14.0"
+behavior-tree-lite = "=0.3.2"
+behavior-tree = "=0.1.0"
+bhv = "=0.4.0"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+debug = "line-tables-only"
