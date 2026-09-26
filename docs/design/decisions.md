@@ -358,12 +358,16 @@ exactly the composition in its row, so the common cases stay short while
 - **When the order is recomputed** follows from the control: whenever it goes
   back to position 0 under `Evaluate`. `select` does on every `Evaluate`, so a
   score order preempts; `seq` does only while on its first child.
-- **Random orders are drawn once per invocation.** One draw from
-  `rng: Fn(&mut C) -> u32` seeds the invocation, and each position hashes
-  (seed, position). A pass restarted by `Evaluate` walks the same order, so
-  `select` retries the children before the running one exactly as it does for
-  a written order, rather than redrawing a coin flip every update. This changes
-  the earlier `random_select`, which kept the running child without rescanning.
+- **Random orders use the caller's generator only.** One draw from
+  `rng: Fn(&mut C) -> u32` per position. A first version seeded the invocation
+  once and hashed (seed, position) so `Evaluate` could replay the order without
+  storing it; review preferred not to ship a generator of our own. Instead a
+  random order keeps the running child first when `Evaluate` restarts a pass,
+  so a random choice holds while it runs and nothing is replayed. The rest of
+  the pass is drawn afresh, so children that failed before the running one
+  may be tried again.
+- **Too many children is a build error.** The count is static, so
+  `order_by` asserts it in a `const` block rather than checking every update.
 - **Randomness from the context** keeps the crate dependency-free and `no_std`,
   lets one seeded generator serve a game, and keeps tests deterministic.
 

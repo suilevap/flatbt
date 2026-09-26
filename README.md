@@ -208,9 +208,11 @@ preempts the running one, and `seq` does only while still on its first child.
   lower index; NaN leaves a child out. Integer scores give a dynamic priority.
   `inertia` is added to the running child's score.
 - Random orders draw from a generator the context owns, `rng: Fn(&mut C) ->
-  u32`, once per invocation, so `Evaluate` walks the same order again and tests
-  stay deterministic. A weight that is not positive leaves its child out.
-- At most 64 children. Custom orders implement `BtOrder`.
+  u32`, once per position, so tests stay deterministic. When `Evaluate`
+  restarts a pass they keep the running child first, so a random choice holds
+  while it runs; the rest is drawn afresh. A weight that is not positive leaves
+  its child out.
+- At most 64 children; more fails to build. Custom orders implement `BtOrder`.
 
 `utility!` writes a score order as one arm per child:
 

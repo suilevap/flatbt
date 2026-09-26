@@ -40,8 +40,7 @@ const MAX_CHILDREN: usize = 64;
 /// returns the next child, or `None` when no child is left to offer; the
 /// control then sees a Failure at that position.
 ///
-/// `State` lives as long as the invocation and survives `Evaluate`, so an
-/// order that draws at random can keep its seed and repeat itself.
+/// `State` lives as long as the invocation and survives `Evaluate`.
 pub trait BtOrder<C> {
     type State: Default + Send + 'static;
 
@@ -74,7 +73,7 @@ pub struct Ordered<O, Children> {
 ///
 /// Only controls that visit positions in order -- 0, the running one, or the
 /// next -- are supported, as `select` and `seq` do. Any other position reports
-/// a diagnostic and fails. At most 64 children.
+/// a diagnostic and fails. At most 64 children; more fails to build.
 pub fn order_by<O, Children>(order: O, children: Children) -> Ordered<O, Children> {
     Ordered { order, children }
 }
@@ -95,12 +94,7 @@ pub struct OrderedState<OrderState, ChildrenState> {
 /// update takes.
 #[cold]
 #[inline(never)]
-fn unsupported<A>(position: usize, at: Option<usize>, child_count: usize) -> NodeResult<A> {
-    if child_count > MAX_CHILDREN {
-        return NodeResult::error(format_args!(
-            "order_by supports at most {MAX_CHILDREN} children, got {child_count}"
-        ));
-    }
+fn unsupported<A>(position: usize, at: Option<usize>) -> NodeResult<A> {
     NodeResult::error(format_args!(
         "order_by visits positions in order; asked for {position} after {at:?}"
     ))
@@ -130,9 +124,16 @@ where
         params: P,
         mode: EntryMode,
     ) -> NodeResult<A> {
+        // The child count is static, so too many is a build error, not a check
+        // on every update.
+        const {
+            assert!(
+                Children::LEN <= MAX_CHILDREN,
+                "order_by supports at most 64 children"
+            )
+        };
         let at = state.at.map(|(at, _)| at as usize);
         let child = match state.at {
-            _ if Self::LEN > MAX_CHILDREN => return unsupported(position, at, Self::LEN),
             // A new pass: on entry, or Evaluate back at the start.
             None if position == 0 => self.pick(state, ctx, 0),
             _ if position == 0 && mode == EntryMode::Evaluate => self.pick(state, ctx, 0),
@@ -145,7 +146,7 @@ where
                 }
                 self.pick(state, ctx, position)
             }
-            _ => return unsupported(position, at, Self::LEN),
+            _ => return unsupported(position, at),
         };
         match child {
             Some(child) => {

@@ -286,17 +286,16 @@ fn a_sequence_by_score_runs_every_child_best_first() {
 
 // --- random orders -------------------------------------------------------------
 
+/// A scripted generator: each draw takes the next value.
 #[derive(Default)]
 struct Dice {
-    seed: u32,
-    draws: u32,
+    draws: Vec<u32>,
     ran: Vec<usize>,
     fails: [bool; 4],
 }
 
 fn roll(dice: &mut Dice) -> u32 {
-    dice.draws += 1;
-    dice.seed
+    dice.draws.remove(0)
 }
 
 fn die(index: usize) -> impl BtNode<Dice, usize> {
@@ -315,71 +314,59 @@ fn shuffled_select() -> impl BtNode<Dice, usize> {
 }
 
 #[test]
-fn a_shuffled_select_tries_each_child_once_in_a_seeded_order() {
-    let tree = shuffled_select();
-    let mut orders = std::collections::HashSet::new();
-    for seed in 0..64 {
-        let mut dice = Dice {
-            seed,
-            fails: [true; 4],
-            ..Dice::default()
-        };
-        let mut state = BtState::new(&tree);
-        assert_eq!(
-            update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
-            NodeResult::Failure
-        );
-        let mut sorted = dice.ran.clone();
-        sorted.sort();
-        assert_eq!(sorted, [0, 1, 2, 3], "a permutation for seed {seed}");
-        assert_eq!(dice.draws, 1, "one draw per invocation");
-
-        // The same seed gives the same order.
-        let first = dice.ran.clone();
-        dice.ran.clear();
-        let mut state = BtState::new(&tree);
-        let _ = update(&tree, &mut state, &mut dice, EntryMode::Evaluate);
-        assert_eq!(dice.ran, first);
-        orders.insert(first);
-    }
-    assert!(
-        orders.len() > 16,
-        "seeds spread over orders: {}",
-        orders.len()
-    );
-}
-
-#[test]
-fn evaluate_walks_the_same_random_order_again() {
+fn a_shuffled_select_draws_each_position_from_the_untried_children() {
     let tree = shuffled_select();
     let mut dice = Dice {
-        seed: 7,
+        // 2 % 4 -> 2; 2 % 3 of [0, 1, 3] -> 3; 1 % 2 of [0, 1] -> 1; then 0.
+        draws: vec![2, 2, 1, 7],
         fails: [true; 4],
         ..Dice::default()
     };
     let mut state = BtState::new(&tree);
-    let _ = update(&tree, &mut state, &mut dice, EntryMode::Evaluate);
-    let order = dice.ran.clone();
 
-    // Let the second child in that order run; the first still fails.
-    dice.fails[order[1]] = false;
-    dice.ran.clear();
+    assert_eq!(
+        update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
+        NodeResult::Failure
+    );
+    assert_eq!(dice.ran, [2, 3, 1, 0]);
+    assert!(dice.draws.is_empty(), "one draw per position");
+}
+
+#[test]
+fn a_running_random_child_is_kept_first_under_evaluate() {
+    let tree = shuffled_select();
+    let mut dice = Dice {
+        // 1 % 4 -> 1, which fails; 1 % 3 of [0, 2, 3] -> 2, which runs.
+        draws: vec![1, 1],
+        fails: [false, true, false, false],
+        ..Dice::default()
+    };
     let mut state = BtState::new(&tree);
+
     assert_eq!(
         update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
-        NodeResult::Running(order[1])
+        NodeResult::Running(2)
     );
-    // Evaluate rescans from the start of the same order, like `select` does.
+    // Evaluate restarts the pass with the running child first: no draw, no jitter.
     assert_eq!(
         update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
-        NodeResult::Running(order[1])
+        NodeResult::Running(2)
     );
-    assert_eq!(dice.ran, [order[0], order[1], order[0], order[1]]);
-    // Resume goes straight back to it.
+    assert_eq!(
+        update(&tree, &mut state, &mut dice, EntryMode::Resume),
+        NodeResult::Running(2)
+    );
+    assert_eq!(dice.ran, [1, 2, 2, 2]);
+
+    // When it fails, the rest of the pass is drawn afresh.
+    dice.fails[2] = true;
+    dice.draws = vec![0, 0];
     dice.ran.clear();
-    let _ = update(&tree, &mut state, &mut dice, EntryMode::Resume);
-    assert_eq!(dice.ran, [order[1]]);
-    assert_eq!(dice.draws, 2);
+    assert_eq!(
+        update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
+        NodeResult::Running(0)
+    );
+    assert_eq!(dice.ran, [2, 0]);
 }
 
 #[test]
@@ -396,7 +383,7 @@ fn a_shuffled_sequence_runs_every_child_once() {
     };
     let tree = shuffle_seq(roll, (step(0), step(1), step(2), step(3)));
     let mut dice = Dice {
-        seed: 3,
+        draws: vec![3, 0, 1, 0],
         ..Dice::default()
     };
     let mut state = BtState::new(&tree);
@@ -404,30 +391,29 @@ fn a_shuffled_sequence_runs_every_child_once() {
         update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
         NodeResult::Success
     );
-    let mut sorted = dice.ran.clone();
-    sorted.sort();
-    assert_eq!(sorted, [0, 1, 2, 3]);
+    assert_eq!(dice.ran, [3, 0, 2, 1]);
 
     // Stops at the first failure.
-    let order = dice.ran.clone();
-    dice.fails[order[1]] = true;
+    dice.draws = vec![3, 0];
+    dice.fails[0] = true;
     dice.ran.clear();
     let mut state = BtState::new(&tree);
     assert_eq!(
         update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
         NodeResult::Failure
     );
-    assert_eq!(dice.ran, order[..2]);
+    assert_eq!(dice.ran, [3, 0]);
 }
 
 #[test]
 fn weighted_order_follows_weights_and_leaves_out_non_positive_ones() {
     let weights = |_: &Dice, index: usize| [0.0, 1.0, 3.0, f32::NAN][index];
     let tree = weighted_select(roll, weights, (die(0), die(1), die(2), die(3)));
-    let mut firsts = [0u32; 4];
-    for seed in 0..4000 {
+
+    // Draws map to [0, 4): child 1 covers [0, 1), child 2 covers [1, 4).
+    for (draw, first) in [(0, 1), (u32::MAX / 8, 1), (u32::MAX / 2, 2), (u32::MAX, 2)] {
         let mut dice = Dice {
-            seed,
+            draws: vec![draw, 0],
             fails: [true; 4],
             ..Dice::default()
         };
@@ -436,17 +422,9 @@ fn weighted_order_follows_weights_and_leaves_out_non_positive_ones() {
             update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
             NodeResult::Failure
         );
-        // Zero and NaN weights are never drawn; the rest fall back in turn.
-        let mut sorted = dice.ran.clone();
-        sorted.sort();
-        assert_eq!(sorted, [1, 2]);
-        firsts[dice.ran[0]] += 1;
+        // Zero and NaN weights are never drawn; the other child falls back.
+        assert_eq!(dice.ran, [first, 3 - first]);
     }
-    let share = firsts[2] as f32 / 4000.0;
-    assert!(
-        (0.70..0.80).contains(&share),
-        "weight 3 of 4 went first {share}"
-    );
 }
 
 #[test]
