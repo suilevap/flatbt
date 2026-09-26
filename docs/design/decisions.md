@@ -346,7 +346,7 @@ and `seq` visit the children in the order a `BtOrder` computes.
 Combinations that had no node come free: `seq(order_by(by_score(..)))` runs
 everything best first. The four old names stay as shorthand functions, each
 exactly the composition in its row, so the common cases stay short while
-`order_by` is the one implementation; `utility!` expands to the first row.
+`order_by` is the one implementation.
 
 - **Controls stay unchanged.** Wrapping the children rather than the policy
   means no `select_by`/`seq_by`: the control is the one already known, and so
@@ -366,6 +366,14 @@ exactly the composition in its row, so the common cases stay short while
   so a random choice holds while it runs and nothing is replayed. The rest of
   the pass is drawn afresh, so children that failed before the running one
   may be tried again.
+- **`per_child!` replaces `utility!`.** `utility!` added no feature: it only
+  put each score next to its child instead of in one `match index`. `weighted`
+  has the same need and `shuffled` none, so the macro became order-agnostic:
+  `per_child!(|bb: &C| { value => node, .. })` returns `(values, children)` for
+  any order that takes `Fn(&C, usize) -> T`. Order modifiers such as
+  `.inertia(x)` stay ordinary method calls. The utility case costs a `let`.
+  An `order_by!(by_score, ..)` that injects the closure was rejected: it cannot
+  take a method chain.
 - **Too many children is a build error.** The count is static, so
   `order_by` asserts it in a `const` block rather than checking every update.
 - **Randomness from the context** keeps the crate dependency-free and `no_std`,

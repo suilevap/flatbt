@@ -22,6 +22,7 @@
 //! assert_eq!(update(&tree, &mut state, &mut needs, EntryMode::Evaluate).act(), Some("sleep"));
 //! ```
 
+mod per_child;
 mod random;
 mod score;
 
@@ -188,8 +189,8 @@ impl<O, Children> Ordered<O, Children> {
 // Shorthands for the common pairings. Each is exactly the composition it names.
 
 /// `select(order_by(by_score(score), children))`: a utility selector. For
-/// inertia, write the composition with `by_score(score).inertia(x)`, or use
-/// [`crate::utility!`].
+/// inertia, write the composition with `by_score(score).inertia(x)`;
+/// [`crate::per_child!`] writes the scores next to their children.
 pub fn utility<F, S, Children>(
     score: F,
     children: Children,

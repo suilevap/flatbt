@@ -52,11 +52,12 @@ impl BtAction<Needs, &'static str> for Doing {
 }
 
 fn needs() -> impl BtNode<Needs, &'static str> {
-    utility!(|needs: &Needs| {
+    let (score, options) = per_child!(|needs: &Needs| {
         needs.hunger => action(Doing("eat", 0)),
         needs.fatigue => action(Doing("sleep", 1)),
         needs.boredom => action(Doing("play", 2)),
-    })
+    });
+    select(order_by(by_score(score), options))
 }
 
 #[test]
@@ -133,10 +134,11 @@ fn a_failed_child_hands_over_to_the_best_untried_one() {
 
 #[test]
 fn inertia_keeps_the_running_child_until_a_challenger_clears_it() {
-    let tree = utility!(|needs: &Needs| {
+    let (score, options) = per_child!(|needs: &Needs| {
         needs.hunger => action(Doing("eat", 0)),
         needs.fatigue => action(Doing("sleep", 1)),
-    }, inertia = 0.3);
+    });
+    let tree = select(order_by(by_score(score).inertia(0.3), options));
     let mut state = BtState::new(&tree);
     let mut needs = Needs {
         hunger: 0.2,
@@ -442,4 +444,25 @@ fn a_control_that_jumps_positions_is_reported_and_fails() {
         NodeResult::Failure
     );
     assert!(dice.ran.is_empty());
+}
+
+#[test]
+fn per_child_weights_sit_next_to_their_children() {
+    let (weight, idle) = per_child!(|dice: &Dice| {
+        if dice.fails[0] { 0.0 } else { 1.0 } => die(0),
+        0.0 => die(1),
+        3.0 => die(2),
+    });
+    let tree = weighted_select(roll, weight, idle);
+    let mut dice = Dice {
+        // Weights [1, 0, 3]: a draw in [1, 4) of 4 picks child 2.
+        draws: vec![u32::MAX / 2],
+        ..Dice::default()
+    };
+    let mut state = BtState::new(&tree);
+
+    assert_eq!(
+        update(&tree, &mut state, &mut dice, EntryMode::Evaluate),
+        NodeResult::Running(2)
+    );
 }

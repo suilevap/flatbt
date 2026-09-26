@@ -178,7 +178,8 @@ for what shipped, and a decision-log entry.
 - Selection by order: `order_by(order, children)` under the ordinary `select`
   and `seq`, with `by_score`, `shuffled` and `weighted` orders. Replaces
   `utility(..)` from Phase 2 and the proposed `random_select`,
-  `weighted_select` and `shuffle_seq`; `utility!` stays as shorthand. See the
+  `weighted_select` and `shuffle_seq`, which stay as shorthand functions.
+  `per_child!` replaces `utility!` and works for any per-child order. See the
   decision log.
 - `invert`, `force_*`, `repeat`/`retry`, `reevaluate_when`, `focus`,
   `if_else`. The example `Repeat` stays in `examples/support`: it is what the

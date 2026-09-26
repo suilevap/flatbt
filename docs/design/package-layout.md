@@ -20,7 +20,7 @@ flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
 | `build.rs` | Tuple states, parameter tuples, child indices |
 | `src/nodes/action/` | Lifecycle and cancellation adapters |
 | `src/nodes/choose.rs` | Choice policy and `choose!` |
-| `src/nodes/order/` | `order_by`, `BtOrder`; orders `by_score`, `shuffled`, `weighted`; `utility!` |
+| `src/nodes/order/` | `order_by`, `BtOrder`; orders `by_score`, `shuffled`, `weighted`; `per_child!` |
 | `src/nodes/repeat_while.rs`, `map_act.rs`, `remap.rs`, `reevaluate.rs`, `focus.rs` | Decorators, one file each |
 | `src/nodes/repeat.rs`, `if_else.rs` | `repeat`, `retry`, `if_else` |
 | `src/nodes/function.rs` | Callable helpers: `action_while`, `leaf_with`, `check_with` |

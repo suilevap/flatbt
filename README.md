@@ -214,15 +214,28 @@ preempts the running one, and `seq` does only while still on its first child.
   its child out.
 - At most 64 children; more fails to build. Custom orders implement `BtOrder`.
 
-`utility!` writes a score order as one arm per child:
+`per_child!` writes a value next to each child -- a score, a weight -- and
+returns the per-child function and the children, for any order:
 
 ```rust,ignore
-let tree = utility!(|bb: &Needs| {
-    bb.hunger => action(Eat),
-    bb.fatigue => action(Sleep),
-    bb.boredom * 0.5 => action(Play),
-}, inertia = 0.1);
+let (score, combat) = per_child!(|bb: &Guard| {
+    bb.threat       => action(Fight),
+    1.0 - bb.health => action(Retreat),
+    0.2             => action(Patrol),
+});
+let (weight, idle) = per_child!(|bb: &Guard| {
+    3.0                              => action(LookAround),
+    if bb.bored { 2.0 } else { 0.5 } => action(Whistle),
+    1.0                              => action(Stretch),
+});
+select((
+    select(order_by(by_score(score).inertia(0.1), combat)),
+    select(order_by(weighted(rng, weight), idle)),
+))
 ```
+
+Adding or reordering an arm cannot shift a value onto another child. Inside a
+larger expression, such as a `scope!` body, a block holds the `let`.
 
 ## Share local values
 
@@ -568,7 +581,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `order_by` and `utility!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `order_by` and `per_child!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node
