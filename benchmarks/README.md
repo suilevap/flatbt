@@ -10,6 +10,8 @@ cargo run --release -- --quick           # shorter samples
 cargo run --release -- --scenario guard --lib bhv
 ./instructions.sh                        # cachegrind; needs valgrind
 csharp/compare.sh                        # against bt-tree (C#); needs .NET 10
+cargo run --release -- scaling > charts/scaling.tsv   # 1 to 1M agents, ~40 minutes
+python3 charts/plot.py charts/scaling.tsv charts/     # needs matplotlib
 ```
 
 The run exits non-zero if any library's results differ from FlatBT's.
@@ -226,6 +228,28 @@ counts do not vary. Ratios are against FlatBT.
 | behavior-tree | 3234 / 36.30 | 453 / 2.89 | 864 / 5.13 | 1565 / 15.42 | — |
 | bhv | 531 / 4.53 | 109 / 0.42 | 155 / 0.65 | 262 / 3.09 | 338 / 2.75 |
 | behavior-tree-lite | 1982 / 13.38 | 354 / 0.53 | 545 / 2.88 | 845 / 5.67 | 961 / 5.24 |
+
+### Population size
+
+`flatbt-compare scaling` runs each library at 1 to 1M agents, about 2M
+agent-ticks per sample, and skips a population whose trees would hold more
+than 3 GB. Data: [`charts/scaling.tsv`](charts/scaling.tsv).
+
+![Time per agent-tick against population size, one panel per scenario](charts/scaling.png)
+
+![Memory each agent keeps for its tree](charts/memory.png)
+
+- **Up to about 1k agents** every tree fits in cache, and `bhv` stays within
+  1–2× of FlatBT; on `villager` with one agent they tie (24 ns).
+- **Between 1k and 10k** the per-agent trees of the other libraries leave the
+  cache. At 100k soldiers FlatBT takes 26 ns per agent-tick; `bhv` 425,
+  behavior-tree-lite 937, behavior-tree 1107, bonsai-bt 1169: 16–45× slower.
+  At 100k villagers: FlatBT 38, `bhv` 536, behavior-tree-lite 1193.
+- **FlatBT stays nearly flat** to 100k agents. At 1M it rises to 35–58 ns,
+  mostly from the blackboards: each agent owns 264 bytes of world state, and
+  1M of them is 264 MB streamed per frame, the same for every library.
+- At 1M agents a sample is only 3 frames, so those points are noisier; the
+  dips of `bhv` and bonsai-bt from 100k to 1M are within that noise.
 
 ## Reading the results
 

@@ -129,7 +129,7 @@ def scaling_chart(data, out):
             )
             ends.append((lib, xs[-1], ys[-1]))
         # Direct labels at each line's last point, spread so they never overlap.
-        placed = declutter([math.log10(y) for _, _, y in ends], 0.13)
+        placed = declutter([math.log10(y) for _, _, y in ends], 0.19)
         for (lib, x, y), ly in zip(ends, placed):
             ax.annotate(
                 f"{lib} {y:.0f}" if y >= 10 else f"{lib} {y:.1f}",
@@ -167,12 +167,12 @@ def scaling_chart(data, out):
         "3 GB are skipped.",
         transform=legend.transAxes, va="top", fontsize=8, color=INK_2, linespacing=1.5,
     )
-    fig.suptitle("Time per agent-tick as the population grows", x=0.06, ha="left",
+    fig.suptitle("Time per agent-tick as the population grows", x=0.06, y=0.985, ha="left",
                  fontsize=13, fontweight="bold", color=INK)
-    fig.text(0.06, 0.945,
+    fig.text(0.06, 0.925,
              "FlatBT main 1818c17 · Rust 1.98.1 · 4-vCPU Xeon @ 2.10 GHz · median of 5 samples",
              fontsize=8.5, color=INK_2)
-    fig.tight_layout(rect=(0.02, 0.0, 1.0, 0.935), h_pad=2.2, w_pad=1.5)
+    fig.tight_layout(rect=(0.02, 0.0, 1.0, 0.91), h_pad=2.2, w_pad=1.5)
     fig.savefig(out)
 
 
