@@ -1,7 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::inspect::{Describe, Inspector, describe, path_id};
-use crate::{BtNode, Entry, EntryMode, NodeResult};
+use crate::trace::{Trace, TraceLog, trace};
+use crate::{BtNode, Entry, NodeResult};
 
 /// Per-agent state bound to a borrowed root. Includes descendant state.
 pub struct BtState<'root, N: BtNode<C, A>, C, A = ()> {
@@ -17,6 +18,12 @@ impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
             root_state: None,
             context: PhantomData,
         }
+    }
+
+    /// A text view of the last update recorded in `log`: every node it
+    /// entered, how, and what each returned. See [`Trace`].
+    pub fn trace<'a>(&'a self, log: &'a TraceLog) -> Trace<'a, N, C, A> {
+        trace(self.root_node, self.root_state.as_ref(), log)
     }
 
     pub fn is_running(&self) -> bool {
@@ -55,16 +62,20 @@ impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
 /// [`NodeResult::Running`] carries the act; a terminal result carries none,
 /// because an agent that finished is not doing anything. Use
 /// [`NodeResult::act`] to take it.
-pub fn update<C, A, N: BtNode<C, A>>(
+///
+/// `entry` is an [`EntryMode`](crate::EntryMode), or
+/// [`log.entry(mode)`](TraceLog::entry) to record the update into a
+/// [`TraceLog`] the caller keeps.
+pub fn update<'t, C, A, N: BtNode<C, A>>(
     root_node: &N,
     state: &mut BtState<'_, N, C, A>,
     ctx: &mut C,
-    mode: EntryMode,
+    entry: impl Into<Entry<'t>>,
 ) -> NodeResult<A> {
     if !core::ptr::eq(root_node, state.root_node) {
         return NodeResult::error("state belongs to a different root definition");
     }
-    update_slot(root_node, &mut state.root_state, ctx, mode)
+    run_root(root_node, &mut state.root_state, ctx, entry.into())
 }
 
 /// Runs a root over caller-owned invocation state: what [`update`] does, without
@@ -92,23 +103,26 @@ pub fn update<C, A, N: BtNode<C, A>>(
 /// assert_eq!(update_slot(&tree, &mut slot, &mut n, EntryMode::Resume), NodeResult::Success);
 /// assert!(slot.is_none());
 /// ```
-pub fn update_slot<C, A, N: BtNode<C, A>>(
+pub fn update_slot<'t, C, A, N: BtNode<C, A>>(
     node: &N,
     slot: &mut Option<N::State>,
     ctx: &mut C,
-    mode: EntryMode,
+    entry: impl Into<Entry<'t>>,
 ) -> NodeResult<A> {
-    let mode = if slot.is_none() {
-        EntryMode::Evaluate
-    } else {
-        mode
-    };
-    let result = node.update(
-        slot.get_or_insert_with(Default::default),
-        ctx,
-        (),
-        Entry::new(mode),
-    );
+    run_root(node, slot, ctx, entry.into())
+}
+
+/// The drivers' body, over a plain `Entry`: converting at the edge keeps
+/// release code the same as before entries could carry a trace.
+fn run_root<C, A, N: BtNode<C, A>>(
+    node: &N,
+    slot: &mut Option<N::State>,
+    ctx: &mut C,
+    entry: Entry<'_>,
+) -> NodeResult<A> {
+    let entry = entry.start(slot.is_none(), N::NODES);
+    let result = node.update(slot.get_or_insert_with(Default::default), ctx, (), entry);
+    entry.finish(&result);
     if !result.is_running() {
         *slot = None;
     }

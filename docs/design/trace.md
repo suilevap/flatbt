@@ -1,6 +1,7 @@
 # Trace: why the tree chose what it runs
 
-Status: proposal. Phase 1, `Entry`, is implemented; the trace itself is not.
+Status: phases 1 and 2 implemented: `Entry`, node ids, the calls log and the
+trace view. Per-node records (phase 3) and Bevy (phase 4) are proposals.
 
 `describe()` shows *what* runs. A trace shows *why*: which nodes the last
 update entered, how, what each returned and decided, including branches that
@@ -11,9 +12,9 @@ were tried and dropped, and a tree that failed outright.
 A trace is one more view of the `inspect` walk, formatted only when asked:
 
 ```rust
-state.set_trace(true); // no-op in release
-let _ = update(&tree, &mut state, &mut ctx, EntryMode::Evaluate);
-println!("{:#}", state.trace());
+let log = TraceLog::new(); // one per traced agent, kept by the caller
+let _ = update(&tree, &mut state, &mut ctx, log.entry(EntryMode::Evaluate));
+println!("{:#}", state.trace(&log));
 ```
 
 ```text
@@ -63,8 +64,9 @@ the log does not depend on state surviving.
 
 ## The log
 
-One per traced agent, owned by its `BtState` (or Bevy `DebugBehavior`),
-allocated by `set_trace(true)`. It has two parts.
+One per traced agent, kept by the caller (or Bevy's `DebugBehavior`) beside
+the agent's state, and handed to the driver as `log.entry(mode)` in place of a
+mode. `BtState` holds only invocation state. The log has two parts.
 
 **Calls**, written by the core for every node: one flat buffer of
 
@@ -107,7 +109,7 @@ reach each node, an update allocates only when it records more than any update
 before it. A test counts allocations over repeated traced updates, as
 `flatbt-bevy`'s allocation test does for ticks.
 
-`set_trace` takes a limit on calls per update; past it recording stops and the
+`TraceLog::with_limit` sets a limit on calls per update; past it recording stops and the
 trace ends with `… (limit reached)`, so a `repeat` restarting many times
 cannot grow the log without bound.
 
@@ -169,14 +171,16 @@ pub struct Entry<'t> {
 - **`Copy`, like `EntryMode`.** A control passes it to several children in one
   update, as it passes the mode now. The handle holds a shared
   `&RefCell<TraceLog>`, so copies can all record; `RefCell` is `core`.
-- **Children get their own.** A parent calls a child with
-  `entry.child(offset)`, or `entry.candidate(offset)` for a fresh candidate,
-  which also switches the mode to `Evaluate`. Both set the child's node id.
+- **Children get their own.** A parent runs a child with
+  `entry.run(offset, &child, state, ctx, params)`, or `run_candidate` for a
+  fresh one, which also switches the mode to `Evaluate`. Both set the child's
+  node id and range, and record the call. `entry.child` / `candidate` and
+  `finish` are the same in parts, for tuples.
 - **Nodes record through it:** `entry.record(|| Picked { position, child })`.
   The closure runs only while a trace is on; in release the call is empty.
-- **Drivers pass the log.** `update` takes it from the `BtState`;
-  `update_slot` gains a variant taking `Option<&TraceLog>`, which Bevy's tick
-  uses for agents carrying a traced `DebugBehavior`.
+- **Drivers take the entry.** `update` and `update_slot` take
+  `impl Into<Entry>`: an `EntryMode` as before, or `log.entry(mode)` to trace.
+  Bevy's tick will pass one for agents carrying a traced `DebugBehavior`.
 
 No thread-local, no global, and one signature in every build. Tracing works
 wherever the log can be allocated: `std`, or later `alloc`.
@@ -201,22 +205,23 @@ dropped candidates and a finished tree are still addressable.
   consts have defaults on stable, so custom nodes need nothing.
 - Composites sum their children: the tuple impls add each child's `NODES`, and
   single-child nodes add one.
-- The offset a parent passes to `entry.child(offset)` is a constant: one, plus
-  the `NODES` of the children before it.
-
-A custom composing node keeps `NODES = 1` by default: its descendants then
-share its id and their records merge into its line. It can declare its
-subtree size and pass offsets to give each child its own id.
+- The offset a parent passes to `entry.run(offset, ..)` is a constant: one,
+  plus the `NODES` of the children before it.
+- **Each entry carries its subtree's range**, `[id, id + NODES)`, and an entry
+  made for a child outside it records nothing. A custom composing node that
+  keeps `NODES = 1` and passes its own entry on is traced as one node: its
+  descendants would number from its id and land on unrelated nodes, so they
+  are not recorded instead. Declaring `NODES`, running children with
+  `entry.run` and reporting them in `inspect` traces inside it.
 
 ## Merging into `inspect`
 
 Formatting walks the definition with `inspect`, as `describe().with_inactive()`
 does, numbering nodes in the same preorder. Each node's records are attached
 to its line; nodes without records are hidden. State supplies the live fields
-of the running path, the log everything else. Plumbing that inspection hides
--- `bind`, `named`, `scope!`'s initializer sequence -- keeps its id so the
-numbering matches; `scope!`'s hidden sequence becomes a flag in `NodeInfo`
-rather than a swallowed `enter`.
+of the running path, the log everything else. Plumbing -- `bind`,
+`no_params`, `named` -- has no id of its own: it passes its entry on and adds
+nothing to `NODES`, as it adds no line to inspection.
 
 ## Bevy
 
@@ -265,7 +270,7 @@ before and after, and the suite runs in both profiles.
    examples and the Bevy crate; release assembly check. Done: release
    assembly of the `acts`, `choose` and `resume` examples is instruction for
    instruction the same as before.
-2. `NODES`, ids through `entry.child`, the log with `Call`s, `set_trace`, the
+2. `NODES`, ids through `entry.run`, the log with `Call`s, `log.entry`, the
    trace view with `← cause`; allocation test.
 3. `entry.record` and `records::<R>()`; policy answers, conditions,
    `choose!`, orders and scores, counters, actions, diagnostics.

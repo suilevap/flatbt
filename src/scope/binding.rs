@@ -124,6 +124,7 @@ where
     S: Default + Send + 'static,
 {
     type State = S;
+    const NODES: usize = <N as BtNode<C, A, B::Params<'static>>>::NODES;
 
     fn update(
         &self,
@@ -155,6 +156,7 @@ pub fn no_params<N>(node: N) -> WithoutParams<N> {
 
 impl<C, A, P, N: BtNode<C, A>> BtNode<C, A, P> for WithoutParams<N> {
     type State = N::State;
+    const NODES: usize = N::NODES;
 
     fn update(
         &self,

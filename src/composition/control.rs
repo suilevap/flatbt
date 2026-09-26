@@ -99,6 +99,7 @@ where
     Children: BtChildren<C, A, Params::Shape>,
 {
     type State = ControlState<P::State, Children::State>;
+    const NODES: usize = 1 + Children::NODES;
 
     // A tree is one type. Inlining every level into the root's update lets the
     // compiler see the whole path; LLVM's own heuristics stop a few levels in.

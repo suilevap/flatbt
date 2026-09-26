@@ -97,3 +97,11 @@ required-features = ["extras"]
 [[test]]
 name = "inspect"
 required-features = ["extras"]
+
+[[test]]
+name = "trace"
+required-features = ["extras"]
+
+[[test]]
+name = "trace_allocations"
+required-features = ["std"]

@@ -134,9 +134,10 @@ bind(ChooseCover, params::<(Read<Enemy>, Write<Option<Vector2>>), _, _>(
 policy. Import `WithParams` for `node.with(binding)`, equivalent to `bind(node, binding)`.
 The function API accepts custom controls and projections.
 
-The macro generates Option fields, bound `compute(callback)` initializers, and an
-outer sequence containing initialization plus the requested body. Sequence preserves
-the active body on Evaluate. No initializers means no prefix wrapper.
+The macro generates Option fields and bound `compute(callback)` initializers,
+passed to `Scope::init`. The scope runs them in order when an invocation starts,
+before its body, and skips them on Resume and Evaluate. An initializer that fails
+fails the scope; one still running is a diagnostic and a failure.
 
 ## Reborrowing and limits
 
@@ -146,7 +147,7 @@ directly. Custom parameter structs used by controls/actions need both traits;
 custom projections implement ParamBinding.
 
 `FLATBT_MAX_PARAMS` controls tuple generation (default 32), independently of
-`FLATBT_MAX_CHILDREN`. The initialization prefix and each control obey the child
+`FLATBT_MAX_CHILDREN`. A scope's initializers and each control obey the child
 limit separately. Large macros may need a higher Rust recursion limit.
 
 ## State and effects
