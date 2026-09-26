@@ -529,7 +529,9 @@ cargo run -p flatbt-bevy --example guards
 ## Debugging
 
 `state.describe()` writes the running path: `{}` on one line for logs, `{:#}`
-one node per line. Scope locals and policy progress appear as fields.
+one node per line. Scope locals and policy progress appear as fields, such as
+`repeat {times: 3, done: 1}` or
+`select {order: by_score, position: 1, tried: {0}}`.
 
 ```rust
 use flatbt::prelude::*;

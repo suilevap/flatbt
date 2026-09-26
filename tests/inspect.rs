@@ -215,3 +215,26 @@ fn a_custom_inspector_receives_nodes_fields_and_nesting() {
         ]
     );
 }
+
+#[test]
+fn orders_report_their_position_and_the_children_tried() {
+    struct Needs {
+        hunger: f32,
+        fatigue: f32,
+    }
+    let (score, options) = per_child!(|needs: &Needs| {
+        needs.hunger => leaf(|_: &mut Needs| NodeResult::<&str>::Failure),
+        needs.fatigue => leaf(|_: &mut Needs| NodeResult::Running("sleep")),
+    });
+    let tree = select(order_by(by_score(score), options));
+    let mut state = BtState::new(&tree);
+    let mut needs = Needs {
+        hunger: 0.9,
+        fatigue: 0.5,
+    };
+    let _ = update(&tree, &mut state, &mut needs, EntryMode::Evaluate);
+    assert_eq!(
+        state.describe().to_string(),
+        "select {order: by_score, position: 1, tried: {0}} > needs.fatigue => leaf"
+    );
+}

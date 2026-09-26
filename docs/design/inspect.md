@@ -17,8 +17,14 @@ returning false skips a subtree, so a path-only view never walks inactive
 branches. `dyn Inspector::node` keeps the order for implementors.
 
 `BtChildren::inspect_children` is required: its implementors are the crate's
-tuples and `Ordered`. `BtControl` adds `kind` and `inspect` with defaults, so
-custom policies need nothing.
+tuples and `Ordered`. `BtControl` and `BtOrder` add `kind` and `inspect` with
+defaults, so custom policies and orders need nothing. `Ordered` reports the
+order, the position being visited, and the children tried at earlier
+positions.
+
+Inspection has no context, so what an order computes from it -- scores,
+weights -- is not shown; `per_child!` labels each arm with its expression
+instead.
 
 Nothing here touches `update`: the methods are only instantiated when called,
 so trees that are never inspected compile to the same code. No allocation, no
