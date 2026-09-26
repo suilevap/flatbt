@@ -30,7 +30,8 @@ fn all() -> Vec<Box<dyn Measure>> {
 const USAGE: &str = "\
 usage: flatbt-compare [--quick] [--lib NAME] [--scenario NAME]
        flatbt-compare ticks LIB SCENARIO N   (ticks one agent N times; for profilers)
-       flatbt-compare evaluate [--quick]     (flatbt with Evaluate, as TSV; see csharp/)";
+       flatbt-compare evaluate [--quick]     (flatbt with Evaluate, as TSV; see csharp/)
+       flatbt-compare scaling [--quick]      (1 to 1M agents, as TSV; see charts/)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,6 +54,10 @@ fn main() -> ExitCode {
     }
 
     let quick = args.iter().any(|a| a == "--quick");
+    if args.first().map(String::as_str) == Some("scaling") {
+        scaling(&entries, quick);
+        return ExitCode::SUCCESS;
+    }
     if args.first().map(String::as_str) == Some("evaluate") {
         evaluate(&config(quick));
         return ExitCode::SUCCESS;
@@ -119,6 +124,44 @@ fn config(quick: bool) -> Config {
             agents: 10_000,
             frames: 200,
             samples: 7,
+        }
+    }
+}
+
+/// Population sizes for `scaling`. A size is skipped when its agents would
+/// hold more than `HEAP_LIMIT` bytes.
+const AGENTS: [usize; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
+const HEAP_LIMIT: f64 = 3e9;
+
+/// Tab-separated rows for `charts/plot.py`: scenario, lib, agents, ns per
+/// agent-tick, bytes per agent.
+fn scaling(entries: &[Box<dyn Measure>], quick: bool) {
+    let (agent_ticks, samples) = if quick { (200_000, 3) } else { (2_000_000, 5) };
+    println!("scenario\tlib\tagents\tns_per_agent_tick\tbytes_per_agent");
+    for e in entries {
+        let per_agent = e.scaling(100, 1_000, 1).bytes_per_agent;
+        for agents in AGENTS {
+            if agents as f64 * per_agent > HEAP_LIMIT {
+                eprintln!(
+                    "skipping {} / {} at {agents} agents",
+                    e.lib(),
+                    e.scenario().name()
+                );
+                continue;
+            }
+            eprintln!(
+                "running {} / {} at {agents} agents",
+                e.lib(),
+                e.scenario().name()
+            );
+            let r = e.scaling(agents, agent_ticks, samples);
+            println!(
+                "{}\t{}\t{agents}\t{:.2}\t{:.0}",
+                e.scenario().name(),
+                e.lib(),
+                r.ns_per_agent_tick,
+                r.bytes_per_agent
+            );
         }
     }
 }
