@@ -1,4 +1,4 @@
-use crate::inspect::{Inspector, NodeInfo, type_label};
+use crate::inspect::{Inspector, NodeInfo};
 use crate::trace::{Handle, TraceLog};
 
 /// Success/Failure ends an invocation; Running preserves it.
@@ -271,6 +271,6 @@ pub trait BtNode<C, A = (), P = ()> {
     /// composing node overrides it to report its children with the state it
     /// holds for each; see [`crate::inspect`].
     fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
-        inspector.node(NodeInfo::new(type_label::<Self>(), state.is_some()), |_| {});
+        inspector.node(NodeInfo::of_type::<Self>(state.is_some()), |_| {});
     }
 }

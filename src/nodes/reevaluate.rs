@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::inspect::{Inspector, NodeInfo, fn_name};
+use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, EntryMode, NodeResult, ReadFn};
 
@@ -51,7 +51,7 @@ where
     }
 
     fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("reevaluate_when", state.is_some()).name(fn_name::<F>());
+        let node = NodeInfo::new("reevaluate_when", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |inspector| {
             BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,

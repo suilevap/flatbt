@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::inspect::{Inspector, NodeInfo, fn_name};
+use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult, ReadFn};
 
@@ -43,7 +43,7 @@ impl<C, A, P, F: Fn(&mut C, P) -> NodeResult<A>> BtNode<C, A, P> for LeafWith<F>
     }
 
     fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("leaf_with", state.is_some()).name(fn_name::<F>());
+        let node = NodeInfo::new("leaf_with", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
 }
@@ -70,7 +70,7 @@ impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
     }
 
     fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("check_with", state.is_some()).name(fn_name::<F>());
+        let node = NodeInfo::new("check_with", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
 }
@@ -154,7 +154,7 @@ where
     }
 
     fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("action_while", state.is_some()).name(fn_name::<F>());
+        let node = NodeInfo::new("action_while", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
 }

@@ -579,12 +579,12 @@ mod text {
                 } else if self.written > 0 {
                     self.write(format_args!(" > "));
                 }
-                if let Some(label) = node.label {
+                if let Some(label) = node.label() {
                     self.write(format_args!("{label} => "));
                 }
-                match node.name {
-                    Some(name) => self.write(format_args!("{name} ({})", node.kind)),
-                    None => self.write(format_args!("{}", node.kind)),
+                match node.name() {
+                    Some(name) => self.write(format_args!("{name} ({})", node.kind())),
+                    None => self.write(format_args!("{}", node.kind())),
                 }
                 if self.lines {
                     match calls[0].entered {

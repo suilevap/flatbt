@@ -194,7 +194,8 @@ fn a_custom_inspector_receives_nodes_fields_and_nesting() {
 
     impl Inspector for Events {
         fn enter(&mut self, node: NodeInfo<'_>) -> bool {
-            self.0.push(format!("enter {} {}", node.kind, node.active));
+            self.0
+                .push(format!("enter {} {}", node.kind(), node.active()));
             true
         }
 
@@ -271,4 +272,41 @@ fn the_path_id_changes_with_the_path_and_not_with_fields() {
     let _ = update(&tree, &mut state, &mut world, EntryMode::Evaluate);
     assert_ne!(state.path_id(), chasing);
     assert_ne!(state.path_id(), idle);
+}
+
+#[test]
+fn only_function_items_have_names() {
+    fn name_of<F>(_: &F) -> Option<&'static str> {
+        flatbt::inspect::fn_name::<F>()
+    }
+    fn is_near<T>(_: &T) -> bool {
+        true
+    }
+    fn make_check<T>() -> impl Fn(&T) -> bool {
+        |_| true
+    }
+
+    assert_eq!(name_of(&sees_enemy), Some("sees_enemy"));
+    assert_eq!(name_of(&is_near::<u32>), Some("is_near"));
+    let at = 3;
+    assert_eq!(name_of(&|world: &World| world.at == at), None);
+    assert_eq!(name_of(&|_: &World| true), None);
+    assert_eq!(name_of(&make_check::<World>()), None);
+    let pointer: fn(&World) -> bool = sees_enemy;
+    assert_eq!(name_of(&pointer), None);
+}
+
+#[test]
+fn node_info_resolves_names_from_code_when_read() {
+    struct Walker;
+    let leaf = NodeInfo::new("leaf", true).with_fn_name::<fn(&World) -> bool>();
+    assert_eq!(leaf.name(), None);
+    let custom = NodeInfo::of_type::<Walker>(false);
+    assert_eq!(
+        (custom.kind(), custom.name(), custom.active()),
+        ("Walker", None, false)
+    );
+    let action = NodeInfo::new("action", true).with_type_name::<Walker>();
+    assert_eq!(action.name(), Some("Walker"));
+    assert_eq!(action.with_name(Some("walk")).name(), Some("walk"));
 }
