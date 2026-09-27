@@ -39,33 +39,125 @@ use core::marker::PhantomData;
 use crate::{BtNode, Entry, NodeResult};
 
 /// One node, as reported to an [`Inspector`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Names taken from code, such as a function item's, are resolved only when
+/// read: an inspector that never asks for them, like [`path_id`], never pays
+/// for them.
+#[derive(Clone, Copy)]
 pub struct NodeInfo<'a> {
-    /// What the node is: its constructor, such as `seq` or `leaf`, or for a
-    /// custom node its type name.
-    pub kind: &'a str,
-    /// Given with [`named`](WithName::named), or taken from code.
-    pub name: Option<&'a str>,
-    /// What the parent calls this child, such as a `choose!` pattern.
-    pub label: Option<&'a str>,
-    /// Holds invocation state: the node is on the running path.
-    pub active: bool,
+    kind: Kind<'a>,
+    name: Name<'a>,
+    label: Option<&'a str>,
+    active: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Kind<'a> {
+    Given(&'a str),
+    TypeOf(fn() -> &'static str),
+}
+
+#[derive(Clone, Copy)]
+enum Name<'a> {
+    Given(Option<&'a str>),
+    TypeOf(fn() -> &'static str),
+    FnOf(fn() -> Option<&'static str>),
 }
 
 impl<'a> NodeInfo<'a> {
+    /// A node of `kind`, such as `seq`; `active` when it is on the running path.
     pub fn new(kind: &'a str, active: bool) -> Self {
         Self {
-            kind,
-            name: None,
+            kind: Kind::Given(kind),
+            name: Name::Given(None),
             label: None,
             active,
         }
     }
 
-    pub fn name(self, name: Option<&'a str>) -> Self {
-        Self { name, ..self }
+    /// A node whose kind is `T`'s type label; see [`type_label`].
+    pub fn of_type<T: ?Sized>(active: bool) -> Self {
+        Self {
+            kind: Kind::TypeOf(type_label::<T>),
+            ..Self::new("", active)
+        }
+    }
+
+    /// Names the node.
+    pub fn with_name(self, name: Option<&'a str>) -> Self {
+        Self {
+            name: Name::Given(name),
+            ..self
+        }
+    }
+
+    /// Names the node after the function item `F`, if it is one; see
+    /// [`fn_name`].
+    pub fn with_fn_name<F>(self) -> Self {
+        Self {
+            name: Name::FnOf(fn_name::<F>),
+            ..self
+        }
+    }
+
+    /// Names the node after the type `T`; see [`type_label`].
+    pub fn with_type_name<T: ?Sized>(self) -> Self {
+        Self {
+            name: Name::TypeOf(type_label::<T>),
+            ..self
+        }
+    }
+
+    /// What the node is: its constructor, such as `seq` or `leaf`, or for a
+    /// custom node its type name.
+    pub fn kind(&self) -> &'a str {
+        match self.kind {
+            Kind::Given(kind) => kind,
+            Kind::TypeOf(kind) => kind(),
+        }
+    }
+
+    /// Given with [`named`](WithName::named), or taken from code.
+    pub fn name(&self) -> Option<&'a str> {
+        match self.name {
+            Name::Given(name) => name,
+            Name::TypeOf(name) => Some(name()),
+            Name::FnOf(name) => name(),
+        }
+    }
+
+    /// What the parent calls this child, such as a `choose!` pattern.
+    pub fn label(&self) -> Option<&'a str> {
+        self.label
+    }
+
+    /// Holds invocation state: the node is on the running path.
+    pub fn active(&self) -> bool {
+        self.active
     }
 }
+
+impl fmt::Debug for NodeInfo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NodeInfo")
+            .field("kind", &self.kind())
+            .field("name", &self.name())
+            .field("label", &self.label)
+            .field("active", &self.active)
+            .finish()
+    }
+}
+
+impl PartialEq for NodeInfo<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind() == other.kind()
+            && self.name() == other.name()
+            && self.label == other.label
+            && self.active == other.active
+    }
+}
+
+impl Eq for NodeInfo<'_> {}
 
 /// Receives a tree as nodes, fields, and nesting.
 ///
@@ -173,10 +265,7 @@ impl Inspector for Rename<'_, '_> {
                 label: Some(label),
                 ..node
             }),
-            Some(name) => self.inner.enter(NodeInfo {
-                name: Some(name),
-                ..node
-            }),
+            Some(name) => self.inner.enter(node.with_name(Some(name))),
             None => self.inner.enter(node),
         }
     }
@@ -294,8 +383,8 @@ impl PathHash {
 
 impl Inspector for PathHash {
     fn enter(&mut self, node: NodeInfo<'_>) -> bool {
-        self.feed(if node.active { 1 } else { 2 });
-        node.active
+        self.feed(if node.active() { 1 } else { 2 });
+        node.active()
     }
 
     fn field(&mut self, _: &str, _: &dyn fmt::Debug) {}
@@ -384,7 +473,7 @@ impl Text<'_, '_> {
 
 impl Inspector for Text<'_, '_> {
     fn enter(&mut self, node: NodeInfo<'_>) -> bool {
-        if !node.active && !self.inactive {
+        if !node.active() && !self.inactive {
             return false;
         }
         self.close_fields();
@@ -394,17 +483,17 @@ impl Inspector for Text<'_, '_> {
             }
             self.write(format_args!("{:1$}", "", self.depth * 2));
             if self.inactive {
-                self.write(format_args!("{} ", if node.active { '*' } else { '-' }));
+                self.write(format_args!("{} ", if node.active() { '*' } else { '-' }));
             }
         } else if self.nodes > 0 {
             self.write(format_args!(" > "));
         }
-        if let Some(label) = node.label {
+        if let Some(label) = node.label() {
             self.write(format_args!("{label} => "));
         }
-        match node.name {
-            Some(name) => self.write(format_args!("{name} ({})", node.kind)),
-            None => self.write(format_args!("{}", node.kind)),
+        match node.name() {
+            Some(name) => self.write(format_args!("{name} ({})", node.kind())),
+            None => self.write(format_args!("{}", node.kind())),
         }
         self.depth += 1;
         self.nodes += 1;

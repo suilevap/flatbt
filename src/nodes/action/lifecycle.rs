@@ -1,4 +1,4 @@
-use crate::inspect::{Inspector, NodeInfo, type_label};
+use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
@@ -90,7 +90,7 @@ where
     }
 
     fn inspect(&self, state: Option<&Option<S>>, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("action", state.is_some()).name(Some(type_label::<T>()));
+        let node = NodeInfo::new("action", state.is_some()).with_type_name::<T>();
         inspector.node(node, |inspector| {
             let started = state.and_then(Option::as_ref);
             BtAction::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(

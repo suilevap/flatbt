@@ -32,7 +32,7 @@ so trees that are never inspected compile to the same code. No allocation, no
 
 ## Names
 
-`NodeInfo` carries three strings:
+`NodeInfo` carries three strings, and whether the node is active:
 
 - `kind`: the constructor (`seq`, `leaf`, `guard`), or the type name for a
   custom node or policy.
@@ -41,6 +41,13 @@ so trees that are never inspected compile to the same code. No allocation, no
   `{{closure}}` and get none. An action is named by its type.
 - `label`: what the parent calls the child. `choose!` and `per_child!` wrap each
   arm with `inspect::label(stringify!(pattern), node)`.
+
+A name or kind taken from code is resolved only when read: `NodeInfo` holds
+`fn_name::<F>` or `type_label::<T>` as a function pointer, and `kind()` and
+`name()` call it. `type_name` is a string to scan, and an inspector that never
+reads names -- `path_id`, the trace's shape pass -- should not pay for them on
+every node it visits. The fields are private for that reason; `new`,
+`of_type`, `with_name`, `with_fn_name` and `with_type_name` build one.
 
 Name and label are separate so an arm's pattern does not replace a name the
 author gave inside it. `Named` wraps the node and renames the next `enter`
