@@ -1,6 +1,8 @@
+use core::fmt::Debug;
 use core::ops::Add;
 
 use super::BtOrder;
+use crate::Entry;
 
 /// Children ordered by score, highest first.
 pub struct ByScore<F, S> {
@@ -36,9 +38,16 @@ impl<F, S> ByScore<F, S> {
 impl<C, F, S> BtOrder<C> for ByScore<F, S>
 where
     F: Fn(&C, usize) -> S,
-    S: Copy + PartialOrd + Add<Output = S>,
+    S: Copy + PartialOrd + Add<Output = S> + Debug + 'static,
 {
     type State = ();
+
+    fn trace(&self, _: &(), ctx: &mut C, child_count: usize, entry: Entry<'_>) {
+        for index in 0..child_count {
+            let score = (self.score)(ctx, index);
+            entry.record("score", || score);
+        }
+    }
 
     fn kind(&self) -> &'static str {
         "by_score"

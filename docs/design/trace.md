@@ -1,7 +1,7 @@
 # Trace: why the tree chose what it runs
 
-Status: phases 1 and 2 implemented: `Entry`, node ids, the calls log and the
-trace view. Per-node records (phase 3) and Bevy (phase 4) are proposals.
+Status: phases 1 to 3 implemented: `Entry`, node ids, the calls log, the trace
+view, and values nodes record. Bevy (phase 4) is a proposal.
 
 `describe()` shows *what* runs. A trace shows *why*: which nodes the last
 update entered, how, what each returned and decided, including branches that
@@ -81,27 +81,26 @@ struct Call {
 in the order calls ended. Enough for the tree of calls, outcomes and
 `← cause`, for any node, custom ones included.
 
-**Records**, written by nodes, typed per node type. A node logs values of its
-own types, and reads them back in its own `inspect`:
+**Values**, recorded by nodes with the call they belong to:
 
 ```rust
 // in update: the closure runs only while a trace is on
-entry.record(|| Picked { position, child });
-
-// in inspect: this node's records from the last update, if any
-for picked in inspector.records::<Picked>() {
-    inspector.field("pick", &picked.child);
-}
+let holds = self.predicate.call(ctx, params);
+entry.record("if", || holds);
 ```
 
-The log keeps one slot per node id that records anything: a `Box<dyn Any>`
-holding that node's `Vec<R>`, created the first time the node records. Reading
-and writing downcast by `TypeId`; no `unsafe`. A node recording two types
-keeps one enum.
+A value is any `Debug + 'static`, stored as itself, not as text. The trace
+view prints each call's values as `name: value` -- several under one name as
+`name: [a, b]` -- through `Debug`, so no node needs display code, custom ones
+included. The log keeps one slot per node, name and value type: a
+`Box<dyn Values>` holding a `Vec` of that type, created the first time and
+downcast by `TypeId`, with no `unsafe`. Each value notes which of its node's
+calls it belongs to, so a node called several times shows each call's values
+after that call's outcome.
 
-`inspector.records::<R>()` is a provided method over an object-safe accessor
-the trace view implements; any other inspector returns nothing, so the same
-`inspect` serves `describe()` and the trace.
+The earlier draft had each node read its own records back in `inspect` and
+format them. Printing through `Debug` does the same with nothing to write;
+a node wanting its own rendering can still add it later.
 
 **No allocation per frame.** Every buffer is cleared at the start of an update
 and keeps its capacity; slots stay allocated. After the first updates that
@@ -109,34 +108,43 @@ reach each node, an update allocates only when it records more than any update
 before it. A test counts allocations over repeated traced updates, as
 `flatbt-bevy`'s allocation test does for ticks.
 
-`TraceLog::with_limit` sets a limit on calls per update; past it recording stops and the
+`TraceLog::with_limit` sets a limit on calls and values per update; past it recording stops and the
 trace ends with `… (limit reached)`, so a `repeat` restarting many times
 cannot grow the log without bound.
 
 ### What the catalog records
 
-| Node | Record |
+| Node | Records |
 | --- | --- |
 | every node | a `Call`, from its call site |
-| `seq`, `select`, custom `BtControl` | each policy answer, `ControlOp` |
-| `guard`, `if_else`, `repeat_while`, `reevaluate_when`, `action_while` | the condition, `bool` |
-| `choose!` | the arm, a child index |
-| `order_by` | each position's pick |
-| `by_score`, `weighted` | each child's score or weight |
-| `repeat`, `retry` | the count after each child |
-| actions | started, completed |
-| diagnostics | the message, on the node that raised it |
+| any control, custom policies included | `next`: each policy answer, a `ControlOp`, recorded by `ControlNode` |
+| `guard`, `reevaluate_when` | `if`: the condition |
+| `repeat_while`, `action_while` | `while`: the condition, each time it is asked |
+| `order_by` | `pick`: the child at each position |
+| `by_score`, `weighted` | `score` / `weight`: each child's, through `BtOrder::trace` |
+| actions | `started`, `completed` |
+| library nodes raising a diagnostic | `error`: the message, through `entry.error` |
 
-Records hold values, not text; text is made by `inspect` when the trace is
-formatted. A record must be `'static`; to be shown, its node's `inspect` needs
-it `Debug`. `by_score`'s generic score type therefore gains a `Debug` bound,
-which every numeric type meets. Diagnostics are the one exception: a message
-is `Display`, not a value, so it is written into a text buffer of the log when
-raised -- only while a trace is on.
+`choose!`, `if_else`, `repeat` and `retry` need nothing of their own: their
+answers say which arm, which branch, and each restart.
 
-Custom nodes log the same way: `entry.record` in `update`,
-`inspector.records` in an overridden `inspect`. Without that, they still get
-their `Call`s.
+**Orders.** `BtOrder::next` computes scores internally and has no entry, so
+`BtOrder` gains a defaulted `trace(&self, state, ctx, child_count, entry)`,
+called at the start of each pass and only while traced. `by_score` and
+`weighted` score every child again there. That runs the score functions twice
+in traced dev updates, never in release, and changes no signature.
+`by_score`'s score type gains `Debug + 'static`, which every number type
+meets.
+
+**Diagnostics.** `entry.error(message)` is `NodeResult::error(message)` plus,
+while traced, the message recorded on the node: the one value formatted when
+recorded, since a message is `Display`, not a value. Errors from custom
+policies (`ControlOp::error`) and from custom nodes calling
+`NodeResult::error` directly have no entry and reach only the error handler.
+
+**A node passing its entry on** is traced as one line, and its direct child's
+values show on that line: the child records under the id it was handed. Calls
+and values further down are outside the range and dropped.
 
 ## Passing the log: `Entry`
 
@@ -272,8 +280,8 @@ before and after, and the suite runs in both profiles.
    instruction the same as before.
 2. `NODES`, ids through `entry.run`, the log with `Call`s, `log.entry`, the
    trace view with `← cause`; allocation test.
-3. `entry.record` and `records::<R>()`; policy answers, conditions,
-   `choose!`, orders and scores, counters, actions, diagnostics.
+3. `entry.record`; policy answers, conditions, orders and scores, actions,
+   diagnostics. Done: release assembly of all ten examples is unchanged.
 4. Bevy: `DebugBehavior::traced()`.
 
 ## Open questions

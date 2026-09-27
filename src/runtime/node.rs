@@ -221,6 +221,47 @@ impl<'t> Entry<'t> {
     pub fn finish<A>(self, result: &NodeResult<A>) {
         self.trace.finish(self, result);
     }
+
+    /// Records a value with this node's call, for the trace: what it decided,
+    /// or why. Traces show it as `name: value` with the call, through `Debug`.
+    /// `value` runs only while a trace is on; outside debug builds with `std`
+    /// this does nothing.
+    ///
+    /// ```ignore
+    /// let holds = (self.condition)(ctx);
+    /// entry.record("if", || holds);
+    /// ```
+    #[inline(always)]
+    pub fn record<R: core::fmt::Debug + 'static>(
+        self,
+        name: &'static str,
+        value: impl FnOnce() -> R,
+    ) {
+        self.trace.value(name, value);
+    }
+
+    /// Whether this update is being traced: for work that only feeds
+    /// [`record`](Self::record), such as scoring every child again.
+    #[inline(always)]
+    pub fn is_traced(self) -> bool {
+        self.trace.is_traced()
+    }
+
+    /// [`NodeResult::error`], also recorded with this node's call when traced.
+    /// Outside debug builds with `std` it is `NodeResult::error` alone.
+    #[inline(always)]
+    pub fn error<A>(self, message: impl core::fmt::Display) -> NodeResult<A> {
+        self.trace.error(&message);
+        NodeResult::error(message)
+    }
+
+    /// Records a diagnostic with this node's call when traced, for code that
+    /// reports it itself.
+    #[cfg(feature = "extras")]
+    #[inline(always)]
+    pub(crate) fn record_error(self, message: &dyn core::fmt::Display) {
+        self.trace.error(message);
+    }
 }
 
 impl From<EntryMode> for Entry<'_> {

@@ -122,9 +122,7 @@ impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Ini
                 state.done = true;
                 None
             }
-            Ok(_) => Some(NodeResult::error(
-                "scope initializer did not complete on entry",
-            )),
+            Ok(_) => Some(entry.error("scope initializer did not complete on entry")),
             Err(_) => Some(NodeResult::Failure),
         }
     }

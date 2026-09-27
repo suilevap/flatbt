@@ -103,7 +103,9 @@ where
         entry: Entry<'_>,
     ) -> NodeResult<A> {
         let mut params = params.into_value();
-        if !self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
+        let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+        entry.record("while", || holds);
+        if !holds {
             return NodeResult::Success;
         }
         let mut restarted = false;
@@ -121,15 +123,15 @@ where
             }
             let ran = core::mem::take(&mut state.ran);
             state.child = S::default();
-            if !self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
+            let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+            entry.record("while", || holds);
+            if !holds {
                 return NodeResult::Success;
             }
             match result {
                 NodeResult::Success if ran => {}
                 NodeResult::Success if restarted => {
-                    return NodeResult::error(
-                        "repeat_while: restarted child completed without running",
-                    );
+                    return entry.error("repeat_while: restarted child completed without running");
                 }
                 _ => return NodeResult::Failure,
             }

@@ -1,5 +1,5 @@
-//! Traces of one update: which nodes it entered, how, and what each returned,
-//! including branches that were tried and dropped.
+//! Traces of one update: which nodes it entered, how, what each returned, and
+//! what each decided, including branches that were tried and dropped.
 //!
 //! ```
 //! use flatbt::prelude::*;
@@ -10,7 +10,7 @@
 //! }
 //!
 //! let tree = select((
-//!     seq((check(has_ammo), leaf(|_: &mut u32| NodeResult::Running("fire")))).named("attack"),
+//!     guard(has_ammo, leaf(|_: &mut u32| NodeResult::Running("fire"))),
 //!     leaf(|_: &mut u32| NodeResult::Running("reload")).named("reload"),
 //! ));
 //! let mut state = BtState::new(&tree);
@@ -19,13 +19,17 @@
 //! if flatbt::trace::ENABLED {
 //!     assert_eq!(
 //!         format!("{:#}", state.trace(&log)),
-//!         "select → Running\n\
-//!          \x20 attack (seq) → Failure\n\
-//!          \x20   has_ammo (check) → Failure    ← cause\n\
+//!         "select {next: [RunChild(0), RunChild(1)]} → Running\n\
+//!          \x20 has_ammo (guard) {if: false} → Failure    ← cause\n\
 //!          \x20 reload (leaf) → Running",
 //!     );
 //! }
 //! ```
+//!
+//! Braces hold what each node recorded with [`Entry::record`] -- a policy's
+//! answers, a condition, an order's scores -- and, on the running path, its
+//! live fields, as in [`describe`](crate::BtState::describe). A node called
+//! several times shows each call's values after its outcome.
 //!
 //! The caller keeps a [`TraceLog`] per traced agent and passes
 //! [`log.entry(mode)`](TraceLog::entry) to the driver instead of a mode; the
@@ -89,23 +93,25 @@ pub struct Call {
     pub outcome: Outcome,
 }
 
-/// The calls of one update, for one agent.
+/// The calls of one update, for one agent, and the values nodes recorded
+/// with [`Entry::record`].
 ///
 /// Cleared at the start of each traced update and reused, so an update
-/// allocates only when it records more calls than any update before it. Past
-/// its limit, recording stops and the trace says so.
+/// allocates only when it records more than any update before it. Past its
+/// limit, which counts calls and values together, recording stops and the
+/// trace says so.
 pub struct TraceLog {
     #[cfg(all(debug_assertions, feature = "std"))]
     log: core::cell::RefCell<imp::Log>,
 }
 
 impl TraceLog {
-    /// A log that keeps at most 4096 calls per update.
+    /// A log that keeps at most 4096 calls and values per update.
     pub fn new() -> Self {
         Self::with_limit(4096)
     }
 
-    /// A log that keeps at most `limit` calls per update.
+    /// A log that keeps at most `limit` calls and values per update.
     #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
     pub fn with_limit(limit: usize) -> Self {
         Self {
@@ -134,17 +140,12 @@ impl TraceLog {
         Entry::traced(mode, self)
     }
 
-    /// Whether the last update recorded more calls than the limit.
+    /// Whether the last update recorded more than the limit.
     pub fn overflowed(&self) -> bool {
         #[cfg(all(debug_assertions, feature = "std"))]
         return self.log.borrow().overflowed;
         #[cfg(not(all(debug_assertions, feature = "std")))]
         false
-    }
-
-    #[cfg(all(debug_assertions, feature = "std"))]
-    pub(crate) fn clear(&self) {
-        self.log.borrow_mut().clear();
     }
 }
 
@@ -198,7 +199,7 @@ impl<'t> Handle<'t> {
     pub(crate) fn start(self, fresh: bool, nodes: usize) -> Self {
         #[cfg(all(debug_assertions, feature = "std"))]
         if let Some(to) = self.to {
-            to.log.clear();
+            to.log.log.borrow_mut().begin(nodes);
             return Self {
                 to: Some(imp::To {
                     fresh,
@@ -238,6 +239,36 @@ impl<'t> Handle<'t> {
             to.record(entry.mode(), Outcome::of(result));
         }
     }
+
+    #[inline(always)]
+    pub(crate) fn is_traced(self) -> bool {
+        #[cfg(all(debug_assertions, feature = "std"))]
+        return self.to.is_some();
+        #[cfg(not(all(debug_assertions, feature = "std")))]
+        false
+    }
+
+    #[inline(always)]
+    #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
+    pub(crate) fn value<R: fmt::Debug + 'static>(
+        self,
+        name: &'static str,
+        value: impl FnOnce() -> R,
+    ) {
+        #[cfg(all(debug_assertions, feature = "std"))]
+        if let Some(to) = self.to {
+            to.value(name, value());
+        }
+    }
+
+    #[inline(always)]
+    #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
+    pub(crate) fn error(self, message: &dyn fmt::Display) {
+        #[cfg(all(debug_assertions, feature = "std"))]
+        if let Some(to) = self.to {
+            to.error(message);
+        }
+    }
 }
 
 impl fmt::Debug for Handle<'_> {
@@ -272,6 +303,11 @@ impl Eq for Handle<'_> {}
 
 #[cfg(all(debug_assertions, feature = "std"))]
 mod imp {
+    use core::any::{Any, TypeId};
+    use core::fmt;
+    use std::boxed::Box;
+    use std::collections::HashMap;
+    use std::string::String;
     use std::vec::Vec;
 
     use super::{Call, Entered, Outcome, TraceLog};
@@ -279,22 +315,92 @@ mod imp {
 
     pub(super) struct Log {
         pub(super) calls: Vec<Call>,
+        /// Values nodes recorded, one slot per node, name and type. Slots
+        /// persist across updates; their buffers are cleared and reused.
+        pub(super) slots: Vec<Slot>,
+        index: HashMap<(usize, &'static str, TypeId), usize>,
+        /// Calls finished so far this update, per node: the call a value
+        /// recorded now belongs to.
+        finished: Vec<u32>,
+        /// Order of values across slots.
+        sequence: u32,
+        values: usize,
         pub(super) limit: usize,
         pub(super) overflowed: bool,
+    }
+
+    pub(super) struct Slot {
+        pub(super) node: usize,
+        pub(super) name: &'static str,
+        pub(super) values: Box<dyn Values>,
+    }
+
+    /// A slot's values, of one type.
+    pub(super) trait Values {
+        fn clear(&mut self);
+        fn as_any(&mut self) -> &mut dyn Any;
+        /// Each value as (call, sequence, value).
+        fn each<'a>(&'a self, out: &mut dyn FnMut(u32, u32, &'a dyn fmt::Debug));
+    }
+
+    struct Typed<R>(Vec<(u32, u32, R)>);
+
+    impl<R: fmt::Debug + 'static> Values for Typed<R> {
+        fn clear(&mut self) {
+            self.0.clear();
+        }
+
+        fn as_any(&mut self) -> &mut dyn Any {
+            self
+        }
+
+        fn each<'a>(&'a self, out: &mut dyn FnMut(u32, u32, &'a dyn fmt::Debug)) {
+            for (call, sequence, value) in &self.0 {
+                out(*call, *sequence, value);
+            }
+        }
+    }
+
+    /// A diagnostic, shown as written rather than quoted.
+    pub(super) struct Message(pub(super) String);
+
+    impl fmt::Debug for Message {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
     }
 
     impl Log {
         pub(super) fn new(limit: usize) -> Self {
             Self {
                 calls: Vec::new(),
+                slots: Vec::new(),
+                index: HashMap::new(),
+                finished: Vec::new(),
+                sequence: 0,
+                values: 0,
                 limit,
                 overflowed: false,
             }
         }
 
-        pub(super) fn clear(&mut self) {
+        /// Clears the last update, for one over a tree of `nodes`.
+        pub(super) fn begin(&mut self, nodes: usize) {
             self.calls.clear();
+            for slot in &mut self.slots {
+                slot.values.clear();
+            }
+            self.finished.clear();
+            self.finished.resize(nodes, 0);
+            self.sequence = 0;
+            self.values = 0;
             self.overflowed = false;
+        }
+
+        fn full(&mut self) -> bool {
+            let full = self.calls.len() + self.values >= self.limit;
+            self.overflowed |= full;
+            full
         }
     }
 
@@ -319,14 +425,51 @@ mod imp {
                 (false, EntryMode::Evaluate) => Entered::Evaluate,
             };
             let mut log = self.log.log.borrow_mut();
-            if log.calls.len() < log.limit {
+            if let Some(finished) = log.finished.get_mut(self.node) {
+                *finished += 1;
+            }
+            if !log.full() {
                 log.calls.push(Call {
                     node: self.node,
                     entered,
                     outcome,
                 });
-            } else {
-                log.overflowed = true;
+            }
+        }
+
+        #[cold]
+        #[inline(never)]
+        pub(super) fn error(self, message: &dyn fmt::Display) {
+            self.value("error", Message(std::string::ToString::to_string(message)));
+        }
+
+        #[cold]
+        pub(super) fn value<R: fmt::Debug + 'static>(self, name: &'static str, value: R) {
+            let mut log = self.log.log.borrow_mut();
+            if log.full() {
+                return;
+            }
+            let call = log.finished.get(self.node).copied().unwrap_or(0);
+            let sequence = log.sequence;
+            log.sequence += 1;
+            log.values += 1;
+            let key = (self.node, name, TypeId::of::<R>());
+            let slot = match log.index.get(&key) {
+                Some(&slot) => slot,
+                None => {
+                    let slot = log.slots.len();
+                    log.slots.push(Slot {
+                        node: self.node,
+                        name,
+                        values: Box::new(Typed::<R>(Vec::new())),
+                    });
+                    log.index.insert(key, slot);
+                    slot
+                }
+            };
+            if let Some(Typed(values)) = log.slots[slot].values.as_any().downcast_mut::<Typed<R>>()
+            {
+                values.push((call, sequence, value));
             }
         }
     }
@@ -435,6 +578,23 @@ mod text {
                 None => unknown = true,
             }
         }
+        let mut values: Vec<Vec<Value<'_>>> = (0..nodes.len()).map(|_| Vec::new()).collect();
+        for slot in &log.slots {
+            let (name, of) = (slot.name, values.get_mut(slot.node));
+            if let Some(of) = of {
+                slot.values.each(&mut |call, sequence, value| {
+                    of.push(Value {
+                        call,
+                        sequence,
+                        name,
+                        value,
+                    })
+                });
+            }
+        }
+        for of in &mut values {
+            of.sort_by_key(|value| value.sequence);
+        }
         // A subtree ends at the next node no deeper than its root.
         let end = |node: usize| {
             (node + 1..nodes.len())
@@ -458,6 +618,7 @@ mod text {
             f,
             lines: alternate,
             calls: &calls,
+            values: &values,
             cause: &cause,
             ends: (0..nodes.len()).map(end).collect(),
             next: 0,
@@ -492,10 +653,19 @@ mod text {
         Ok(())
     }
 
+    /// A value a node recorded, with the call it belongs to.
+    struct Value<'a> {
+        call: u32,
+        sequence: u32,
+        name: &'static str,
+        value: &'a dyn fmt::Debug,
+    }
+
     struct Lines<'a, 'f> {
         f: &'a mut fmt::Formatter<'f>,
         lines: bool,
         calls: &'a [Vec<Call>],
+        values: &'a [Vec<Value<'a>>],
         cause: &'a [bool],
         ends: Vec<usize>,
         /// Preorder index of the next node entered.
@@ -517,21 +687,67 @@ mod text {
             }
         }
 
-        /// Ends the open line with its fields and outcomes.
+        /// Writes the values `node` recorded with call `call`: `name: value`,
+        /// or `name: [a, b]` for several under one name, first name first.
+        fn write_values(&mut self, node: usize, call: u32) {
+            let values = self.values[node].iter().filter(|value| value.call == call);
+            let mut names: Vec<&'static str> = Vec::new();
+            for value in values.clone() {
+                if !names.contains(&value.name) {
+                    names.push(value.name);
+                }
+            }
+            for (index, name) in names.into_iter().enumerate() {
+                let sep = if index == 0 { "" } else { ", " };
+                let mut of = values.clone().filter(|value| value.name == name);
+                let first = of.next().map(|value| value.value);
+                let rest: Vec<_> = of.map(|value| value.value).collect();
+                match (first, rest.is_empty()) {
+                    (Some(value), true) => self.write(format_args!("{sep}{name}: {value:?}")),
+                    (Some(value), false) => {
+                        self.write(format_args!("{sep}{name}: [{value:?}"));
+                        for value in rest {
+                            self.write(format_args!(", {value:?}"));
+                        }
+                        self.write(format_args!("]"));
+                    }
+                    (None, _) => {}
+                }
+            }
+        }
+
+        fn has_values(&self, node: usize, call: u32) -> bool {
+            self.values[node].iter().any(|value| value.call == call)
+        }
+
+        /// Ends the open line with its fields, values and outcomes. One call's
+        /// values join the fields; several calls' follow each outcome.
         fn close(&mut self) {
             let Some(node) = self.open.take() else {
                 return;
             };
+            let calls = self.calls[node].as_slice();
+            if self.lines && calls.len() == 1 && self.has_values(node, 0) {
+                let open = if core::mem::replace(&mut self.fields, true) {
+                    ", "
+                } else {
+                    " {"
+                };
+                self.write(format_args!("{open}"));
+                self.write_values(node, 0);
+            }
             if core::mem::take(&mut self.fields) {
                 self.write(format_args!("}}"));
             }
             if !self.lines {
                 return;
             }
-            let calls = self.calls[node].as_slice();
+            let recorded = (0..calls.len() as u32).any(|call| self.has_values(node, call));
             match calls {
                 [only] => self.write(format_args!(" → {:?}", only.outcome)),
-                [first, rest @ ..] if rest.iter().all(|call| call.outcome == first.outcome) => {
+                [first, rest @ ..]
+                    if !recorded && rest.iter().all(|call| call.outcome == first.outcome) =>
+                {
                     self.write(format_args!(" → {:?} ×{}", first.outcome, calls.len()))
                 }
                 _ => {
@@ -539,6 +755,11 @@ mod text {
                     for (index, call) in calls.iter().enumerate() {
                         let sep = if index == 0 { " " } else { ", " };
                         self.write(format_args!("{sep}{:?}", call.outcome));
+                        if self.has_values(node, index as u32) {
+                            self.write(format_args!(" {{"));
+                            self.write_values(node, index as u32);
+                            self.write(format_args!("}}"));
+                        }
                     }
                 }
             }

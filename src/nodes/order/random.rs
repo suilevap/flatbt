@@ -7,6 +7,7 @@
 //! again every update. The rest of the pass is drawn afresh.
 
 use super::BtOrder;
+use crate::Entry;
 
 /// Children in a uniformly random order.
 pub struct Shuffled<R>(R);
@@ -88,6 +89,13 @@ where
     W: Fn(&C, usize) -> f32,
 {
     type State = ();
+
+    fn trace(&self, _: &(), ctx: &mut C, child_count: usize, entry: Entry<'_>) {
+        for index in 0..child_count {
+            let weight = (self.weight)(ctx, index);
+            entry.record("weight", || weight);
+        }
+    }
 
     fn kind(&self) -> &'static str {
         "weighted"

@@ -481,3 +481,28 @@ Phase 2 of [Trace](trace.md).
   the end of its subtree's id range, and a child entry outside it records
   nothing: such a node is traced as one line. `Entry::run` takes the child's
   `NODES` from its type, so opting in is one call.
+
+## 2026-09-27 — Traces: values nodes record
+
+Phase 3 of [Trace](trace.md).
+
+- **`entry.record(name, || value)`**, any `Debug + 'static`, stored typed per
+  node, name and type, and printed through `Debug` when a trace is formatted.
+  No node writes display code; the earlier draft's read-back in `inspect` was
+  dropped as unneeded.
+- **`ControlNode` records every policy answer**, so custom policies are
+  covered, and `if_else`, `choose!`, `repeat` and `retry` need nothing of
+  their own.
+- **`BtOrder::trace`**, defaulted and called only while traced, rather than a
+  recorder in `next`: no signature change, at the cost of scoring twice in
+  traced dev updates.
+- **Values count against the log's limit** with calls.
+- **Generic error paths stay in generic code.** `order_by`'s non-generic
+  `unsupported` first called the generic `entry.error`, which instantiated
+  `NodeResult::error::<(), Arguments>` inside the library. Dependents then
+  shared that copy, their optimizer lost sight of the error path, and
+  `ControlNode::run_rest` stopped being eliminated: `scoped_params` grew from
+  718 to 1255 instructions without using `order_by` at all. `unsupported` now
+  logs as before and records through a non-generic crate method, and
+  `entry.error` is `NodeResult::error` plus a recording that vanishes in
+  release. Release assembly of all ten examples is identical to main.

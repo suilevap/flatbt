@@ -610,15 +610,26 @@ println!("{:#}", state.trace(&log));
 ```
 
 ```text
-select → Running
-  attack (seq) → Failure
-    has_ammo (check) → Failure    ← cause
+select {next: [RunChild(0), RunChild(1)]} → Running
+  attack (seq) {next: [RunChild(0), Failure]} → Failure
+    has_ammo (guard) {if: false} → Failure    ← cause
   reload (leaf) → Running
 ```
 
 A saved invocation shows `(resume)` or `(evaluate)`; fresh ones are unmarked.
 `← cause` marks a node that failed while none of the children it entered
-did. `{}` writes the nodes still running on one line.
+did. Braces hold what each node decided: a control's answers (`next`), a
+condition (`if`, `while`), an order's `score`, `weight` and `pick`, an
+action's `started` and `completed`, a diagnostic's `error`. A node called
+several times shows each call's values after its outcome. `{}` writes the
+nodes still running on one line.
+
+A custom node records its own values the same way, and they appear with no
+other code:
+
+```rust,ignore
+entry.record("target", || target); // runs only while traced
+```
 
 Drivers take `log.entry(mode)` wherever they take a mode; the log reaches every
 node through its `Entry`. Each update clears the log and reuses its buffer. A
@@ -659,9 +670,10 @@ children itself has work to do.
 
 | New node | Implement | For free | Optional |
 | --- | --- | --- | --- |
-| Control | `BtControl`, built with `control(policy, children)` | Children traced and reported; ids counted | `kind()` for its name, `inspect()` for fields |
-| Action | `BtAction`, wrapped with `action(..)` | `Walk (action)`, each call traced | `BtAction::inspect` for fields |
-| Leaf, condition, any node without children | `BtNode` | Type name, each call traced | `BtNode::inspect` for a kind, name or fields |
+| Control | `BtControl`, built with `control(policy, children)` | Children traced and reported; ids counted; each answer recorded | `kind()` for its name, `inspect()` for fields |
+| Action | `BtAction`, wrapped with `action(..)` | `Walk (action)`, each call traced, `started` / `completed` | `BtAction::inspect` for fields |
+| Order | `BtOrder`, used with `order_by(order, children)` | Each `pick` | `trace()` to record what a pass is ordered by |
+| Leaf, condition, any node without children | `BtNode` | Type name, each call traced | `BtNode::inspect` for a kind, name or fields; `entry.record` for values |
 | Node that calls its own children | `BtNode` | Runs; traced as one line | `NODES`, `entry.run`, `inspect`, below |
 
 A control is only a policy: `ControlNode` runs its children through the entry

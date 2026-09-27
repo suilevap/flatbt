@@ -115,9 +115,13 @@ where
         let active_child_index = self.children.active_child_index(&state.children);
         let op = match (entry.mode(), active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
-            _ => self
-                .policy
-                .begin(&mut state.inner, ctx, active_child_index, Children::LEN),
+            _ => {
+                let op =
+                    self.policy
+                        .begin(&mut state.inner, ctx, active_child_index, Children::LEN);
+                entry.record("next", || op);
+                op
+            }
         };
         // No loop here: once this is inlined into its parent, a loop would let
         // the compiler hoist every descendant's address out of it and spill them.
@@ -169,20 +173,22 @@ impl<P, Children> ControlNode<P, Children> {
             ControlOp::RunChild(child_index) => child_index,
         };
         if child_index >= Children::LEN {
-            return Ok(NodeResult::error(format_args!(
+            return Ok(entry.error(format_args!(
                 "control policy returned invalid child index {child_index} for {} children",
                 Children::LEN,
             )));
         }
         let inner = &mut state.inner;
         let mut next = |ctx: &mut C, completed: usize, succeeded: bool| {
-            if succeeded {
+            let op = if succeeded {
                 self.policy
                     .child_succeeded(inner, ctx, completed, Children::LEN)
             } else {
                 self.policy
                     .child_failed(inner, ctx, completed, Children::LEN)
-            }
+            };
+            entry.record("next", || op);
+            op
         };
         match self.children.run_from(
             &mut state.children,
