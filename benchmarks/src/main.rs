@@ -2,6 +2,7 @@
 
 mod alloc;
 mod common;
+mod debugging;
 mod harness;
 mod libs;
 mod soldier;
@@ -32,7 +33,8 @@ usage: flatbt-compare [--quick] [--lib NAME] [--scenario NAME]
        flatbt-compare ticks LIB SCENARIO N   (ticks one agent N times; for profilers)
        flatbt-compare evaluate [--quick]     (flatbt with Evaluate, as TSV; see csharp/)
        flatbt-compare scaling [--quick]      (1 to 1M agents, as TSV; see charts/)
-       flatbt-compare memory                 (heap at 1 to 1M agents, as TSV; see charts/)";
+       flatbt-compare memory                 (heap at 1 to 1M agents, as TSV; see charts/)
+       flatbt-compare debug                  (cost of FlatBT's trace and inspect)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,6 +57,10 @@ fn main() -> ExitCode {
     }
 
     let quick = args.iter().any(|a| a == "--quick");
+    if args.first().map(String::as_str) == Some("debug") {
+        debug();
+        return ExitCode::SUCCESS;
+    }
     if args.first().map(String::as_str) == Some("memory") {
         memory(&entries);
         return ExitCode::SUCCESS;
@@ -130,6 +136,30 @@ fn config(quick: bool) -> Config {
             frames: 200,
             samples: 7,
         }
+    }
+}
+
+/// FlatBT with tracing and inspection. Traces record only with debug
+/// assertions: compare `--release` with `--profile debugging`.
+fn debug() {
+    println!(
+        "Build: debug assertions {}, traces recorded: {}.\n",
+        if cfg!(debug_assertions) { "on" } else { "off" },
+        flatbt::trace::ENABLED
+    );
+    println!("| scenario | variant | ns/tick | allocs/tick | bytes/tick | log heap | text bytes |");
+    println!("|---|---|--:|--:|--:|--:|--:|");
+    for r in libs::flatbt::debugging() {
+        println!(
+            "| {} | {} | {:.1} | {:.2} | {:.1} | {:.0} | {} |",
+            r.scenario.name(),
+            r.variant,
+            r.ns_per_tick,
+            r.allocs_per_tick,
+            r.bytes_per_tick,
+            r.heap_per_agent,
+            r.text_len
+        );
     }
 }
 

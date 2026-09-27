@@ -25,3 +25,10 @@ bhv = "=0.4.0"
 codegen-units = 1
 lto = "fat"
 debug = "line-tables-only"
+
+# Optimized, with debug assertions: FlatBT records traces only when they are
+# on. Integer overflow checks stay off, as in release.
+[profile.debugging]
+inherits = "release"
+debug-assertions = true
+overflow-checks = false

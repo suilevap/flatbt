@@ -13,6 +13,7 @@ csharp/compare.sh                        # against bt-tree (C#); needs .NET 10
 cargo run --release -- scaling > charts/scaling.tsv   # 1 to 1M agents, ~40 minutes
 cargo run --release -- memory > charts/memory.tsv     # heap at 1 to 1M agents
 python3 charts/plot.py charts charts                  # needs matplotlib
+cargo run --profile debugging -- debug                # cost of trace and inspect
 ```
 
 The run exits non-zero if any library's results differ from FlatBT's.
@@ -316,6 +317,49 @@ catalog-only tree), instructions per tick for one agent:
 At every revision FlatBT allocates nothing per tick, nothing to build an
 agent, and nothing while 10k agents tick, and keeps 1–3 bytes per agent on
 the first four trees.
+
+## Trace and inspect
+
+`flatbt-compare debug` measures FlatBT with the debugging tools of #26 and #27
+in use. Traces record only with debug assertions (`flatbt::trace::ENABLED`),
+so it runs twice: `--release`, and `--profile debugging`, which is release
+with debug assertions on.
+
+```sh
+cargo run --release -- debug
+cargo run --profile debugging -- debug
+```
+
+| ns/tick | select8 | patrol | guard | soldier | villager |
+|---|--:|--:|--:|--:|--:|
+| release: update | 16.4 | 5.3 | 6.6 | 14.3 | 18.8 |
+| release: update with a `TraceLog` | 14.3 | 5.1 | 6.5 | 14.4 | 18.5 |
+| release: update + `path_id()` | 17.6 | 78.2 | 83.3 | 143.8 | 108.1 |
+| release: update + `describe()` `{}` | 25.6 | 192.2 | 139.9 | 213.4 | 335.5 |
+| debug assertions: update | 19.6 | 7.3 | 9.4 | 14.4 | 35.0 |
+| debug assertions: update, traced | 61.5 | 16.7 | 25.8 | 31.2 | 57.5 |
+| debug assertions: traced + format `{:#}` | 2497.0 | 607.7 | 1081.5 | 3055.5 | 2764.8 |
+| debug assertions: allocations per formatted trace | 19.00 | 8.09 | 10.26 | 14.79 | 14.08 |
+| debug assertions: log heap per agent (bytes) | 512 | 64 | 128 | 512 | 512 |
+
+`describe()` and `path_id()` cost the same in both builds, and every variant
+formats into a reused `String`.
+
+- **Release is unchanged.** Before and after #26 and #27, FlatBT executes the
+  same instructions per tick on every scenario (193 / 84 / 107 / 171 / 336),
+  allocates nothing, and keeps the same state per agent. Passing
+  `log.entry(mode)` in release costs nothing: the log is compiled out.
+- **Tracing costs 1.6–3.1× an update** with debug assertions, and allocates
+  nothing per tick once the log has grown: 64–512 bytes per agent.
+- **Debug assertions alone cost 0–90%** of an update, traced or not: every
+  `Entry` then carries an optional log handle through every node call.
+- **Formatting a trace costs 0.6–3 µs** and allocates 8–19 times per format,
+  even into a reused buffer. Fine for a debugger; too much to format every
+  agent every frame.
+- **`path_id()` adds 70–130 ns on a running tree**, several times an update.
+  It walks `inspect`, which builds each visited node's name and kind, then
+  hashes only whether each node is on the path. `describe()` adds 130–320 ns
+  on a running tree and allocates nothing.
 
 ## Against bt-tree (C#)
 

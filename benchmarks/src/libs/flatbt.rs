@@ -246,3 +246,16 @@ fn with_mode(mode: EntryMode) -> Vec<Box<dyn Measure>> {
         measure(Scenario::Villager, villager, mode),
     ]
 }
+
+/// Tracing and inspection costs, per scenario; see `crate::debugging`.
+pub fn debugging() -> Vec<crate::debugging::Row> {
+    use crate::debugging::measure;
+    let mut rows = Vec::new();
+    rows.extend(measure(Scenario::Select8, select8));
+    rows.extend(measure(Scenario::Patrol, patrol));
+    rows.extend(measure(Scenario::Guard, guard));
+    rows.extend(measure(Scenario::Soldier, soldier));
+    #[cfg(feature = "catalog")]
+    rows.extend(measure(Scenario::Villager, villager));
+    rows
+}
