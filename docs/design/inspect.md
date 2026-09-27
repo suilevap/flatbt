@@ -58,9 +58,8 @@ the function, reporting each local by name: `Debug` values through autoref
 specialization, which resolves because the locals struct is concrete at
 expansion, and `..` otherwise. An unset local reports `unset`.
 
-`scope!` wraps its initializer sequence in a hidden `Inline`, which reports the
-sequence's children in its place: initializers show as `name (compute)`
-siblings of the body rather than under an extra `seq`.
+A scope reports its initializers before its body, so they show as
+`name (compute)` siblings of the body.
 
 ## Change detection
 

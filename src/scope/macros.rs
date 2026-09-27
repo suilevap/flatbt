@@ -85,14 +85,12 @@ macro_rules! __flatbt_scope {
             $($crate::inspect::__private::local(inspector, stringify!($field),
                 locals.$field.as_ref().map(|value| (&Probe(value)).probe()));)*
         }
-        $crate::scope::scope::<$locals, _>($crate::__flatbt_scope!(@initialized [$($init)*]
+        $crate::__flatbt_scope!(@init [$($init)*] $crate::scope::scope::<$locals, _>(
             $crate::__flatbt_scope!(@children [$locals $value] $control []; $($body)*)))
             .inspect_locals(inspect_locals)
     }};
-    (@initialized [] $body:expr) => { $body };
-    (@initialized [$($init:tt)+] $body:expr) => {
-        $crate::inspect::__private::Inline($crate::seq(($($init)+ $body,)))
-    };
+    (@init [] $scope:expr) => { $scope };
+    (@init [$($init:tt)+] $scope:expr) => { $scope.init(($($init)+)) };
     (@children $setup:tt $control:ident [$($nodes:tt)*]; sequence { $($body:tt)* } $($rest:tt)*) => {
         $crate::__flatbt_scope!(@children $setup $control
             [$($nodes)* $crate::__flatbt_scope!(@children $setup sequence []; $($body)*),]; $($rest)*)

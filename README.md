@@ -598,6 +598,35 @@ In Bevy, add `DebugBehavior` to an agent. The plugin keeps its path text
 current after each tick and marks it changed only when the path changes, so
 `Query<&DebugBehavior, Changed<DebugBehavior>>` logs decisions, not frames.
 
+### Why a branch was chosen
+
+A trace shows every node the last update entered, including branches that
+were tried and dropped, and a tree that failed outright:
+
+```rust,ignore
+let log = TraceLog::new(); // one per traced agent, kept by the caller
+let _ = update(&tree, &mut state, &mut 0, log.entry(EntryMode::Evaluate));
+println!("{:#}", state.trace(&log));
+```
+
+```text
+select → Running
+  attack (seq) → Failure
+    has_ammo (check) → Failure    ← cause
+  reload (leaf) → Running
+```
+
+A saved invocation shows `(resume)` or `(evaluate)`; fresh ones are unmarked.
+`← cause` marks a node that failed while none of the children it entered
+did. `{}` writes the nodes still running on one line.
+
+Drivers take `log.entry(mode)` wherever they take a mode; the log reaches every
+node through its `Entry`. Each update clears the log and reuses its buffer. A
+driver using `update_slot` formats with `trace::trace(&tree, slot.as_ref(),
+&log)`. Traces record only in debug builds with `std`
+(`flatbt::trace::ENABLED`): elsewhere `log.entry(mode)` is the mode alone and
+release code is unchanged.
+
 ## Custom nodes
 
 Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and
@@ -608,11 +637,9 @@ runs stays generic over it and never names it.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
 `update` receives an `Entry`: `entry.mode()` is Resume or Evaluate. A composing
-node stores descendant states and calls
-`child.update(&mut state.child, ctx, params, entry)`, passing its own entry on,
-or `entry.with_mode(EntryMode::Evaluate)` for a fresh candidate. It owns
-initialization, fresh-entry Evaluate, and cleanup on completion or replacement. Any node may
-suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
+node owns its children's state, initialization, fresh-entry Evaluate, and
+cleanup on completion or replacement. Any node may suspend without implementing
+`BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 
 - Context mutations and ticks take effect immediately, including on failed branches.
 - `NodeResult::error` and `ControlOp::error` report a diagnostic and return Failure.
@@ -623,6 +650,88 @@ suspend without implementing `BtAction`; see [WaitFrames](examples/support/wait_
 - Custom policies must terminate; there is no execution budget.
 - Controls store one active child in an enum. Large states and nested candidates
   can require substantial stack space. State may move when a candidate is selected.
+
+### Showing up in `describe()` and traces
+
+Most nodes need nothing: the parent that calls a node records the call, and a
+node without children shows under its type name. Only a node that calls
+children itself has work to do.
+
+| New node | Implement | For free | Optional |
+| --- | --- | --- | --- |
+| Control | `BtControl`, built with `control(policy, children)` | Children traced and reported; ids counted | `kind()` for its name, `inspect()` for fields |
+| Action | `BtAction`, wrapped with `action(..)` | `Walk (action)`, each call traced | `BtAction::inspect` for fields |
+| Leaf, condition, any node without children | `BtNode` | Type name, each call traced | `BtNode::inspect` for a kind, name or fields |
+| Node that calls its own children | `BtNode` | Runs; traced as one line | `NODES`, `entry.run`, `inspect`, below |
+
+A control is only a policy: `ControlNode` runs its children through the entry
+and reports them, so a new selection rule is traced with nothing else written.
+
+```rust,ignore
+/// Tries children in order, giving up after `tries` failures.
+struct FirstOf {
+    tries: u32,
+}
+
+impl<C> BtControl<C> for FirstOf {
+    type State = u32; // failures so far
+    // begin, child_succeeded, child_failed ...
+
+    fn kind(&self) -> &'static str {
+        "first_of"
+    }
+
+    fn inspect(&self, failed: Option<&u32>, _: Option<usize>, inspector: &mut dyn Inspector) {
+        inspector.field("tries", &self.tries);
+        if let Some(failed) = failed {
+            inspector.field("failed", failed);
+        }
+    }
+}
+
+let tree = control(FirstOf { tries: 2 }, (check(big), Doubled(check(big)), wait));
+```
+
+A node that calls its own children declares its subtree size, runs each child
+through its entry, and reports each child in `inspect`, with the state it holds
+for it:
+
+```rust,ignore
+/// Runs its child with the context doubled.
+struct Doubled<N>(N);
+
+impl<A, N: BtNode<u32, A>> BtNode<u32, A> for Doubled<N> {
+    type State = N::State;
+    const NODES: usize = 1 + N::NODES; // this node and its subtree
+
+    fn update(&self, state: &mut N::State, ctx: &mut u32, _: (), entry: Entry<'_>) -> NodeResult<A> {
+        *ctx *= 2;
+        // Offset 1: the first child. `run_candidate` for a fresh invocation.
+        let result = entry.run(1, &self.0, state, ctx, ());
+        *ctx /= 2;
+        result
+    }
+
+    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new("doubled", state.is_some()), |inspector| {
+            self.0.inspect(state, inspector)
+        });
+    }
+}
+```
+
+```text
+first_of {tries: 2} → Failure
+  big (check) → Failure    ← cause
+  doubled → Failure
+    big (check) → Failure    ← cause
+```
+
+A second child's offset is `1 + A::NODES`, a third's adds `B::NODES`, and
+`NODES` sums them all plus one. Without any of this the node still runs, and is
+traced as one line with its outcome; nothing below it is recorded, rather than
+numbered from the wrong node. If `NODES` and `inspect` disagree, the trace says
+so.
 
 ## Examples
 

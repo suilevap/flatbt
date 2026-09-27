@@ -134,6 +134,7 @@ pub fn label<N>(label: &'static str, node: N) -> Named<N> {
 
 impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Named<N> {
     type State = N::State;
+    const NODES: usize = N::NODES;
 
     #[inline(always)]
     fn update(
@@ -425,73 +426,13 @@ impl Inspector for Text<'_, '_> {
     }
 }
 
-/// Used by `scope!`: its initializer sequence, and locals reported whether or
-/// not their types implement `Debug`.
+/// Used by `scope!` to report locals whether or not their types implement
+/// `Debug`.
 #[doc(hidden)]
 pub mod __private {
     use core::fmt;
 
-    use super::{Inspector, NodeInfo};
-    use crate::{BtNode, Entry, NodeResult};
-
-    /// Runs `N`; reports its children in its place, as children of the parent.
-    pub struct Inline<N>(pub N);
-
-    impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Inline<N> {
-        type State = N::State;
-
-        #[inline(always)]
-        fn update(
-            &self,
-            state: &mut N::State,
-            ctx: &mut C,
-            params: P,
-            entry: Entry<'_>,
-        ) -> NodeResult<A> {
-            self.0.update(state, ctx, params, entry)
-        }
-
-        fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
-            self.0.inspect(
-                state,
-                &mut Skip {
-                    inner: inspector,
-                    depth: 0,
-                },
-            );
-        }
-    }
-
-    /// Drops the first node entered, keeping its descendants.
-    struct Skip<'a, 'b> {
-        inner: &'a mut (dyn Inspector + 'b),
-        depth: usize,
-    }
-
-    impl Inspector for Skip<'_, '_> {
-        fn enter(&mut self, node: NodeInfo<'_>) -> bool {
-            if self.depth == 0 {
-                self.depth = 1;
-                return true;
-            }
-            let entered = self.inner.enter(node);
-            self.depth += usize::from(entered);
-            entered
-        }
-
-        fn field(&mut self, name: &str, value: &dyn fmt::Debug) {
-            if self.depth > 1 {
-                self.inner.field(name, value);
-            }
-        }
-
-        fn exit(&mut self) {
-            if self.depth > 1 {
-                self.inner.exit();
-            }
-            self.depth -= 1;
-        }
-    }
+    use super::Inspector;
 
     pub struct Probe<'a, T>(pub &'a T);
 

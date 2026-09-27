@@ -54,6 +54,7 @@ pub fn force_failure<N>(child: N) -> Remap<N> {
 
 impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
     type State = N::State;
+    const NODES: usize = 1 + N::NODES;
 
     #[inline]
     fn update(
@@ -63,7 +64,7 @@ impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        match self.child.update(state, ctx, params, entry) {
+        match entry.run(1, &self.child, state, ctx, params) {
             running @ NodeResult::Running(_) => running,
             NodeResult::Success => self.success.result(),
             NodeResult::Failure => self.failure.result(),

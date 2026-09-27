@@ -67,6 +67,7 @@ pub mod prelude;
 pub mod runtime;
 #[cfg(feature = "extras")]
 pub mod scope;
+pub mod trace;
 
 pub use composition::{
     BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Guarded, Leaf, ReadFn,

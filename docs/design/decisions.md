@@ -438,3 +438,46 @@ thread-local or a global. See [Trace](trace.md).
   calls a node directly, as tests do.
 - **Breaking for custom nodes.** The migration is mechanical: rename the
   argument, read `entry.mode()`, pass `entry` on.
+
+## 2026-09-26 — Traces: calls and the trace view
+
+Phase 2 of [Trace](trace.md).
+
+- **Gate: `debug_assertions` and `std`**, as `trace::ENABLED`. The handle in
+  `Entry`, the log's storage and every recording call are compiled out
+  otherwise; `TraceLog`, `log.entry` and `state.trace(&log)` still exist so
+  code compiles the same. Release assembly of all ten examples is instruction for
+  instruction the same as before. An empty `if let Some(log)` around
+  `log.clear()` was enough to reorder blocks in one example, so it is
+  compiled out too rather than left to the optimizer.
+- **Offsets are constants.** Each tuple computes its children's preorder
+  offsets in one inline `const` block from their `NODES`.
+- **`Entry::child` inherits freshness**, so a node under a fresh parent is
+  recorded as new; `candidate` marks it, and switches the mode to Evaluate.
+- **No hidden nodes.** `scope!` used to wrap its initializers and body in a
+  `seq` that inspection hid, so traces needed a way to count a node nobody
+  sees. `Scope` now runs its initializers itself, through `Scope::init`, when
+  an invocation starts: the tree inspection walks, the tree `describe()` shows
+  and the tree traces number are one tree.
+  A scope without initializers is `Scope<L, N, NoInit>` and carries no
+  "initialized" flag, so its release code is unchanged; with them it is
+  `Init<T>`, whose flag lives in `InitState`. The `scoped_params` example
+  compiles to 33 fewer instructions than with the old wrapping `seq`.
+- **Formatting allocates; recording does not once warm.** The trace view
+  builds the tree's shape in `Vec`s when formatted. An allocation test runs
+  128 traced updates after warm-up with none.
+- **`calls()` copies the log** so the iterator does not hold its `RefCell`
+  borrow.
+- **The caller keeps the log, not `BtState`.** A first cut stored it in the
+  state behind `set_trace(true)`. The log is per update and reaches nodes
+  through `Entry`, so the driver takes the entry instead: `update` and
+  `update_slot` take `impl Into<Entry>`, an `EntryMode` or `log.entry(mode)`.
+  One driver each, and `BtState` stays invocation state. The conversion
+  happens at the edge, before a shared body over `Entry`, which keeps release
+  code identical.
+- **Ranges, so a node that opts out cannot misattribute.** A custom
+  composite that passes its own entry on would have its descendants numbered
+  from its id, landing on the lines of unrelated nodes. Each entry now carries
+  the end of its subtree's id range, and a child entry outside it records
+  nothing: such a node is traced as one line. `Entry::run` takes the child's
+  `NODES` from its type, so opting in is one call.
