@@ -42,13 +42,6 @@ where
 {
     type State = ();
 
-    fn trace(&self, _: &(), ctx: &mut C, child_count: usize, entry: Entry<'_>) {
-        for index in 0..child_count {
-            let score = (self.score)(ctx, index);
-            entry.record("score", || score);
-        }
-    }
-
     fn kind(&self) -> &'static str {
         "by_score"
     }
@@ -61,10 +54,15 @@ where
         used: u64,
         running: Option<usize>,
         child_count: usize,
+        entry: Entry<'_>,
     ) -> Option<usize> {
         let mut best: Option<(usize, S)> = None;
         for index in (0..child_count).filter(|index| used & (1 << index) == 0) {
             let mut score = (self.score)(ctx, index);
+            // Every child is scored at the first position; record them there.
+            if used == 0 {
+                entry.record("score", || score);
+            }
             if score.partial_cmp(&score).is_none() {
                 continue;
             }

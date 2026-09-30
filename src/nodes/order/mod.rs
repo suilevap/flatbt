@@ -52,6 +52,11 @@ pub trait BtOrder<C> {
 
     /// Called with an empty `used` at the first position of each pass: on
     /// entry, and whenever `Evaluate` brings the control back to its start.
+    ///
+    /// `entry` is the control's: [`Entry::record`] what the order is based
+    /// on, such as each child's score, for traces. Record at the first
+    /// position, where every child is still offered, so a pass records each
+    /// child once.
     fn next(
         &self,
         state: &mut Self::State,
@@ -59,6 +64,7 @@ pub trait BtOrder<C> {
         used: u64,
         running: Option<usize>,
         child_count: usize,
+        entry: Entry<'_>,
     ) -> Option<usize>;
 
     /// What debug views call this order, such as `by_score`. Defaults to the
@@ -70,12 +76,6 @@ pub trait BtOrder<C> {
     /// Reports fields of this order: configuration, and its state while the
     /// control runs. Reports nothing by default.
     fn inspect(&self, _state: Option<&Self::State>, _inspector: &mut dyn Inspector) {}
-
-    /// Records what a pass is ordered by, with [`Entry::record`], such as each
-    /// child's score. Called at the start of each pass, before the first
-    /// [`next`](Self::next), and only while the update is traced, so it may
-    /// recompute what `next` computes. Records nothing by default.
-    fn trace(&self, _state: &Self::State, _ctx: &mut C, _child_count: usize, _entry: Entry<'_>) {}
 }
 
 /// Children visited in the order a [`BtOrder`] decides.
@@ -116,12 +116,7 @@ pub struct OrderedState<OrderState, ChildrenState> {
 /// update takes.
 #[cold]
 #[inline(never)]
-fn unsupported(position: usize, at: Option<usize>, entry: Entry<'_>) {
-    // Not `entry.error`: error paths instantiated here, outside any generic
-    // node, are shared by dependents, and this keeps sharing the one they had.
-    entry.record_error(&format_args!(
-        "order_by visits positions in order; asked for {position} after {at:?}"
-    ));
+fn unsupported(position: usize, at: Option<usize>) {
     crate::log_error(format_args!(
         "order_by visits positions in order; asked for {position} after {at:?}"
     ));
@@ -262,7 +257,9 @@ impl<O, Children> Ordered<O, Children> {
                 self.pick::<C, A, S>(state, ctx, position, entry)
             }
             _ => {
-                unsupported(position, state.at.map(|(at, _)| at as usize), entry);
+                // A misuse by a custom control: logged, not traced, so this
+                // cold path stays as it compiles without traces.
+                unsupported(position, state.at.map(|(at, _)| at as usize));
                 return Err(());
             }
         })
@@ -284,14 +281,18 @@ impl<O, Children> Ordered<O, Children> {
     {
         if position == 0 {
             state.used = 0;
-            if entry.is_traced() {
-                self.order.trace(&state.order, ctx, Children::LEN, entry);
-            }
         }
         let running = self.children.active_child_index(&state.children);
         let child = self
             .order
-            .next(&mut state.order, ctx, state.used, running, Children::LEN)
+            .next(
+                &mut state.order,
+                ctx,
+                state.used,
+                running,
+                Children::LEN,
+                entry,
+            )
             .filter(|child| *child < Children::LEN && state.used & (1 << child) == 0)
             .map(|child| child as u8);
         if let Some(child) = child {

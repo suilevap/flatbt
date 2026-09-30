@@ -316,3 +316,40 @@ fn a_diagnostic_is_recorded_on_the_node_that_raised_it() {
     );
     assert!(text.ends_with("} → Failure    ← cause"), "{text}");
 }
+
+#[test]
+fn tracing_scores_each_child_no_more_often() {
+    use std::cell::Cell;
+
+    struct Needs {
+        scored: Cell<u32>,
+    }
+    fn tree() -> impl BtNode<Needs, &'static str> {
+        select(order_by(
+            by_score(|needs: &Needs, index: usize| {
+                needs.scored.set(needs.scored.get() + 1);
+                [0.9, 0.5][index]
+            }),
+            (
+                leaf(|_: &mut Needs| NodeResult::<&str>::Failure),
+                leaf(|_: &mut Needs| NodeResult::Running("sleep")),
+            ),
+        ))
+    }
+    let scored = |traced: bool| {
+        let tree = tree();
+        let mut state = BtState::new(&tree);
+        let log = TraceLog::new();
+        let mut needs = Needs {
+            scored: Cell::new(0),
+        };
+        let entry = if traced {
+            log.entry(EntryMode::Evaluate)
+        } else {
+            EntryMode::Evaluate.into()
+        };
+        let _ = update(&tree, &mut state, &mut needs, entry);
+        needs.scored.get()
+    };
+    assert_eq!(scored(true), scored(false));
+}

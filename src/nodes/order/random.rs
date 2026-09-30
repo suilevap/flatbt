@@ -51,6 +51,7 @@ impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
         used: u64,
         running: Option<usize>,
         child_count: usize,
+        _: Entry<'_>,
     ) -> Option<usize> {
         if used == 0 && running.is_some() {
             return running;
@@ -90,13 +91,6 @@ where
 {
     type State = ();
 
-    fn trace(&self, _: &(), ctx: &mut C, child_count: usize, entry: Entry<'_>) {
-        for index in 0..child_count {
-            let weight = (self.weight)(ctx, index);
-            entry.record("weight", || weight);
-        }
-    }
-
     fn kind(&self) -> &'static str {
         "weighted"
     }
@@ -109,6 +103,7 @@ where
         used: u64,
         running: Option<usize>,
         child_count: usize,
+        entry: Entry<'_>,
     ) -> Option<usize> {
         if used == 0 && running.is_some() {
             return running;
@@ -119,7 +114,16 @@ where
             if weight > 0.0 { weight } else { 0.0 }
         };
         let candidates = || (0..child_count).filter(|index| used & (1 << index) == 0);
-        let total: f32 = candidates().map(|index| weight(ctx, index)).sum();
+        let total: f32 = candidates()
+            .map(|index| {
+                let weight = weight(ctx, index);
+                // Every child is weighed at the first position; record them there.
+                if used == 0 {
+                    entry.record("weight", || weight);
+                }
+                weight
+            })
+            .sum();
         if total <= 0.0 || !total.is_finite() {
             return None;
         }

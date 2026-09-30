@@ -240,6 +240,14 @@ impl<'t> Entry<'t> {
         self.trace.value(name, value);
     }
 
+    /// Where [`record`](Self::record) writes, without the mode: zero-sized
+    /// outside debug builds, so a closure capturing it instead of the entry
+    /// keeps its release layout.
+    #[inline(always)]
+    pub(crate) fn recorder(self) -> Handle<'t> {
+        self.trace
+    }
+
     /// Whether this update is being traced: for work that only feeds
     /// [`record`](Self::record), such as scoring every child again.
     #[inline(always)]
@@ -253,14 +261,6 @@ impl<'t> Entry<'t> {
     pub fn error<A>(self, message: impl core::fmt::Display) -> NodeResult<A> {
         self.trace.error(&message);
         NodeResult::error(message)
-    }
-
-    /// Records a diagnostic with this node's call when traced, for code that
-    /// reports it itself.
-    #[cfg(feature = "extras")]
-    #[inline(always)]
-    pub(crate) fn record_error(self, message: &dyn core::fmt::Display) {
-        self.trace.error(message);
     }
 }
 

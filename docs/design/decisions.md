@@ -493,9 +493,11 @@ Phase 3 of [Trace](trace.md).
 - **`ControlNode` records every policy answer**, so custom policies are
   covered, and `if_else`, `choose!`, `repeat` and `retry` need nothing of
   their own.
-- **`BtOrder::trace`**, defaulted and called only while traced, rather than a
-  recorder in `next`: no signature change, at the cost of scoring twice in
-  traced dev updates.
+- **`BtOrder::next` takes the entry**, and orders record what they compute
+  anyway, at the first position of a pass. A first cut added a defaulted
+  `BtOrder::trace` that scored every child again while traced; reviewing it,
+  scoring twice was not worth sparing custom orders one argument before a
+  release.
 - **Values count against the log's limit** with calls.
 - **Generic error paths stay in generic code.** `order_by`'s non-generic
   `unsupported` first called the generic `entry.error`, which instantiated
@@ -505,4 +507,11 @@ Phase 3 of [Trace](trace.md).
   718 to 1255 instructions without using `order_by` at all. `unsupported` now
   logs as before and records through a non-generic crate method, and
   `entry.error` is `NodeResult::error` plus a recording that vanishes in
-  release. Release assembly of all ten examples is identical to main.
+  release.
+- **Closures capture the recorder, not the entry.** `ControlNode`'s `next`
+  closure recorded answers through a captured `Entry`; in release that still
+  carried the mode byte into the closure, and `order_by`'s `run_from` grew by
+  87 instructions. It captures `entry.recorder()` instead, zero-sized in
+  release. The ten examples missed it: none uses an order. The release check
+  now also builds a tree of every order and every recording decorator; all
+  twelve compile identically to main.

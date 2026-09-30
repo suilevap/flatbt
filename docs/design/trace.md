@@ -121,26 +121,28 @@ cannot grow the log without bound.
 | `guard`, `reevaluate_when` | `if`: the condition |
 | `repeat_while`, `action_while` | `while`: the condition, each time it is asked |
 | `order_by` | `pick`: the child at each position |
-| `by_score`, `weighted` | `score` / `weight`: each child's, through `BtOrder::trace` |
+| `by_score`, `weighted` | `score` / `weight`: each child's, at the first position of a pass |
 | actions | `started`, `completed` |
 | library nodes raising a diagnostic | `error`: the message, through `entry.error` |
 
 `choose!`, `if_else`, `repeat` and `retry` need nothing of their own: their
 answers say which arm, which branch, and each restart.
 
-**Orders.** `BtOrder::next` computes scores internally and has no entry, so
-`BtOrder` gains a defaulted `trace(&self, state, ctx, child_count, entry)`,
-called at the start of each pass and only while traced. `by_score` and
-`weighted` score every child again there. That runs the score functions twice
-in traced dev updates, never in release, and changes no signature.
-`by_score`'s score type gains `Debug + 'static`, which every number type
-meets.
+**Orders.** `BtOrder::next` takes the control's entry and records what it
+computes anyway: `by_score` each child's score, `weighted` each child's weight.
+They record at the first position of a pass, where every child is still
+offered, so a pass records each child once; later positions score only the
+rest. Score functions run exactly as often traced as not. `by_score`'s score
+type gains `Debug + 'static`, which every number type meets.
 
 **Diagnostics.** `entry.error(message)` is `NodeResult::error(message)` plus,
 while traced, the message recorded on the node: the one value formatted when
 recorded, since a message is `Display`, not a value. Errors from custom
 policies (`ControlOp::error`) and from custom nodes calling
-`NodeResult::error` directly have no entry and reach only the error handler.
+`NodeResult::error` directly have no entry and reach only the error handler,
+as does `order_by`'s report of a control visiting positions out of order: a
+misuse by a custom control, kept off the trace so its cold path compiles as
+before.
 
 **A node passing its entry on** is traced as one line, and its direct child's
 values show on that line: the child records under the id it was handed. Calls

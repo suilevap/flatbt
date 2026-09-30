@@ -179,6 +179,9 @@ impl<P, Children> ControlNode<P, Children> {
             )));
         }
         let inner = &mut state.inner;
+        // The recorder, not the entry: capturing the entry's mode would change
+        // this closure, and the code around it, in release builds.
+        let recorder = entry.recorder();
         let mut next = |ctx: &mut C, completed: usize, succeeded: bool| {
             let op = if succeeded {
                 self.policy
@@ -187,7 +190,7 @@ impl<P, Children> ControlNode<P, Children> {
                 self.policy
                     .child_failed(inner, ctx, completed, Children::LEN)
             };
-            entry.record("next", || op);
+            recorder.value("next", || op);
             op
         };
         match self.children.run_from(

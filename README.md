@@ -672,7 +672,7 @@ children itself has work to do.
 | --- | --- | --- | --- |
 | Control | `BtControl`, built with `control(policy, children)` | Children traced and reported; ids counted; each answer recorded | `kind()` for its name, `inspect()` for fields |
 | Action | `BtAction`, wrapped with `action(..)` | `Walk (action)`, each call traced, `started` / `completed` | `BtAction::inspect` for fields |
-| Order | `BtOrder`, used with `order_by(order, children)` | Each `pick` | `trace()` to record what a pass is ordered by |
+| Order | `BtOrder`, used with `order_by(order, children)` | Each `pick` | `entry.record` in `next` for what a pass is ordered by |
 | Leaf, condition, any node without children | `BtNode` | Type name, each call traced | `BtNode::inspect` for a kind, name or fields; `entry.record` for values |
 | Node that calls its own children | `BtNode` | Runs; traced as one line | `NODES`, `entry.run`, `inspect`, below |
 
