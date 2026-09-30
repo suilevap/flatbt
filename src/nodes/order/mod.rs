@@ -52,6 +52,11 @@ pub trait BtOrder<C> {
 
     /// Called with an empty `used` at the first position of each pass: on
     /// entry, and whenever `Evaluate` brings the control back to its start.
+    ///
+    /// `entry` is the control's: [`Entry::record`] what the order is based
+    /// on, such as each child's score, for traces. Record at the first
+    /// position, where every child is still offered, so a pass records each
+    /// child once.
     fn next(
         &self,
         state: &mut Self::State,
@@ -59,6 +64,7 @@ pub trait BtOrder<C> {
         used: u64,
         running: Option<usize>,
         child_count: usize,
+        entry: Entry<'_>,
     ) -> Option<usize>;
 
     /// What debug views call this order, such as `by_score`. Defaults to the
@@ -237,9 +243,9 @@ impl<O, Children> Ordered<O, Children> {
     {
         Ok(match state.at {
             // A new pass: on entry, or Evaluate back at the start.
-            None if position == 0 => self.pick::<C, A, S>(state, ctx, 0),
+            None if position == 0 => self.pick::<C, A, S>(state, ctx, 0, entry),
             _ if position == 0 && entry.mode() == EntryMode::Evaluate => {
-                self.pick::<C, A, S>(state, ctx, 0)
+                self.pick::<C, A, S>(state, ctx, 0, entry)
             }
             // The same position again: Resume, or Evaluate continuing it.
             Some((at, child)) if at as usize == position => child,
@@ -248,9 +254,11 @@ impl<O, Children> Ordered<O, Children> {
                 if let Some(child) = child {
                     state.used |= 1 << child;
                 }
-                self.pick::<C, A, S>(state, ctx, position)
+                self.pick::<C, A, S>(state, ctx, position, entry)
             }
             _ => {
+                // A misuse by a custom control: logged, not traced, so this
+                // cold path stays as it compiles without traces.
                 unsupported(position, state.at.map(|(at, _)| at as usize));
                 return Err(());
             }
@@ -264,6 +272,7 @@ impl<O, Children> Ordered<O, Children> {
         state: &mut OrderedState<O::State, Children::State>,
         ctx: &mut C,
         position: usize,
+        entry: Entry<'_>,
     ) -> Option<u8>
     where
         S: ParamShape,
@@ -276,9 +285,19 @@ impl<O, Children> Ordered<O, Children> {
         let running = self.children.active_child_index(&state.children);
         let child = self
             .order
-            .next(&mut state.order, ctx, state.used, running, Children::LEN)
+            .next(
+                &mut state.order,
+                ctx,
+                state.used,
+                running,
+                Children::LEN,
+                entry,
+            )
             .filter(|child| *child < Children::LEN && state.used & (1 << child) == 0)
             .map(|child| child as u8);
+        if let Some(child) = child {
+            entry.record("pick", || usize::from(child));
+        }
         state.at = Some((position as u8, child));
         child
     }

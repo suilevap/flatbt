@@ -37,16 +37,23 @@ static ALLOCATOR: Counting = Counting;
 #[test]
 fn traced_updates_reuse_the_log() {
     // Alternates between a branch that fails and one that runs, so each
-    // update records a different number of calls.
+    // update records a different number of calls and values: policy answers,
+    // a condition, scores and picks.
     let tree = select((
         seq((
             check(|n: &u32| n.is_multiple_of(2)),
-            check(|n: &u32| *n > 100),
+            guard(|n: &u32| *n > 100, leaf(|_: &mut u32| NodeResult::Success)),
         )),
-        leaf(|n: &mut u32| {
-            *n += 1;
-            NodeResult::RUNNING
-        }),
+        select(order_by(
+            by_score(|n: &u32, index: usize| (*n as f32) * (index as f32)),
+            (
+                leaf(|_: &mut u32| NodeResult::Failure),
+                leaf(|n: &mut u32| {
+                    *n += 1;
+                    NodeResult::RUNNING
+                }),
+            ),
+        )),
     ));
     let mut state: BtState<_, _> = BtState::new(&tree);
     let log = flatbt::trace::TraceLog::new();

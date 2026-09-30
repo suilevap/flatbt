@@ -481,3 +481,37 @@ Phase 2 of [Trace](trace.md).
   the end of its subtree's id range, and a child entry outside it records
   nothing: such a node is traced as one line. `Entry::run` takes the child's
   `NODES` from its type, so opting in is one call.
+
+## 2026-09-27 — Traces: values nodes record
+
+Phase 3 of [Trace](trace.md).
+
+- **`entry.record(name, || value)`**, any `Debug + 'static`, stored typed per
+  node, name and type, and printed through `Debug` when a trace is formatted.
+  No node writes display code; the earlier draft's read-back in `inspect` was
+  dropped as unneeded.
+- **`ControlNode` records every policy answer**, so custom policies are
+  covered, and `if_else`, `choose!`, `repeat` and `retry` need nothing of
+  their own.
+- **`BtOrder::next` takes the entry**, and orders record what they compute
+  anyway, at the first position of a pass. A first cut added a defaulted
+  `BtOrder::trace` that scored every child again while traced; reviewing it,
+  scoring twice was not worth sparing custom orders one argument before a
+  release.
+- **Values count against the log's limit** with calls.
+- **Generic error paths stay in generic code.** `order_by`'s non-generic
+  `unsupported` first called the generic `entry.error`, which instantiated
+  `NodeResult::error::<(), Arguments>` inside the library. Dependents then
+  shared that copy, their optimizer lost sight of the error path, and
+  `ControlNode::run_rest` stopped being eliminated: `scoped_params` grew from
+  718 to 1255 instructions without using `order_by` at all. `unsupported` now
+  logs as before and records through a non-generic crate method, and
+  `entry.error` is `NodeResult::error` plus a recording that vanishes in
+  release.
+- **Closures capture the recorder, not the entry.** `ControlNode`'s `next`
+  closure recorded answers through a captured `Entry`; in release that still
+  carried the mode byte into the closure, and `order_by`'s `run_from` grew by
+  87 instructions. It captures `entry.recorder()` instead, zero-sized in
+  release. The ten examples missed it: none uses an order. The release check
+  now also builds a tree of every order and every recording decorator; all
+  twelve compile identically to main.

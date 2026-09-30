@@ -144,9 +144,11 @@ where
     type State = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(&self, _: &mut (), ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
-        if self.condition.call(ctx, P::Shape::reborrow(&mut params)) {
+        let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+        entry.record("while", || holds);
+        if holds {
             NodeResult::Running(self.act.call(ctx, params))
         } else {
             NodeResult::Success

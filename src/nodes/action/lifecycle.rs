@@ -61,11 +61,13 @@ where
         state: &mut Self::State,
         ctx: &mut C,
         params: P,
-        _: Entry<'_>,
+        entry: Entry<'_>,
     ) -> NodeResult<A> {
         let mut params = params.into_value();
         if state.is_none() {
             *state = self.0.start(ctx, P::Shape::reborrow(&mut params));
+            let started = state.is_some();
+            entry.record("started", || started);
         }
         let Some(active) = state.as_mut() else {
             return NodeResult::Failure;
@@ -76,10 +78,11 @@ where
         {
             NodeResult::Running(self.0.tick(active, ctx, P::Shape::reborrow(&mut params)))
         } else {
-            let result = if self
+            let completed = self
                 .0
-                .complete(active, ctx, P::Shape::reborrow(&mut params))
-            {
+                .complete(active, ctx, P::Shape::reborrow(&mut params));
+            entry.record("completed", || completed);
+            let result = if completed {
                 NodeResult::Success
             } else {
                 NodeResult::Failure

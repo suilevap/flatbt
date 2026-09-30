@@ -104,4 +104,4 @@ required-features = ["extras"]
 
 [[test]]
 name = "trace_allocations"
-required-features = ["std"]
+required-features = ["std", "extras"]

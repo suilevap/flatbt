@@ -40,10 +40,14 @@ where
     #[inline]
     fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
         let mut params = params.into_value();
-        let entry = if entry.mode() == EntryMode::Resume
-            && self.condition.call(ctx, P::Shape::reborrow(&mut params))
-        {
-            entry.with_mode(EntryMode::Evaluate)
+        let entry = if entry.mode() == EntryMode::Resume {
+            let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+            entry.record("if", || holds);
+            if holds {
+                entry.with_mode(EntryMode::Evaluate)
+            } else {
+                entry
+            }
         } else {
             entry
         };

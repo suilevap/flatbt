@@ -134,7 +134,7 @@ where
         entry: Entry<'_>,
     ) -> NodeResult<A> {
         let Some(params) = self.binding.get(locals) else {
-            return NodeResult::error(format_args!(
+            return entry.error(format_args!(
                 "bound input is unavailable for {}",
                 core::any::type_name::<N>()
             ));
