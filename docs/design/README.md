@@ -22,6 +22,7 @@ Code and tests define current behavior; historical proposals may differ.
 | --- | --- |
 | [Node catalog](node-catalog-draft.md) | Decorators, helpers, and selection policies; being implemented |
 | [Trace](trace.md) | Why the tree chose what it runs: a typed per-agent log in dev builds, merged by `inspect` |
+| [Tree memory](tree-memory-draft.md) | Per-node state that outlives a run, owned beside the run state; core change |
 
 ## Archive and history
 
