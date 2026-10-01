@@ -130,6 +130,27 @@ in `tick_mode`, which runs before the tree.
 Not done: `wait_updates` (an update count is a clock the game can provide),
 spans read from the context.
 
+## Nodes that tree memory unlocks -- proposed
+
+[Tree memory](tree-memory-draft.md) keeps per-node, per-agent state that
+outlives a run. These used to need a blackboard field or accessor each.
+
+| Node | Memory holds | Size |
+| --- | --- | --- |
+| `check_hysteresis(enter, exit)`, and a `guard` form | The last answer: enter when `enter` holds, leave when `exit` does. Stops flip-flopping at a threshold. | S |
+| `on_rise(cond, child)`, `reevaluate_on_change(key, child)` | The previous value: react once when a condition turns true, reconsider when a value changes. Replaces `*_changed` flags computed in gather. | S |
+| `check_for(span, cond)` | Since when `cond` has held: true only after it held for `span` (perception delay). | S |
+| `backoff(base, child)` | Consecutive failures: a cooldown that doubles after each failure, reset by a success. | S |
+| `once(child)`, `at_most(n, child)`, `latch(child)` | Runs so far, or a latched success, for the agent's life. | S |
+| `round_robin()` order | The last child; replaces the accessor in the candidate above. | S |
+| Shuffle bag order | Children not yet run: random without repeats until all have run. | S |
+| `leaf_with_memory(\|ctx, mem: &mut M\| ..)` | Anything: a closure leaf with its own memory, for one-off counters and latches. | S |
+| Novelty in `by_score` | When each child last ran: penalise recent ones for variety. | M |
+| Adaptive `weighted` | Weights moved toward children that succeed. | M |
+| Per-node stats wrapper | Runs, outcomes, last run: what an agent actually does, for debug views. | M |
+| Persistent `scope!` locals (`remember let x = ..`) | A local that outlives the invocation; most rows above inline in the DSL. Needs its own design note. | M-L |
+| Snapshot and restore | Memory is plain per-agent data; with an optional `serde` dependency (its own feature), save games and replays. | M |
+
 ## Core changes
 
 | Change | Unlocks | Recommendation |
