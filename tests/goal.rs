@@ -246,3 +246,21 @@ fn a_new_root_goal_starts_over() {
         Some("goals {stack: [Reach(3)]}")
     );
 }
+
+#[test]
+fn a_failure_deep_in_the_stack_returns_through_every_goal_above_it() {
+    let tree = tree::<8>();
+    let mut state = BtState::new(&tree);
+    let mut world = World::new(7);
+    world.can_climb = true;
+    // Reach(7) -> OpenDoor -> GetKey -> Reach(2): walking to the key.
+    assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(2)));
+    // The key is taken. GetKey fails, so OpenDoor fails, so Reach(7) climbs.
+    world.key_at = None;
+    assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(7)));
+    assert!(world.climbed && !world.door_open);
+    assert_eq!(
+        state.describe().to_string().split(" > ").next(),
+        Some("goals {stack: [Reach(7)], failed: [OpenDoor]}")
+    );
+}

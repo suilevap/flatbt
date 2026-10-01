@@ -49,6 +49,17 @@ Push and pop fall out: a frame starts when `need` asks for a new goal and ends
 when the goal completes, or when an update no longer reaches the `need` that
 asked for it, which is how a preempted branch ends. No node pushes or pops.
 
+### The stack extends the running path
+
+Parents are not frozen while a subgoal runs. Every update walks from the root
+goal down through each `need` to the deepest frame, as any tree re-walks its
+running path, so a failure deep in the stack returns through every goal above
+it in the same update, each deciding with its own `select` or `seq`. The
+alternative, a loop that runs only the top frame, would not notice a parent's
+goal achieved by other means, and a parent waiting on its subgoal would need a
+"waiting" result that `NodeResult` does not have. The recursion is bounded by
+`N`, over frames laid out in advance.
+
 ### Failed subgoals
 
 A subgoal that fails is recorded against the goal that asked for it, for as
