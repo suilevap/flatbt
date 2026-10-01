@@ -24,12 +24,12 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
     /// with Evaluate. Terminal candidates preserve saved state; Running
     /// candidates replace it. A terminal saved child clears selection. An
     /// index at or past `LEN` runs nothing and comes back as `Err(RunChild)`.
-    // State and memory travel separately, as everywhere else.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `slots` is the children's saved state and their memory, which always
+    /// travel together here.
     fn run_from(
         &self,
-        state: &mut Self::State,
-        memory: &mut Self::Memory,
+        slots: (&mut Self::State, &mut Self::Memory),
         first: usize,
         ctx: &mut C,
         params: &mut S::Value<'_>,
@@ -64,8 +64,7 @@ impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
 
     fn run_from(
         &self,
-        _: &mut (),
-        _: &mut (),
+        _: (&mut (), &mut ()),
         first: usize,
         _: &mut C,
         _: &mut S::Value<'_>,
@@ -115,8 +114,7 @@ macro_rules! tuple_children {
             #[inline(always)]
             fn run_from(
                 &self,
-                state: &mut Self::State,
-                memory: &mut Self::Memory,
+                (state, memory): (&mut Self::State, &mut Self::Memory),
                 first: usize,
                 ctx: &mut C,
                 params: &mut S::Value<'_>,

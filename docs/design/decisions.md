@@ -536,3 +536,9 @@ fired after its branch ended. See [Tree memory](tree-memory-draft.md).
   removing the component drops it.
 - **No cost without memory nodes.** Every release example's `.text` is the
   same size as before the change.
+- **Fewer arguments, not a lint exception.** Memory pushed two signatures to
+  eight arguments. `BtOrder::next` now takes a `Pass` (children used so far,
+  the running child, the count) with `is_start`, `left` and `left_count`, which
+  every order had written out as bit tests. `BtChildren::run_from` takes the
+  children's state and memory as one `slots` pair, since they always travel
+  together there.

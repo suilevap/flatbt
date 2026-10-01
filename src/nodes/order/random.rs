@@ -6,7 +6,7 @@
 //! `Evaluate`, so a random choice holds while it runs rather than being drawn
 //! again every update. The rest of the pass is drawn afresh.
 
-use super::BtOrder;
+use super::{BtOrder, Pass};
 use crate::Entry;
 
 /// Children in a uniformly random order.
@@ -45,28 +45,17 @@ impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
     }
 
     #[inline]
-    fn next(
-        &self,
-        _: &mut (),
-        _: &mut (),
-        ctx: &mut C,
-        used: u64,
-        running: Option<usize>,
-        child_count: usize,
-        _: Entry<'_>,
-    ) -> Option<usize> {
-        if used == 0 && running.is_some() {
-            return running;
+    fn next(&self, _: &mut (), _: &mut (), ctx: &mut C, pass: Pass, _: Entry<'_>) -> Option<usize> {
+        if pass.is_start() && pass.running().is_some() {
+            return pass.running();
         }
-        let left = child_count - used.count_ones() as usize;
+        let left = pass.left_count();
         if left == 0 {
             return None;
         }
         // Modulo bias is below 64 / 2^32: negligible for choosing behavior.
         let nth = (self.0)(ctx) as usize % left;
-        (0..child_count)
-            .filter(|index| used & (1 << index) == 0)
-            .nth(nth)
+        pass.left().nth(nth)
     }
 }
 
@@ -104,25 +93,23 @@ where
         _: &mut (),
         _: &mut (),
         ctx: &mut C,
-        used: u64,
-        running: Option<usize>,
-        child_count: usize,
+        pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize> {
-        if used == 0 && running.is_some() {
-            return running;
+        if pass.is_start() && pass.running().is_some() {
+            return pass.running();
         }
         let weight = |ctx: &C, index: usize| {
             let weight = (self.weight)(ctx, index);
             // `> 0.0` is false for NaN too.
             if weight > 0.0 { weight } else { 0.0 }
         };
-        let candidates = || (0..child_count).filter(|index| used & (1 << index) == 0);
-        let total: f32 = candidates()
+        let total: f32 = pass
+            .left()
             .map(|index| {
                 let weight = weight(ctx, index);
                 // Every child is weighed at the first position; record them there.
-                if used == 0 {
+                if pass.is_start() {
                     entry.record("weight", || weight);
                 }
                 weight
@@ -134,7 +121,7 @@ where
         let draw = (self.rng)(ctx) as f32 / (u32::MAX as f32 + 1.0) * total;
         let mut last = None;
         let mut sum = 0.0;
-        for index in candidates() {
+        for index in pass.left() {
             let weight = weight(ctx, index);
             if weight == 0.0 {
                 continue;

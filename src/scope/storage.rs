@@ -133,8 +133,7 @@ impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Ini
         };
         // Initializers are numbered from the scope, like a control's children.
         match self.0.run_from(
-            &mut state.init,
-            memory,
+            (&mut state.init, memory),
             0,
             ctx,
             &mut locals,

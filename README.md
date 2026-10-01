@@ -219,7 +219,8 @@ preempts the running one, and `seq` does only while still on its first child.
   restarts a pass they keep the running child first, so a random choice holds
   while it runs; the rest is drawn afresh. A weight that is not positive leaves
   its child out.
-- At most 64 children; more fails to build. Custom orders implement `BtOrder`.
+- At most 64 children; more fails to build. Custom orders implement `BtOrder`,
+  whose `next` gets a `Pass`: the children left and the one still running.
 
 `per_child!` writes a value next to each child -- a score, a weight -- and
 returns the per-child function and the children, for any order:
