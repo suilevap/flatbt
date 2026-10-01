@@ -6,20 +6,21 @@ pub struct Choose<F>(pub F);
 
 impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "choose"
     }
 
-    fn begin(&self, _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
+    fn begin(&self, _: &mut (), _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
         ControlOp::RunChild((self.0)(ctx))
     }
 
-    fn child_succeeded(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_succeeded(&self, _: &mut (), _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Success
     }
 
-    fn child_failed(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_failed(&self, _: &mut (), _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Failure
     }
 }

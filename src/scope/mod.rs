@@ -13,4 +13,6 @@ pub use binding::{
     Bound, ParamBinding, ParamsBinding, ReadBinding, WithParams, WithoutParams, WriteBinding, bind,
     no_params, params, read, write,
 };
-pub use storage::{Compute, Init, InitState, NoInit, Scope, ScopeInit, ScopeState, compute, scope};
+pub use storage::{
+    Compute, Init, InitState, NoInit, Scope, ScopeInit, ScopeMemory, ScopeState, compute, scope,
+};

@@ -54,31 +54,33 @@ pub fn force_failure<N>(child: N) -> Remap<N> {
 
 impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
     type State = N::State;
+    type Memory = N::Memory;
     const NODES: usize = 1 + N::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut N::State,
+        memory: &mut N::Memory,
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        match entry.run(1, &self.child, state, ctx, params) {
+        match entry.run(1, &self.child, state, memory, ctx, params) {
             running @ NodeResult::Running(_) => running,
             NodeResult::Success => self.success.result(),
             NodeResult::Failure => self.failure.result(),
         }
     }
 
-    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
         let kind = match (self.success, self.failure) {
             (Outcome::Failure, Outcome::Success) => "invert",
             (Outcome::Success, _) => "force_success",
             (Outcome::Failure, _) => "force_failure",
         };
         inspector.node(NodeInfo::new(kind, state.is_some()), |inspector| {
-            self.child.inspect(state, inspector);
+            self.child.inspect(state, memory, inspector);
         });
     }
 }

@@ -41,6 +41,7 @@ where
     S: Copy + PartialOrd + Add<Output = S> + Debug + 'static,
 {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "by_score"
@@ -49,6 +50,7 @@ where
     #[inline]
     fn next(
         &self,
+        _: &mut (),
         _: &mut (),
         ctx: &mut C,
         used: u64,

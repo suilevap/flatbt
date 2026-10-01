@@ -488,21 +488,24 @@ mod imp {
 pub struct Trace<'a, N: BtNode<C, A>, C, A = ()> {
     node: &'a N,
     state: Option<&'a N::State>,
+    memory: &'a N::Memory,
     log: &'a TraceLog,
     context: PhantomData<fn(&mut C) -> A>,
 }
 
-/// A trace of `node` from `log`, with `state` for the running path's fields,
+/// A trace of `node` from `log`, with `state` and `memory` for the fields,
 /// for a driver without a [`BtState`](crate::BtState), such as one using
 /// [`update_slot`](crate::update_slot).
 pub fn trace<'a, C, A, N: BtNode<C, A>>(
     node: &'a N,
     state: Option<&'a N::State>,
+    memory: &'a N::Memory,
     log: &'a TraceLog,
 ) -> Trace<'a, N, C, A> {
     Trace {
         node,
         state,
+        memory,
         log,
         context: PhantomData,
     }
@@ -514,12 +517,12 @@ impl<N: BtNode<C, A>, C, A> fmt::Display for Trace<'_, N, C, A> {
         return text::write(
             f,
             self.log,
-            |inspector| self.node.inspect(self.state, inspector),
+            |inspector| self.node.inspect(self.state, self.memory, inspector),
             N::NODES,
         );
         #[cfg(not(all(debug_assertions, feature = "std")))]
         {
-            let _ = (self.node, self.state, self.log);
+            let _ = (self.node, self.state, self.memory, self.log);
             f.write_str("trace unavailable: needs debug assertions and std")
         }
     }

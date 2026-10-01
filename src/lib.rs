@@ -70,9 +70,9 @@ pub mod scope;
 pub mod trace;
 
 pub use composition::{
-    BtChildren, BtControl, Check, ControlNode, ControlOp, ControlState, Guarded, Leaf, ReadFn,
-    ReadsContext, ReadsParams, Selector, Sequence, check, child_state, control, guard, leaf,
-    select, seq,
+    BtChildren, BtControl, Check, ControlMemory, ControlNode, ControlOp, ControlState, Guarded,
+    Leaf, ReadFn, ReadsContext, ReadsParams, Selector, Sequence, check, child_state, control,
+    guard, leaf, select, seq,
 };
 #[cfg(feature = "extras")]
 pub use nodes::{

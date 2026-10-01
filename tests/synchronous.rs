@@ -116,8 +116,10 @@ fn execution_errors_fail_the_branch_and_allow_fallback() {
     struct InvalidIndex;
     impl<C> BtControl<C> for InvalidIndex {
         type State = ();
+        type Memory = ();
         fn begin(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut C,
             _active_child_index: Option<usize>,
@@ -128,6 +130,7 @@ fn execution_errors_fail_the_branch_and_allow_fallback() {
         fn child_succeeded(
             &self,
             _: &mut (),
+            _: &mut (),
             _: &mut C,
             _completed_child_index: usize,
             _child_count: usize,
@@ -136,6 +139,7 @@ fn execution_errors_fail_the_branch_and_allow_fallback() {
         }
         fn child_failed(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut C,
             _completed_child_index: usize,

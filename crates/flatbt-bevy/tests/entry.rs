@@ -24,8 +24,16 @@ struct ThreeSteps;
 
 impl BtNode<Work, Working> for ThreeSteps {
     type State = u32;
+    type Memory = ();
 
-    fn update(&self, step: &mut u32, work: &mut Work, _: (), _: Entry<'_>) -> NodeResult<Working> {
+    fn update(
+        &self,
+        step: &mut u32,
+        _: &mut (),
+        work: &mut Work,
+        _: (),
+        _: Entry<'_>,
+    ) -> NodeResult<Working> {
         *step += 1;
         work.done += 1;
         if *step < 3 {

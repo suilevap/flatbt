@@ -11,9 +11,9 @@ use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 /// A tree that can drive agents whose blackboard is `C` and whose decisions are
 /// `A`, with one state type.
 ///
-/// What this adds over `BtNode<C, A>` is `State = Self::Data`, which pins the
-/// invocation state to a single named type so [`Behavior`] has a size to
-/// reserve. A bound would leave it a projection; an equality to a written-out
+/// What this adds over `BtNode<C, A>` is `State = Self::Data` and
+/// `Memory = Self::MemoryData`, which pin the invocation state and memory to
+/// named types so [`Behavior`] has a size to reserve. A bound would leave it a projection; an equality to a written-out
 /// type cannot be spelled, because a composed tree's state is nested control
 /// state over closures. An associated type is the only equality target left, so
 /// it takes a trait -- and in return position it then names a subtree without
@@ -22,18 +22,22 @@ use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 /// Bevy components must be `Send + Sync`, so a tree and its inline state carry
 /// that on top of FlatBT's own bounds.
 pub trait BehaviorNode<C, A = ()>:
-    BtNode<C, A, State = Self::Data> + Send + Sync + 'static
+    BtNode<C, A, State = Self::Data, Memory = Self::MemoryData> + Send + Sync + 'static
 {
     /// Inline invocation state for the whole tree.
     type Data: Default + Send + Sync + 'static;
+    /// Every node's memory, kept for the agent's lifetime.
+    type MemoryData: Default + Send + Sync + 'static;
 }
 
-impl<C, A, N, S> BehaviorNode<C, A> for N
+impl<C, A, N, S, M> BehaviorNode<C, A> for N
 where
-    N: BtNode<C, A, State = S> + Send + Sync + 'static,
+    N: BtNode<C, A, State = S, Memory = M> + Send + Sync + 'static,
     S: Default + Send + Sync + 'static,
+    M: Default + Send + Sync + 'static,
 {
     type Data = S;
+    type MemoryData = M;
 }
 
 /// Names one tree, and builds it once.
@@ -255,6 +259,8 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
 #[component(on_remove = release_act::<A>)]
 pub struct Behavior<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> {
     state: Option<<F::Tree as BehaviorNode<C, A>>::Data>,
+    /// Every node's memory: kept across restarts, dropped with the component.
+    memory: <F::Tree as BehaviorNode<C, A>>::MemoryData,
     // Only the builder's type is needed; the value it was named by is not kept,
     // so it cannot be mistaken for per-agent configuration. Load-bearing beyond
     // that: it keeps `C`, `A` and `F` direct field uses, as above.
@@ -279,6 +285,7 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     pub fn for_tree(_builder: F) -> Self {
         Self {
             state: None,
+            memory: Default::default(),
             builder: PhantomData,
         }
     }
@@ -290,21 +297,28 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     /// the current action would be wrong. The act is left to the next tick,
     /// which decides it again and removes it if the fresh invocation decides
     /// nothing. To stop the agent instead of restarting it, remove the
-    /// component.
+    /// component. Node memory, such as cooldowns, is kept.
     pub fn restart(&mut self) {
         self.state = None;
+    }
+
+    /// [`restart`](Self::restart), and also drops every node's memory, as a
+    /// new agent would start.
+    pub fn forget(&mut self) {
+        self.state = None;
+        self.memory = Default::default();
     }
 
     /// A text view of this agent's running path, for logs and debugging. See
     /// [`Describe`]. `tree` is the definition from [`BehaviorTree::get`].
     pub fn describe<'a>(&'a self, tree: &'a F::Tree) -> Describe<'a, F::Tree, C, A> {
-        describe(tree, self.state.as_ref())
+        describe(tree, self.state.as_ref(), &self.memory)
     }
 
     /// A fingerprint of this agent's running path, to act only when it
     /// changes. See [`path_id`].
     pub fn path_id(&self, tree: &F::Tree) -> u64 {
-        path_id(tree, self.state.as_ref())
+        path_id(tree, self.state.as_ref(), &self.memory)
     }
 
     /// Runs one update and hands back what the agent is now doing.
@@ -319,15 +333,20 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     pub fn tick(&mut self, tree: &F::Tree, bb: &mut C, mode: EntryMode) -> Option<A> {
         // A fresh invocation enters as Evaluate whatever the caller asks for.
         let resumed = self.state.is_some() && mode == EntryMode::Resume;
-        match update_slot(tree, &mut self.state, bb, mode) {
+        match update_slot(tree, &mut self.state, &mut self.memory, bb, mode) {
             NodeResult::Running(act) => Some(act),
             // The continuation is gone, and a resumed update never consulted
             // anything above it, so the failure says nothing about what the tree
             // would choose now. The next update would enter as Evaluate anyway
             // -- this only spares the agent a tick of doing nothing.
-            NodeResult::Failure if resumed => {
-                update_slot(tree, &mut self.state, bb, EntryMode::Evaluate).act()
-            }
+            NodeResult::Failure if resumed => update_slot(
+                tree,
+                &mut self.state,
+                &mut self.memory,
+                bb,
+                EntryMode::Evaluate,
+            )
+            .act(),
             _ => None,
         }
     }

@@ -39,10 +39,12 @@ impl Drop for ProbeState {
 
 impl BtNode<Context> for Probe {
     type State = ProbeState;
+    type Memory = ();
 
     fn update(
         &self,
         state: &mut Self::State,
+        _: &mut (),
         ctx: &mut Context,
         _: (),
         entry: Entry<'_>,

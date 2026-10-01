@@ -24,13 +24,14 @@ pub fn leaf<F>(f: F) -> Leaf<F> {
 
 impl<C, A, P, F: Fn(&mut C) -> NodeResult<A>> BtNode<C, A, P> for Leaf<F> {
     type State = ();
+    type Memory = ();
 
     #[inline(always)]
-    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(&self, _: &mut (), _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
         (self.0)(ctx)
     }
 
-    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("leaf", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
@@ -49,9 +50,10 @@ pub fn check<F>(predicate: F) -> Check<F> {
 
 impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
     type State = ();
+    type Memory = ();
 
     #[inline(always)]
-    fn update(&self, _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(&self, _: &mut (), _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
         if (self.0)(ctx) {
             NodeResult::Success
         } else {
@@ -59,7 +61,7 @@ impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
         }
     }
 
-    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("check", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
@@ -103,33 +105,43 @@ pub fn guard<F, N, M>(predicate: F, child: N) -> Guarded<F, N, M> {
     }
 }
 
-impl<C, A, P: ParamValue, F, N, S, M> BtNode<C, A, P> for Guarded<F, N, M>
+impl<C, A, P: ParamValue, F, N, S, Mem, M> BtNode<C, A, P> for Guarded<F, N, M>
 where
     F: ReadFn<C, P, bool, M>,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
     S: Default + Send + 'static,
+    Mem: Default + Send + 'static,
 {
     type State = S;
+    type Memory = Mem;
     const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline(always)]
-    fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        state: &mut S,
+        memory: &mut Mem,
+        ctx: &mut C,
+        params: P,
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
         let mut params = params.into_value();
         let holds = self.predicate.call(ctx, P::Shape::reborrow(&mut params));
         entry.record("if", || holds);
         if holds {
-            entry.run(1, &self.child, state, ctx, params)
+            entry.run(1, &self.child, state, memory, ctx, params)
         } else {
             NodeResult::Failure
         }
     }
 
-    fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&S>, memory: &Mem, inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("guard", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |inspector| {
             BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state,
+                memory,
                 inspector,
             );
         });

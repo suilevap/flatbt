@@ -6,9 +6,17 @@ pub struct Reject<N>(pub N);
 
 impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
     type State = N::State;
+    type Memory = N::Memory;
 
-    fn update(&self, state: &mut Self::State, ctx: &mut C, _: (), entry: Entry<'_>) -> NodeResult {
-        let _ = self.0.update(state, ctx, (), entry);
+    fn update(
+        &self,
+        state: &mut Self::State,
+        memory: &mut Self::Memory,
+        ctx: &mut C,
+        _: (),
+        entry: Entry<'_>,
+    ) -> NodeResult {
+        let _ = self.0.update(state, memory, ctx, (), entry);
         NodeResult::Failure
     }
 }

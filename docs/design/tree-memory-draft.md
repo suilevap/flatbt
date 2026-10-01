@@ -1,6 +1,7 @@
 # Tree memory: node state that outlives a run
 
-Status: proposal. Core change; breaks every `BtNode` implementation once.
+Status: implemented (steps 1–3 of the plan). Core change; breaks every `BtNode`
+implementation once.
 
 ## Problem
 
@@ -73,10 +74,11 @@ pub trait BtNode<C, A = (), P = ()> {
 
 ### Composition
 
-- `BtChildren` gains `type Memory` -- a tuple of the children's memories, all
-  of them -- and `run_from` and `inspect_children` take it. Child `i` receives
-  `&mut memory.i`. Generated in `build.rs` with the rest.
-- `ControlNode::Memory` is `(P::Memory, Children::Memory)`: `BtControl` gains
+- `BtChildren` gains `type Memory` -- a generated tuple struct `Memory{n}` of
+  the children's memories, all of them, since std tuples implement `Default`
+  only up to 12 -- and `run_from` and `inspect_children` take it. Child `i`
+  receives `&mut memory.i`. Generated in `build.rs` with the rest.
+- `ControlNode::Memory` is `ControlMemory<P::Memory, Children::Memory>`: `BtControl` gains
   `type Memory` and its callbacks receive it, so a policy such as round-robin
   can remember across runs. `BtOrder` likewise, for a shuffle bag.
 - Wrappers (`guard`, `scope`, `bind`, `order_by`, the decorators) forward their
@@ -155,8 +157,7 @@ repository change, nearly all mechanically.
 4. Then, separately: time (`BtClock`), `action_wait`, `timeout`,
    `reevaluate_every`, `cooldown` and `success_cooldown` on top of it.
 
-## Open questions
+## Settled questions
 
-- `forget()` as the name, versus `reset_memory()`.
-- Whether `Memory` needs `Sync` in core, or only in Bevy's `BehaviorNode`, as
-  `State` does today.
+- `forget()` drops run state and memory; `reset()` keeps memory.
+- `Memory` needs `Sync` only in Bevy's `BehaviorNode`, as `State` does.

@@ -38,6 +38,7 @@ pub fn shuffled<R>(rng: R) -> Shuffled<R> {
 
 impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "shuffled"
@@ -46,6 +47,7 @@ impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
     #[inline]
     fn next(
         &self,
+        _: &mut (),
         _: &mut (),
         ctx: &mut C,
         used: u64,
@@ -90,6 +92,7 @@ where
     W: Fn(&C, usize) -> f32,
 {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "weighted"
@@ -98,6 +101,7 @@ where
     #[inline]
     fn next(
         &self,
+        _: &mut (),
         _: &mut (),
         ctx: &mut C,
         used: u64,

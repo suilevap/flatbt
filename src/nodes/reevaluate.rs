@@ -28,17 +28,26 @@ pub fn reevaluate_when<F, N, M>(condition: F, child: N) -> ReevaluateWhen<F, N, 
     }
 }
 
-impl<C, A, P: ParamValue, F, N, S, M> BtNode<C, A, P> for ReevaluateWhen<F, N, M>
+impl<C, A, P: ParamValue, F, N, S, Mem, M> BtNode<C, A, P> for ReevaluateWhen<F, N, M>
 where
     F: ReadFn<C, P, bool, M>,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
     S: Default + Send + 'static,
+    Mem: Default + Send + 'static,
 {
     type State = S;
+    type Memory = Mem;
     const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
-    fn update(&self, state: &mut S, ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        state: &mut S,
+        memory: &mut Mem,
+        ctx: &mut C,
+        params: P,
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
         let mut params = params.into_value();
         let entry = if entry.mode() == EntryMode::Resume {
             let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
@@ -51,15 +60,16 @@ where
         } else {
             entry
         };
-        entry.run(1, &self.child, state, ctx, params)
+        entry.run(1, &self.child, state, memory, ctx, params)
     }
 
-    fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&S>, memory: &Mem, inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("reevaluate_when", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |inspector| {
             BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state,
+                memory,
                 inspector,
             );
         });

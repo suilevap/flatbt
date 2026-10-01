@@ -27,29 +27,30 @@ pub fn if_else<F, T, E>(condition: F, then: T, otherwise: E) -> ControlNode<IfEl
 
 impl<C, F: Fn(&C) -> bool> BtControl<C> for IfElse<F> {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "if_else"
     }
 
-    fn inspect(&self, _: Option<&()>, _: Option<usize>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, _: Option<&()>, _: &(), _: Option<usize>, inspector: &mut dyn Inspector) {
         if let Some(condition) = fn_name::<F>() {
             inspector.field("if", &format_args!("{condition}"));
         }
     }
 
     #[inline]
-    fn begin(&self, _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
+    fn begin(&self, _: &mut (), _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
         ControlOp::RunChild(if (self.0)(ctx) { 0 } else { 1 })
     }
 
     #[inline]
-    fn child_succeeded(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_succeeded(&self, _: &mut (), _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Success
     }
 
     #[inline]
-    fn child_failed(&self, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_failed(&self, _: &mut (), _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
         ControlOp::Failure
     }
 }

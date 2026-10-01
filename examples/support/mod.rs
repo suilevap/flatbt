@@ -5,10 +5,12 @@ pub struct Repeat(pub usize);
 
 impl<C> BtControl<C> for Repeat {
     type State = usize;
+    type Memory = ();
 
     fn begin(
         &self,
         _: &mut usize,
+        _: &mut (),
         _: &mut C,
         _active_child_index: Option<usize>,
         child_count: usize,
@@ -26,6 +28,7 @@ impl<C> BtControl<C> for Repeat {
     fn child_succeeded(
         &self,
         completed: &mut usize,
+        _: &mut (),
         _: &mut C,
         _completed_child_index: usize,
         _child_count: usize,
@@ -41,6 +44,7 @@ impl<C> BtControl<C> for Repeat {
     fn child_failed(
         &self,
         _: &mut usize,
+        _: &mut (),
         _: &mut C,
         _completed_child_index: usize,
         _child_count: usize,

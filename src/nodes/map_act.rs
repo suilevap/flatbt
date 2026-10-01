@@ -39,25 +39,29 @@ pub fn map_act<F, N, B>(map: F, child: N) -> MapAct<F, N, B> {
 
 impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F, N, B> {
     type State = N::State;
+    type Memory = N::Memory;
     const NODES: usize = 1 + N::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut N::State,
+        memory: &mut N::Memory,
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        match entry.run(1, &self.child, state, ctx, params) {
+        match entry.run(1, &self.child, state, memory, ctx, params) {
             NodeResult::Running(act) => NodeResult::Running((self.map)(act)),
             NodeResult::Success => NodeResult::Success,
             NodeResult::Failure => NodeResult::Failure,
         }
     }
 
-    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("map_act", state.is_some()).with_fn_name::<F>();
-        inspector.node(node, |inspector| self.child.inspect(state, inspector));
+        inspector.node(node, |inspector| {
+            self.child.inspect(state, memory, inspector)
+        });
     }
 }

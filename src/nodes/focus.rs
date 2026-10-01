@@ -46,22 +46,24 @@ where
     N: BtNode<D, A, P>,
 {
     type State = N::State;
+    type Memory = N::Memory;
     const NODES: usize = 1 + N::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut N::State,
+        memory: &mut N::Memory,
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        entry.run(1, &self.child, state, (self.lens)(ctx), params)
+        entry.run(1, &self.child, state, memory, (self.lens)(ctx), params)
     }
 
-    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
         inspector.node(NodeInfo::new("focus", state.is_some()), |inspector| {
-            self.child.inspect(state, inspector);
+            self.child.inspect(state, memory, inspector);
         });
     }
 }

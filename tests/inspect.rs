@@ -179,10 +179,10 @@ fn policies_report_their_progress() {
 #[test]
 fn a_slot_is_described_like_a_state() {
     let tree = invert(leaf(|_: &mut ()| NodeResult::RUNNING));
-    let mut slot = None;
-    let _ = update_slot(&tree, &mut slot, &mut (), EntryMode::Evaluate);
+    let (mut slot, mut memory) = (None, Default::default());
+    let _ = update_slot(&tree, &mut slot, &mut memory, &mut (), EntryMode::Evaluate);
     assert_eq!(
-        describe::<(), (), _>(&tree, slot.as_ref()).to_string(),
+        describe::<(), (), _>(&tree, slot.as_ref(), &memory).to_string(),
         "invert > leaf"
     );
 }

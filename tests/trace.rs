@@ -133,15 +133,24 @@ fn an_update_without_the_log_leaves_it_as_it_was() {
 #[test]
 fn a_slot_driver_keeps_its_own_log_with_a_limit() {
     let tree = tree();
-    let mut slot = None;
+    let (mut slot, mut memory) = (None, Default::default());
     let log = TraceLog::with_limit(2);
-    let _ = update_slot(&tree, &mut slot, &mut 0, log.entry(EntryMode::Evaluate));
+    let _ = update_slot(
+        &tree,
+        &mut slot,
+        &mut memory,
+        &mut 0,
+        log.entry(EntryMode::Evaluate),
+    );
     assert!(log.overflowed());
     // The limit counts calls and recorded values together.
     assert!(log.calls().count() <= 2);
     assert!(
-        format!("{:#}", trace::<u32, &str, _>(&tree, slot.as_ref(), &log))
-            .ends_with("… (limit reached)")
+        format!(
+            "{:#}",
+            trace::<u32, &str, _>(&tree, slot.as_ref(), &memory, &log)
+        )
+        .ends_with("… (limit reached)")
     );
 }
 
@@ -150,9 +159,17 @@ struct PassThrough<N>(N);
 
 impl<C, A, N: BtNode<C, A>> BtNode<C, A> for PassThrough<N> {
     type State = N::State;
+    type Memory = N::Memory;
 
-    fn update(&self, state: &mut N::State, ctx: &mut C, _: (), entry: Entry<'_>) -> NodeResult<A> {
-        self.0.update(state, ctx, (), entry)
+    fn update(
+        &self,
+        state: &mut N::State,
+        memory: &mut N::Memory,
+        ctx: &mut C,
+        _: (),
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
+        self.0.update(state, memory, ctx, (), entry)
     }
 }
 
@@ -161,15 +178,23 @@ struct Wrapped<N>(N);
 
 impl<C, A, N: BtNode<C, A>> BtNode<C, A> for Wrapped<N> {
     type State = N::State;
+    type Memory = N::Memory;
     const NODES: usize = 1 + N::NODES;
 
-    fn update(&self, state: &mut N::State, ctx: &mut C, _: (), entry: Entry<'_>) -> NodeResult<A> {
-        entry.run(1, &self.0, state, ctx, ())
+    fn update(
+        &self,
+        state: &mut N::State,
+        memory: &mut N::Memory,
+        ctx: &mut C,
+        _: (),
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
+        entry.run(1, &self.0, state, memory, ctx, ())
     }
 
-    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
         inspector.node(NodeInfo::new("wrapped", state.is_some()), |inspector| {
-            self.0.inspect(state, inspector)
+            self.0.inspect(state, memory, inspector)
         });
     }
 }
@@ -268,8 +293,10 @@ fn actions_and_custom_nodes_record_through_their_entry() {
     struct Counted;
     impl BtNode<u32, &'static str> for Counted {
         type State = ();
+        type Memory = ();
         fn update(
             &self,
+            _: &mut (),
             _: &mut (),
             n: &mut u32,
             _: (),

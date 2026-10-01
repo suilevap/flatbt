@@ -22,7 +22,8 @@
 /// struct Observe;
 /// impl BtNode<Vec<u32>, (), &u32> for Observe {
 ///     type State = ();
-///     fn update(&self, _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: Entry<'_>) -> NodeResult {
+///     type Memory = ();
+///     fn update(&self, _: &mut (), _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: Entry<'_>) -> NodeResult {
 ///         ctx.push(*input);
 ///         NodeResult::Success
 ///     }
@@ -49,7 +50,8 @@
 /// struct TwoOutputs;
 /// impl BtNode<(), (), (&mut Option<u32>, &mut Option<u32>)> for TwoOutputs {
 ///     type State = ();
-///     fn update(&self, _: &mut (), _: &mut (), _: (&mut Option<u32>, &mut Option<u32>), _: Entry<'_>) -> NodeResult {
+///     type Memory = ();
+///     fn update(&self, _: &mut (), _: &mut (), _: &mut (), _: (&mut Option<u32>, &mut Option<u32>), _: Entry<'_>) -> NodeResult {
 ///         NodeResult::Success
 ///     }
 /// }

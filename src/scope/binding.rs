@@ -117,18 +117,21 @@ pub trait WithParams: Sized {
 
 impl<N> WithParams for N {}
 
-impl<C, A, L: 'static, N, B, S> BtNode<C, A, &mut L> for Bound<N, B>
+impl<C, A, L: 'static, N, B, S, M> BtNode<C, A, &mut L> for Bound<N, B>
 where
     B: ParamBinding<L>,
-    N: for<'a> BtNode<C, A, B::Params<'a>, State = S>,
+    N: for<'a> BtNode<C, A, B::Params<'a>, State = S, Memory = M>,
     S: Default + Send + 'static,
+    M: Default + Send + 'static,
 {
     type State = S;
+    type Memory = M;
     const NODES: usize = <N as BtNode<C, A, B::Params<'static>>>::NODES;
 
     fn update(
         &self,
         state: &mut S,
+        memory: &mut M,
         ctx: &mut C,
         locals: &mut L,
         entry: Entry<'_>,
@@ -139,11 +142,11 @@ where
                 core::any::type_name::<N>()
             ));
         };
-        self.node.update(state, ctx, params, entry)
+        self.node.update(state, memory, ctx, params, entry)
     }
 
-    fn inspect(&self, state: Option<&S>, inspector: &mut dyn Inspector) {
-        BtNode::<C, A, B::Params<'_>>::inspect(&self.node, state, inspector);
+    fn inspect(&self, state: Option<&S>, memory: &M, inspector: &mut dyn Inspector) {
+        BtNode::<C, A, B::Params<'_>>::inspect(&self.node, state, memory, inspector);
     }
 }
 
@@ -156,19 +159,26 @@ pub fn no_params<N>(node: N) -> WithoutParams<N> {
 
 impl<C, A, P, N: BtNode<C, A>> BtNode<C, A, P> for WithoutParams<N> {
     type State = N::State;
+    type Memory = N::Memory;
     const NODES: usize = N::NODES;
 
     fn update(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         _: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        self.0.update(state, ctx, (), entry)
+        self.0.update(state, memory, ctx, (), entry)
     }
 
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
-        self.0.inspect(state, inspector);
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
+        self.0.inspect(state, memory, inspector);
     }
 }

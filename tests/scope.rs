@@ -115,8 +115,10 @@ fn a_node_can_request_an_input_and_a_different_output_of_the_same_type() {
     struct Offset;
     impl BtNode<World, (), (&Vector2, &mut Option<Vector2>)> for Offset {
         type State = ();
+        type Memory = ();
         fn update(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut World,
             (input, output): (&Vector2, &mut Option<Vector2>),
@@ -172,7 +174,15 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
     struct Increment;
     impl BtNode<(), (), &mut usize> for Increment {
         type State = ();
-        fn update(&self, _: &mut (), _: &mut (), value: &mut usize, _: Entry<'_>) -> NodeResult {
+        type Memory = ();
+        fn update(
+            &self,
+            _: &mut (),
+            _: &mut (),
+            _: &mut (),
+            value: &mut usize,
+            _: Entry<'_>,
+        ) -> NodeResult {
             *value += 1;
             Failure
         }
@@ -180,7 +190,15 @@ fn failed_candidates_keep_writes_to_the_shared_enclosing_scope() {
     struct AssertTwo;
     impl BtNode<(), (), &usize> for AssertTwo {
         type State = ();
-        fn update(&self, _: &mut (), _: &mut (), value: &usize, _: Entry<'_>) -> NodeResult {
+        type Memory = ();
+        fn update(
+            &self,
+            _: &mut (),
+            _: &mut (),
+            _: &mut (),
+            value: &usize,
+            _: Entry<'_>,
+        ) -> NodeResult {
             assert_eq!(*value, 2);
             Success
         }
@@ -208,8 +226,10 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
     struct Offset(f32);
     impl BtNode<World, (), (&Vector2, &mut Option<Vector2>)> for Offset {
         type State = ();
+        type Memory = ();
         fn update(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut World,
             (input, output): (&Vector2, &mut Option<Vector2>),
@@ -222,8 +242,10 @@ fn macro_binds_ordered_inputs_and_outputs_and_keeps_definition_captures() {
     struct Compare;
     impl BtNode<World, (), (&Vector2, &Vector2)> for Compare {
         type State = ();
+        type Memory = ();
         fn update(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut World,
             (a, b): (&Vector2, &Vector2),
@@ -270,8 +292,10 @@ fn a_leading_with_binds_the_whole_node_after_it() {
     struct Offset;
     impl BtNode<World, (), (&Vector2, &mut Option<Vector2>)> for Offset {
         type State = ();
+        type Memory = ();
         fn update(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut World,
             (input, output): (&Vector2, &mut Option<Vector2>),
@@ -326,9 +350,11 @@ fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_c
     struct Pending;
     impl BtNode<Context, (), &Resource> for Pending {
         type State = Option<Resource>;
+        type Memory = ();
         fn update(
             &self,
             state: &mut Self::State,
+            _: &mut (),
             ctx: &mut Context,
             _: &Resource,
             _: Entry<'_>,
@@ -429,9 +455,11 @@ fn bindings_support_more_than_three_ordered_inputs_and_outputs() {
         > for Combine
     {
         type State = ();
+        type Memory = ();
 
         fn update(
             &self,
+            _: &mut (),
             _: &mut (),
             _: &mut World,
             (a, b, c, first, second): (
@@ -477,9 +505,11 @@ fn bindings_support_more_than_three_ordered_inputs_and_outputs() {
 struct GetNextPatrolPos;
 impl BtNode<World, (), &mut Option<Vector2>> for GetNextPatrolPos {
     type State = ();
+    type Memory = ();
 
     fn update(
         &self,
+        _: &mut (),
         _: &mut (),
         world: &mut World,
         output: &mut Option<Vector2>,
@@ -494,10 +524,12 @@ impl BtNode<World, (), &mut Option<Vector2>> for GetNextPatrolPos {
 struct GetVisibleDoorPos;
 impl BtNode<World, (), &mut Option<Vector2>> for GetVisibleDoorPos {
     type State = bool;
+    type Memory = ();
 
     fn update(
         &self,
         started: &mut bool,
+        _: &mut (),
         world: &mut World,
         output: &mut Option<Vector2>,
         _: Entry<'_>,
@@ -528,9 +560,11 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
     struct Visit;
     impl BtNode<Context, (), &u32> for Visit {
         type State = usize;
+        type Memory = ();
         fn update(
             &self,
             count: &mut usize,
+            _: &mut (),
             ctx: &mut Context,
             input: &u32,
             entry: Entry<'_>,
@@ -663,7 +697,15 @@ fn scope_keeps_constructor_arguments_and_node_expressions_as_ordinary_rust() {
     }
     impl BtNode<World> for Mark {
         type State = ();
-        fn update(&self, _: &mut (), world: &mut World, _: (), _: Entry<'_>) -> NodeResult {
+        type Memory = ();
+        fn update(
+            &self,
+            _: &mut (),
+            _: &mut (),
+            world: &mut World,
+            _: (),
+            _: Entry<'_>,
+        ) -> NodeResult {
             world.looked_at.push(self.position);
             Success
         }

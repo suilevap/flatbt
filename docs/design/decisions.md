@@ -515,3 +515,24 @@ Phase 3 of [Trace](trace.md).
   release. The ten examples missed it: none uses an order. The release check
   now also builds a tree of every order and every recording decorator; all
   twelve compile identically to main.
+
+## 2026-10-01 — Tree memory
+
+Time nodes need state that outlives a run: a cooldown must know when it last
+fired after its branch ended. See [Tree memory](tree-memory-draft.md).
+
+- **A second associated type, `BtNode::Memory`**, kept for every node for the
+  agent's lifetime and passed to `update` and `inspect` beside the run state.
+  Laid out as a sum, but `()` for nodes without it, so a tree without memory
+  nodes keeps a zero-sized one (pinned by a test).
+- **Required in every implementation.** Associated type defaults are unstable;
+  `type Memory = ();` is the one line every custom node adds.
+- **`BtControl` and `BtOrder` gained memory in the same change**, so their
+  implementations break once.
+- **Generated memory structs for children.** A tuple of children's memories
+  would cap `Default` at 12 children; `build.rs` emits `Memory{n}` structs.
+- **Writes by rejected candidates stay**, like context writes and scope outputs.
+- **`reset()` keeps memory; `forget()` drops it.** Bevy's `restart` keeps it too;
+  removing the component drops it.
+- **No cost without memory nodes.** Every release example's `.text` is the
+  same size as before the change.

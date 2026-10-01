@@ -168,11 +168,12 @@ impl<'t> Entry<'t> {
         offset: usize,
         child: &N,
         state: &mut N::State,
+        memory: &mut N::Memory,
         ctx: &mut C,
         params: P,
     ) -> NodeResult<A> {
         let entry = self.child(offset, N::NODES);
-        let result = child.update(state, ctx, params, entry);
+        let result = child.update(state, memory, ctx, params, entry);
         entry.finish(&result);
         result
     }
@@ -185,11 +186,12 @@ impl<'t> Entry<'t> {
         offset: usize,
         child: &N,
         state: &mut N::State,
+        memory: &mut N::Memory,
         ctx: &mut C,
         params: P,
     ) -> NodeResult<A> {
         let entry = self.candidate(offset, N::NODES);
-        let result = child.update(state, ctx, params, entry);
+        let result = child.update(state, memory, ctx, params, entry);
         entry.finish(&result);
         result
     }
@@ -270,12 +272,22 @@ impl From<EntryMode> for Entry<'_> {
     }
 }
 
-/// Immutable definition with owned invocation state.
+/// Immutable definition with owned invocation state and memory.
 ///
 /// `C` is application context; `A` is what a running invocation is doing, and
 /// defaults to `()`; `P` carries parameters, including update-local borrows.
-/// State survives while Running and cannot retain those borrows. Use optional
-/// state fields for context-dependent initialization.
+///
+/// A node keeps two kinds of per-agent state:
+///
+/// - `State`, for one invocation: created on entry, dropped when the node
+///   returns Success or Failure, and kept by a control only for its active
+///   child. It survives while Running and cannot retain parameter borrows. Use
+///   optional fields for context-dependent initialization.
+/// - `Memory`, for the agent's lifetime: kept for every node, running or not,
+///   and never reset by the tree -- only by [`BtState::forget`]. A composer
+///   passes each child the same memory on every update, including a fresh
+///   candidate's; writes by a rejected candidate are kept, like context
+///   writes. Most nodes have none: `type Memory = ();`.
 ///
 /// Nodes that never occupy the agent -- predicates, instant effects -- stay
 /// generic over `A` and never name it, so the act type unifies from the nodes
@@ -289,8 +301,13 @@ impl From<EntryMode> for Entry<'_> {
 ///
 /// Drive roots with [`crate::update`] and [`crate::BtState`]. Report recoverable
 /// errors with [`NodeResult::error`]. User panics propagate.
+///
+/// [`BtState::forget`]: crate::BtState::forget
 pub trait BtNode<C, A = (), P = ()> {
     type State: Default + Send + 'static;
+
+    /// Per-agent state that outlives an invocation. `()` for most nodes.
+    type Memory: Default + Send + 'static;
 
     /// Nodes in this subtree, counted as [`inspect`](Self::inspect) reports
     /// them: 1 for a node without children. Traces name nodes by preorder
@@ -300,18 +317,25 @@ pub trait BtNode<C, A = (), P = ()> {
     fn update(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A>;
 
     /// Reports this node, and its descendants, for debugging. `state` is its
-    /// invocation state when the node is on the running path.
+    /// invocation state when the node is on the running path; `memory` is
+    /// always there.
     ///
     /// The default reports a node without children, named by its type. A
     /// composing node overrides it to report its children with the state it
-    /// holds for each; see [`crate::inspect`].
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    /// holds for each, and each child's memory; see [`crate::inspect`].
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        _memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         inspector.node(NodeInfo::of_type::<Self>(state.is_some()), |_| {});
     }
 }
