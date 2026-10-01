@@ -5,14 +5,14 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
-/// The parameters of a goal's subtree: the goal, and the stack it runs in.
+/// The parameters of a goal's subtree: the goal, how its subgoals ended, and
+/// the request for a new one. The stack itself belongs to [`goals`].
 pub struct GoalCall<'a, G> {
     /// The goal this subtree works toward.
     pub goal: &'a G,
     asker: u8,
-    stack: &'a [Option<G>],
     results: &'a [Option<Outcome<G>>],
-    pending: &'a mut Option<G>,
+    request: &'a mut Option<G>,
 }
 
 /// How a subgoal ended, for the goal that asked for it.
@@ -22,16 +22,11 @@ struct Outcome<G> {
     succeeded: bool,
 }
 
-pub(super) enum Asked {
-    Returned(bool),
-    Pushed,
-    Cycle,
-    Full,
-}
-
 impl<G: PartialEq> GoalCall<'_, G> {
-    /// How `goal` ended as a subgoal of this goal, if it has.
-    pub(super) fn result(&self, goal: &G) -> Option<bool> {
+    /// How `goal` ended as a subgoal of this goal: `Some(true)` achieved,
+    /// `Some(false)` failed or refused, `None` not asked for yet. Kept while
+    /// this goal is on the stack.
+    pub fn result(&self, goal: &G) -> Option<bool> {
         self.results
             .iter()
             .flatten()
@@ -39,24 +34,12 @@ impl<G: PartialEq> GoalCall<'_, G> {
             .map(|outcome| outcome.succeeded)
     }
 
-    /// What `need(goal)` answers now, pushing `goal` if it is new.
-    pub(super) fn ask(&mut self, goal: G) -> Asked {
-        if let Some(succeeded) = self.result(&goal) {
-            return Asked::Returned(succeeded);
-        }
-        if self
-            .stack
-            .iter()
-            .flatten()
-            .any(|on_stack| *on_stack == goal)
-        {
-            return Asked::Cycle;
-        }
-        if self.stack.last().is_some_and(Option::is_some) {
-            return Asked::Full;
-        }
-        *self.pending = Some(goal);
-        Asked::Pushed
+    /// Asks [`goals`] for `goal` as a subgoal. A node that asks then returns
+    /// `Running`: [`goals`] decides whether to push it, and this goal runs
+    /// again from its start when it has an answer. The last request in a run
+    /// wins.
+    pub fn request(&mut self, goal: G) {
+        *self.request = Some(goal);
     }
 }
 
@@ -70,9 +53,8 @@ impl<G: 'static> ParamShape for GoalShape<G> {
         GoalCall {
             goal: value.goal,
             asker: value.asker,
-            stack: value.stack,
             results: value.results,
-            pending: &mut *value.pending,
+            request: &mut *value.request,
         }
     }
 }
@@ -99,8 +81,10 @@ pub struct Goals<R, D, Q, const N: usize> {
 /// starting with the one `root` reads from the context.
 ///
 /// Only the top goal's subtree runs, and only it has run state. When it asks
-/// for a subgoal with [`need`](super::need), its run ends and the subgoal goes
-/// on top and runs, in the same update. When the top goal's subtree succeeds
+/// for a subgoal with [`need`](super::need), its run ends and `goals` pushes
+/// the subgoal, which runs in the same update. A subgoal already on the stack
+/// (a cycle), or one that would overflow it, is refused instead: the asking
+/// goal runs again and is told it failed. When the top goal's subtree succeeds
 /// or fails, the goal is popped and the goal below runs again from its start,
 /// where its `need` returns that result. The node ends with the root goal.
 ///
@@ -204,6 +188,12 @@ impl<G, S: Default, const N: usize> GoalsState<G, S, N> {
         let (Some(goal), Some(asker)) = (goal, depth.checked_sub(2)) else {
             return false;
         };
+        self.record(asker, goal, succeeded);
+        true
+    }
+
+    /// Keeps how `goal` ended for the goal at `asker`.
+    fn record(&mut self, asker: usize, goal: G, succeeded: bool) {
         match self.results.iter_mut().find(|result| result.is_none()) {
             Some(slot) => {
                 *slot = Some(Outcome {
@@ -212,11 +202,10 @@ impl<G, S: Default, const N: usize> GoalsState<G, S, N> {
                     succeeded,
                 })
             }
-            // Full: the goal may be asked for again; the stack still bounds
-            // how deep that goes.
+            // Full: the goal may be asked for again; the loop's backstop
+            // ends that.
             None => crate::log_error(format_args!("goal result list is full")),
         }
-        true
     }
 }
 
@@ -276,13 +265,12 @@ where
         // stack and by each asker's results; this is a backstop.
         for _ in 0..4 * N * N + 4 {
             let depth = state.depth();
-            let mut pending = None;
+            let mut request = None;
             let call = GoalCall {
                 goal: state.goals[depth - 1].as_ref().expect("depth counts goals"),
                 asker: (depth - 1) as u8,
-                stack: &state.goals,
                 results: &state.results,
-                pending: &mut pending,
+                request: &mut request,
             };
             let top = &mut state.top;
             let result = if fresh {
@@ -290,12 +278,21 @@ where
             } else {
                 entry.run(1, &self.dispatch, top, memory, ctx, call)
             };
-            if let Some(subgoal) = pending {
-                // Stopped at its `need`; the act it returned is a placeholder.
-                // Its run ends: it starts over when the subgoal returns.
+            if let Some(subgoal) = request {
+                // Stopped to ask; the act it returned is a placeholder. Its run
+                // ends: it starts over when it has an answer.
                 state.top = S::default();
-                state.goals[depth] = Some(subgoal);
                 fresh = true;
+                if state.goals.contains(&Some(subgoal.clone())) {
+                    // A cycle: the key behind the door it opens.
+                    entry.record("cycle", || subgoal.clone());
+                    state.record(depth - 1, subgoal, false);
+                } else if depth == N {
+                    crate::log_error(format_args!("goal stack is full"));
+                    state.record(depth - 1, subgoal, false);
+                } else {
+                    state.goals[depth] = Some(subgoal);
+                }
                 continue;
             }
             match result {

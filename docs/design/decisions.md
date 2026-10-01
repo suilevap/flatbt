@@ -569,7 +569,12 @@ See [Goal stack](goal-stack-draft.md).
   pushes a subgoal and stops the run; a finished goal is popped and the goal
   below runs again from its start, where `need` returns the result. A loop,
   not recursion, and one run state, for the top goal.
-- **The push stops the run with `Running` and a placeholder act**
+- **Subtrees request, `goals` owns the stack.** `need` writes the subgoal to
+  a one-slot request in its parameters; `goals` pushes it, or refuses it as a
+  cycle or for a full stack and records a failure. Carrying the request in the
+  act would need a variant in the user's act type or a separate act type for
+  goal subtrees.
+- **The request stops the run with `Running` and a placeholder act**
   (`A: Default`), replaced by the subgoal's act in the same update. Failing
   instead let a `select` run the nodes after the `need`.
 - **`need` as a call was tried first and dropped**: it re-walked every goal

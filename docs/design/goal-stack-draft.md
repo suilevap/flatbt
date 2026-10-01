@@ -41,7 +41,7 @@ Each update runs only the top goal's subtree. No recursion: one loop in
 | Top goal's subtree | Then |
 | --- | --- |
 | `Running(act)` | The update returns it. |
-| Stopped at a `need` that pushed `g` | Its run ends; `g` goes on top and runs, in the same update. |
+| Stopped at a `need` that requested `g` | Its run ends. `goals` pushes `g`, which runs in the same update; or refuses it, recording a failure, when `g` is on the stack already (a cycle) or the stack is full, and runs the goal again. |
 | `Success` / `Failure` | The goal is popped and its result kept for the goal below, which runs again from its start in the same update. Popping the root ends the node with that result. |
 
 `need(f)` asks `f(ctx, goal)` for a subgoal:
@@ -49,11 +49,15 @@ Each update runs only the top goal's subtree. No recursion: one loop in
 | Answer | `need` |
 | --- | --- |
 | `None` | Succeeds: nothing in the way. |
-| `Some(g)`, already ended for this goal | Returns that result. |
-| `Some(g)`, on the stack | Fails: a cycle (the key is behind the door it opens). |
-| `Some(g)`, new | Pushes `g` and stops the run: `Running(A::default())`. |
+| `Some(g)`, already ended or refused for this goal | Returns that result. |
+| `Some(g)`, new | Requests `g` and stops the run: `Running(A::default())`. |
 
-The push returns `Running` so that a `select` or `seq` stops at the `need`, as
+Subtrees do not see the stack. They ask, through a one-slot request in their
+parameters, and `goals` decides: push, or refuse as a cycle or for a full
+stack. What a subtree can see is how its own subgoals ended,
+`GoalCall::result`, for a node that chooses by it.
+
+The request returns `Running` so that a `select` or `seq` stops at the `need`, as
 it would at any running child: nothing after it runs. The act inside is a
 placeholder: `goals` sees the push and runs `g` in the same update, so it never
 leaves the stack. `need` therefore needs `A: Default`.

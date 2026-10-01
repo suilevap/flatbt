@@ -406,13 +406,15 @@ let tree = goals::<8, _, _>(
 
 - Only the top goal runs. Pushing and popping happen in the same update, so the
   update returns the act of whichever goal ends up working.
-- `need(f)`: `None` succeeds. A new subgoal is pushed, and the goal's run
+- `need(f)`: `None` succeeds. A new subgoal is requested, and the goal's run
   stops there with `Running`, a placeholder act (`A: Default`) that never
   leaves the stack. When the goal runs again, `need` returns the subgoal's
   result.
+- Subtrees do not see the stack: `goals` pushes a requested subgoal, or
+  refuses it as failed when it is already on the stack (a cycle) or the stack
+  is full. A subtree can read how its subgoals ended with `GoalCall::result`.
 - A goal asks for each subgoal at most once while it is on the stack, so a
-  failed way falls through to the next. A goal already on the stack (a cycle)
-  or a full stack fails `need`.
+  failed way falls through to the next.
 - `.done(..)` is asked for every goal on the stack each update: one achieved by
   other means is popped with the goals above it. A changed root goal starts
   over.
