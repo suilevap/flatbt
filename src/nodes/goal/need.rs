@@ -5,7 +5,7 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, Entry, NodeResult};
 
 /// A subgoal, asked for when there is one.
-pub struct Need<F>(F);
+pub struct Need<Subgoal>(Subgoal);
 
 /// Asks `subgoal(ctx, goal)` for what the current goal needs first.
 ///
@@ -17,19 +17,19 @@ pub struct Need<F>(F);
 ///   `Running`, so nothing after it runs. This goal runs again from its start
 ///   once `g` has ended, or has been refused as a cycle or for a full stack.
 ///
-/// The `Running(A::default())` it stops with is a placeholder: [`goals`] runs
+/// The `Running(Act::default())` it stops with is a placeholder: [`goals`] runs
 /// the subgoal in the same update and returns its act instead.
 ///
 /// [`goals`]: super::goals
-pub fn need<F>(subgoal: F) -> Need<F> {
+pub fn need<Subgoal>(subgoal: Subgoal) -> Need<Subgoal> {
     Need(subgoal)
 }
 
-impl<'p, C, A, G, F> BtNode<C, A, GoalCall<'p, G>> for Need<F>
+impl<'p, Context, Act, Goal, Subgoal> BtNode<Context, Act, GoalCall<'p, Goal>> for Need<Subgoal>
 where
-    A: Default,
-    G: Clone + PartialEq + fmt::Debug + Send + 'static,
-    F: Fn(&C, &G) -> Option<G>,
+    Act: Default,
+    Goal: Clone + PartialEq + fmt::Debug + Send + 'static,
+    Subgoal: Fn(&Context, &Goal) -> Option<Goal>,
 {
     type State = ();
     type Memory = ();
@@ -39,10 +39,10 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
-        mut call: GoalCall<'p, G>,
+        ctx: &mut Context,
+        mut call: GoalCall<'p, Goal>,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let Some(subgoal) = (self.0)(ctx, call.goal) else {
             return NodeResult::Success;
         };
@@ -52,13 +52,13 @@ where
             Some(false) => NodeResult::Failure,
             None => {
                 call.request(subgoal);
-                NodeResult::Running(A::default())
+                NodeResult::Running(Act::default())
             }
         }
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("need", state.is_some()).with_fn_name::<F>();
+        let node = NodeInfo::new("need", state.is_some()).with_fn_name::<Subgoal>();
         inspector.node(node, |_| {});
     }
 }

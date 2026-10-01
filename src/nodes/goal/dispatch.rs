@@ -3,40 +3,41 @@ use crate::inspect::Inspector;
 use crate::{BtNode, Entry, NodeResult};
 
 /// A subtree for the goals a predicate accepts.
-pub struct WhenGoal<F, N> {
-    accepts: F,
-    child: N,
+pub struct WhenGoal<Accepts, Node> {
+    accepts: Accepts,
+    child: Node,
 }
 
 /// Runs `child` when the current goal is one `accepts`, and fails otherwise.
 /// [`crate::goal_match!`] writes one per arm under a `select`.
-pub fn when_goal<F, N>(accepts: F, child: N) -> WhenGoal<F, N> {
+pub fn when_goal<Accepts, Node>(accepts: Accepts, child: Node) -> WhenGoal<Accepts, Node> {
     WhenGoal { accepts, child }
 }
 
-impl<'p, C, A, G, F, N, S, M> BtNode<C, A, GoalCall<'p, G>> for WhenGoal<F, N>
+impl<'p, Context, Act, Goal, Accepts, Node, NodeState, NodeMemory>
+    BtNode<Context, Act, GoalCall<'p, Goal>> for WhenGoal<Accepts, Node>
 where
-    C: 'static,
-    A: 'static,
-    G: 'static,
-    F: Fn(&G) -> bool,
-    N: for<'a> BtNode<C, A, GoalCall<'a, G>, State = S, Memory = M>,
-    S: Default + Send + 'static,
-    M: Default + Send + 'static,
+    Context: 'static,
+    Act: 'static,
+    Goal: 'static,
+    Accepts: Fn(&Goal) -> bool,
+    Node: for<'a> BtNode<Context, Act, GoalCall<'a, Goal>, State = NodeState, Memory = NodeMemory>,
+    NodeState: Default + Send + 'static,
+    NodeMemory: Default + Send + 'static,
 {
-    type State = S;
-    type Memory = M;
-    const NODES: usize = <N as BtNode<C, A, GoalCall<'static, G>>>::NODES;
+    type State = NodeState;
+    type Memory = NodeMemory;
+    const NODES: usize = <Node as BtNode<Context, Act, GoalCall<'static, Goal>>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
-        call: GoalCall<'p, G>,
+        ctx: &mut Context,
+        call: GoalCall<'p, Goal>,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         if (self.accepts)(call.goal) {
             self.child.update(state, memory, ctx, call, entry)
         } else {
@@ -50,44 +51,50 @@ where
         memory: &Self::Memory,
         inspector: &mut dyn Inspector,
     ) {
-        BtNode::<C, A, GoalCall<'_, G>>::inspect(&self.child, state, memory, inspector);
+        BtNode::<Context, Act, GoalCall<'_, Goal>>::inspect(&self.child, state, memory, inspector);
     }
 }
 
 /// A node that reads the current goal.
-pub struct WithGoal<N>(N);
+pub struct WithGoal<Node>(Node);
 
-/// Runs `node` with the current goal as its parameter, `&G`: for an action
+/// Runs `node` with the current goal as its parameter, `&Goal`: for an action
 /// or leaf that needs to know what it works toward.
-pub fn with_goal<N>(node: N) -> WithGoal<N> {
+pub fn with_goal<Node>(node: Node) -> WithGoal<Node> {
     WithGoal(node)
 }
 
-impl<'p, C, A, G, N, S, M> BtNode<C, A, GoalCall<'p, G>> for WithGoal<N>
+impl<'p, Context, Act, Goal, Node, NodeState, NodeMemory> BtNode<Context, Act, GoalCall<'p, Goal>>
+    for WithGoal<Node>
 where
-    G: 'static,
-    N: for<'a> BtNode<C, A, &'a G, State = S, Memory = M>,
-    S: Default + Send + 'static,
-    M: Default + Send + 'static,
+    Goal: 'static,
+    Node: for<'a> BtNode<Context, Act, &'a Goal, State = NodeState, Memory = NodeMemory>,
+    NodeState: Default + Send + 'static,
+    NodeMemory: Default + Send + 'static,
 {
-    type State = S;
-    type Memory = M;
-    const NODES: usize = <N as BtNode<C, A, &'static G>>::NODES;
+    type State = NodeState;
+    type Memory = NodeMemory;
+    const NODES: usize = <Node as BtNode<Context, Act, &'static Goal>>::NODES;
 
     #[inline]
     fn update(
         &self,
-        state: &mut S,
-        memory: &mut M,
-        ctx: &mut C,
-        call: GoalCall<'p, G>,
+        state: &mut NodeState,
+        memory: &mut NodeMemory,
+        ctx: &mut Context,
+        call: GoalCall<'p, Goal>,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         self.0.update(state, memory, ctx, call.goal, entry)
     }
 
-    fn inspect(&self, state: Option<&S>, memory: &M, inspector: &mut dyn Inspector) {
-        BtNode::<C, A, &G>::inspect(&self.0, state, memory, inspector);
+    fn inspect(
+        &self,
+        state: Option<&NodeState>,
+        memory: &NodeMemory,
+        inspector: &mut dyn Inspector,
+    ) {
+        BtNode::<Context, Act, &Goal>::inspect(&self.0, state, memory, inspector);
     }
 }
 

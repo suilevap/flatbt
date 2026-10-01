@@ -418,7 +418,7 @@ let tree = goals::<8, _, _>(
 - `.done(..)` is asked for every goal on the stack each update: one achieved by
   other means is popped with the goals above it. A changed root goal starts
   over.
-- Run state: `N` goals and one run state of the goal subtree, for the top
+- Run state: `DEPTH` goals and one run state of the goal subtree, for the top
   goal. No heap. Preemption drops the stack.
 - Subtrees receive the goal as a parameter: `with_goal(node)` gives a node
   `&Goal`, `no_params(node)` adapts a node taking `()`.

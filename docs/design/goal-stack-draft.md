@@ -84,7 +84,7 @@ preemption drops it; a goal that must survive belongs in the blackboard, where
 
 ### Storage
 
-Run state: `N` goals, their results, and one run state of the dispatch
+Run state: `DEPTH` goals, their results, and one run state of the dispatch
 subtree, for the top goal. Memory: the dispatch subtree's, shared by every
 goal, as only one runs at a time. No heap.
 
@@ -103,7 +103,7 @@ nodes pass it through. `with_goal(node)` gives a node `&Goal`;
 - **`need` failing to end the run**: a `select` ran the nodes after the `need`
   in the same update.
 - **Resuming the asking goal** where it stopped: it needs a run state per goal
-  on the stack, `N` times the dispatch subtree's, to keep progress that the
+  on the stack, `DEPTH` times the dispatch subtree's, to keep progress that the
   results already make cheap to redo.
 
 ## Open
