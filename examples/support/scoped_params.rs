@@ -14,9 +14,11 @@ pub struct World {
 pub struct LookAt;
 impl BtNode<World, (), &Vector2> for LookAt {
     type State = ();
+    type Memory = ();
 
     fn update(
         &self,
+        _: &mut (),
         _: &mut (),
         world: &mut World,
         position: &Vector2,

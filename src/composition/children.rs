@@ -8,6 +8,8 @@ use crate::{BtNode, ControlOp, Entry, NodeResult};
 /// `S` is the shape of the parameters every child receives; see `ParamShape`.
 pub trait BtChildren<C, A = (), S: ParamShape = ()> {
     type State: Default + Send + 'static;
+    /// Every child's memory: a tuple, all of them at once.
+    type Memory: Default + Send + 'static;
     const LEN: usize;
 
     /// Reads selection from the saved state variant.
@@ -22,9 +24,11 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
     /// with Evaluate. Terminal candidates preserve saved state; Running
     /// candidates replace it. A terminal saved child clears selection. An
     /// index at or past `LEN` runs nothing and comes back as `Err(RunChild)`.
+    #[allow(clippy::too_many_arguments)]
     fn run_from(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         first: usize,
         ctx: &mut C,
         params: &mut S::Value<'_>,
@@ -32,9 +36,14 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
         next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
     ) -> Result<NodeResult<A>, ControlOp>;
 
-    /// Reports each child in order, with its state when it is the saved one.
-    /// See [`BtNode::inspect`].
-    fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector);
+    /// Reports each child in order, with its state when it is the saved one
+    /// and its memory. See [`BtNode::inspect`].
+    fn inspect_children(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    );
 
     /// Nodes in all children together; see [`BtNode::NODES`]. Child `i` is
     /// called with an entry whose offset is 1 plus the `NODES` of the children
@@ -44,6 +53,7 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
 
 impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
     type State = ();
+    type Memory = ();
     const LEN: usize = 0;
     const NODES: usize = 0;
 
@@ -54,6 +64,7 @@ impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
     fn run_from(
         &self,
         _: &mut (),
+        _: &mut (),
         first: usize,
         _: &mut C,
         _: &mut S::Value<'_>,
@@ -63,11 +74,11 @@ impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
         Err(ControlOp::RunChild(first))
     }
 
-    fn inspect_children(&self, _: Option<&()>, _: &mut dyn Inspector) {}
+    fn inspect_children(&self, _: Option<&()>, _: &(), _: &mut dyn Inspector) {}
 }
 
 macro_rules! tuple_children {
-    (@generate_impl $state:ident; $($index:tt $node:ident $variant:ident $child_state:ident),+) => {
+    (@generate_impl $state:ident $memory:ident; $($index:tt $node:ident $variant:ident $child_state:ident $child_memory:ident),+) => {
         /// One active child state; the variant encodes its index.
         #[derive(Default)]
         pub enum $state<$($node),+> {
@@ -76,12 +87,19 @@ macro_rules! tuple_children {
             $($variant($node),)+
         }
 
-        impl<C, A, S: ParamShape, $($node, $child_state),+> BtChildren<C, A, S> for ($($node,)+)
+        /// Every child's memory, in order. A struct rather than a tuple, which
+        /// implements `Default` only up to 12 elements.
+        #[derive(Default)]
+        pub struct $memory<$($child_memory),+>($(pub $child_memory),+);
+
+        impl<C, A, S: ParamShape, $($node, $child_state, $child_memory),+> BtChildren<C, A, S> for ($($node,)+)
         where
-            $($node: for<'a> BtNode<C, A, S::Value<'a>, State = $child_state>,
-            $child_state: Default + Send + 'static,)+
+            $($node: for<'a> BtNode<C, A, S::Value<'a>, State = $child_state, Memory = $child_memory>,
+            $child_state: Default + Send + 'static,
+            $child_memory: Default + Send + 'static,)+
         {
             type State = $state<$($child_state),+>;
+            type Memory = $memory<$($child_memory),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
             const NODES: usize = 0 $(+ <$node as BtNode<C, A, S::Value<'static>>>::NODES)+;
 
@@ -97,6 +115,7 @@ macro_rules! tuple_children {
             fn run_from(
                 &self,
                 state: &mut Self::State,
+                memory: &mut Self::Memory,
                 first: usize,
                 ctx: &mut C,
                 params: &mut S::Value<'_>,
@@ -126,7 +145,7 @@ macro_rules! tuple_children {
                         let offset = offsets[$index];
                         let result = if let $state::$variant(active) = state {
                             let entry = entry.child(offset, <$node as BtNode<C, A, S::Value<'static>>>::NODES);
-                            let result = self.$index.update(active, ctx, S::reborrow(params), entry);
+                            let result = self.$index.update(active, &mut memory.$index, ctx, S::reborrow(params), entry);
                             entry.finish(&result);
                             if !result.is_running() {
                                 *state = $state::Empty;
@@ -136,7 +155,7 @@ macro_rules! tuple_children {
                             // Preserve the old variant until this candidate is selected.
                             let mut candidate = $child_state::default();
                             let entry = entry.candidate(offset, <$node as BtNode<C, A, S::Value<'static>>>::NODES);
-                            let result = self.$index.update(&mut candidate, ctx, S::reborrow(params), entry);
+                            let result = self.$index.update(&mut candidate, &mut memory.$index, ctx, S::reborrow(params), entry);
                             entry.finish(&result);
                             if result.is_running() {
                                 *state = $state::$variant(candidate);
@@ -158,25 +177,31 @@ macro_rules! tuple_children {
                 Err(ControlOp::RunChild(index))
             }
 
-            fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+            fn inspect_children(
+                &self,
+                state: Option<&Self::State>,
+                memory: &Self::Memory,
+                inspector: &mut dyn Inspector,
+            ) {
                 $(
                     let active = match state {
                         Some($state::$variant(active)) => Some(active),
                         _ => None,
                     };
-                    BtNode::<C, A, S::Value<'_>>::inspect(&self.$index, active, inspector);
+                    BtNode::<C, A, S::Value<'_>>::inspect(&self.$index, active, &memory.$index, inspector);
                 )+
             }
         }
     };
-    (@generate_prefix [$($done_index:tt $done_node:ident $done_variant:ident $done_child_state:ident,)*] $state:ident $index:tt $node:ident $variant:ident $child_state:ident $(, $tail_state:ident $tail_index:tt $tail_node:ident $tail_variant:ident $tail_child_state:ident)*) => {
-        tuple_children!(@generate_impl $state; $($done_index $done_node $done_variant $done_child_state,)* $index $node $variant $child_state);
-        tuple_children!(@generate_prefix [$($done_index $done_node $done_variant $done_child_state,)* $index $node $variant $child_state,] $($tail_state $tail_index $tail_node $tail_variant $tail_child_state),*);
+    (@generate_prefix [$($done_index:tt $done_node:ident $done_variant:ident $done_child_state:ident $done_child_memory:ident,)*] $state:ident $memory:ident $index:tt $node:ident $variant:ident $child_state:ident $child_memory:ident $(, $tail_state:ident $tail_memory:ident $tail_index:tt $tail_node:ident $tail_variant:ident $tail_child_state:ident $tail_child_memory:ident)*) => {
+        tuple_children!(@generate_impl $state $memory; $($done_index $done_node $done_variant $done_child_state $done_child_memory,)* $index $node $variant $child_state $child_memory);
+        tuple_children!(@generate_prefix [$($done_index $done_node $done_variant $done_child_state $done_child_memory,)* $index $node $variant $child_state $child_memory,] $($tail_state $tail_memory $tail_index $tail_node $tail_variant $tail_child_state $tail_child_memory),*);
     };
     (@generate_prefix [$($done:tt)*]) => {};
 }
 
-/// Generated tuple state enums, parameterized by child state types.
+/// Generated tuple state enums and memory structs, parameterized by child
+/// state and memory types.
 pub mod child_state {
     use super::{BtChildren, BtNode, ControlOp, Entry, Inspector, NodeResult, ParamShape};
 

@@ -27,7 +27,12 @@ fn main() -> io::Result<()> {
     // Stable macro_rules cannot form identifiers from integer tokens.
     // Generate only its input list; the implementation stays in src/composition/children.rs.
     let entries = (0..max_children)
-        .map(|index| format!("State{} {index} N{index} Child{index} S{index}", index + 1))
+        .map(|index| {
+            format!(
+                "State{0} Memory{0} {index} N{index} Child{index} S{index} M{index}",
+                index + 1
+            )
+        })
         .collect::<Vec<_>>()
         .join(",\n");
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));

@@ -55,10 +55,12 @@ where
     S: Send + 'static,
 {
     type State = Option<S>;
+    type Memory = ();
 
     fn update(
         &self,
         state: &mut Self::State,
+        _: &mut (),
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
@@ -92,7 +94,7 @@ where
         }
     }
 
-    fn inspect(&self, state: Option<&Option<S>>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&Option<S>>, _: &(), inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("action", state.is_some()).with_type_name::<T>();
         inspector.node(node, |inspector| {
             let started = state.and_then(Option::as_ref);

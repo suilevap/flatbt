@@ -36,13 +36,21 @@ pub fn leaf_with<F>(f: F) -> LeafWith<F> {
 
 impl<C, A, P, F: Fn(&mut C, P) -> NodeResult<A>> BtNode<C, A, P> for LeafWith<F> {
     type State = ();
+    type Memory = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut C,
+        params: P,
+        _: Entry<'_>,
+    ) -> NodeResult<A> {
         (self.0)(ctx, params)
     }
 
-    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("leaf_with", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
@@ -59,9 +67,17 @@ pub fn check_with<F>(predicate: F) -> CheckWith<F> {
 
 impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
     type State = ();
+    type Memory = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut C,
+        params: P,
+        _: Entry<'_>,
+    ) -> NodeResult<A> {
         if (self.0)(ctx, params) {
             NodeResult::Success
         } else {
@@ -69,7 +85,7 @@ impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
         }
     }
 
-    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("check_with", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }
@@ -142,9 +158,17 @@ where
     G: ReadFn<C, P, A, MG>,
 {
     type State = ();
+    type Memory = ();
 
     #[inline]
-    fn update(&self, _: &mut (), ctx: &mut C, params: P, entry: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut C,
+        params: P,
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
         let mut params = params.into_value();
         let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
         entry.record("while", || holds);
@@ -155,7 +179,7 @@ where
         }
     }
 
-    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("action_while", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |_| {});
     }

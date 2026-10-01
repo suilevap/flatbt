@@ -41,29 +41,30 @@ const MAX_CHILDREN: usize = 64;
 
 /// Decides which child comes next.
 ///
-/// `next` receives the children already used at earlier positions in this
-/// pass, and the child still running from an earlier update, if any. It
-/// returns the next child, or `None` when no child is left to offer; the
-/// control then sees a Failure at that position.
+/// `next` receives the [`Pass`]: the children left to offer, and the child
+/// still running from an earlier update, if any. It returns the next child, or
+/// `None` when no child is left to offer; the control then sees a Failure at
+/// that position. A child already used is treated as `None`.
 ///
-/// `State` lives as long as the invocation and survives `Evaluate`.
+/// `State` lives as long as the invocation and survives `Evaluate`; `Memory`
+/// lives as long as the agent (see [`BtNode::Memory`](crate::BtNode::Memory)).
 pub trait BtOrder<C> {
     type State: Default + Send + 'static;
+    type Memory: Default + Send + 'static;
 
-    /// Called with an empty `used` at the first position of each pass: on
-    /// entry, and whenever `Evaluate` brings the control back to its start.
+    /// Called at each position of a pass, starting with
+    /// [`Pass::is_start`]: on entry, and whenever `Evaluate` brings the control
+    /// back to its start.
     ///
     /// `entry` is the control's: [`Entry::record`] what the order is based
-    /// on, such as each child's score, for traces. Record at the first
-    /// position, where every child is still offered, so a pass records each
-    /// child once.
+    /// on, such as each child's score, for traces. Record at the start, where
+    /// every child is still offered, so a pass records each child once.
     fn next(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
-        used: u64,
-        running: Option<usize>,
-        child_count: usize,
+        pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize>;
 
@@ -73,9 +74,63 @@ pub trait BtOrder<C> {
         type_label::<Self>()
     }
 
-    /// Reports fields of this order: configuration, and its state while the
-    /// control runs. Reports nothing by default.
-    fn inspect(&self, _state: Option<&Self::State>, _inspector: &mut dyn Inspector) {}
+    /// Reports fields of this order: configuration, its state while the
+    /// control runs, and its memory. Reports nothing by default.
+    fn inspect(
+        &self,
+        _state: Option<&Self::State>,
+        _memory: &Self::Memory,
+        _inspector: &mut dyn Inspector,
+    ) {
+    }
+}
+
+/// Where an order is in its pass over the children.
+#[derive(Clone, Copy, Debug)]
+pub struct Pass {
+    used: u64,
+    running: Option<usize>,
+    child_count: usize,
+}
+
+impl Pass {
+    /// Whether this is the first position: every child is left.
+    #[inline]
+    pub fn is_start(&self) -> bool {
+        self.used == 0
+    }
+
+    /// The child still running from an earlier update, if any. Under
+    /// `Evaluate` it is offered again at the start, among the rest.
+    #[inline]
+    pub fn running(&self) -> Option<usize> {
+        self.running
+    }
+
+    /// How many children the order covers, used or not.
+    #[inline]
+    pub fn child_count(&self) -> usize {
+        self.child_count
+    }
+
+    /// Whether `index` has not been used at an earlier position.
+    #[inline]
+    pub fn is_left(&self, index: usize) -> bool {
+        index < self.child_count && self.used & (1 << index) == 0
+    }
+
+    /// The children not used at earlier positions, by index.
+    #[inline]
+    pub fn left(&self) -> impl Iterator<Item = usize> + Clone {
+        let pass = *self;
+        (0..self.child_count).filter(move |index| pass.is_left(*index))
+    }
+
+    /// How many children are left.
+    #[inline]
+    pub fn left_count(&self) -> usize {
+        self.child_count - self.used.count_ones() as usize
+    }
 }
 
 /// Children visited in the order a [`BtOrder`] decides.
@@ -98,6 +153,13 @@ pub struct Ordered<O, Children> {
 /// a diagnostic and fails. At most 64 children; more fails to build.
 pub fn order_by<O, Children>(order: O, children: Children) -> Ordered<O, Children> {
     Ordered { order, children }
+}
+
+/// The order's memory and the children's.
+#[derive(Default)]
+pub struct OrderedMemory<OrderMemory, ChildrenMemory> {
+    children: ChildrenMemory,
+    order: OrderMemory,
 }
 
 /// Inner children, order state, and the position being visited.
@@ -129,6 +191,7 @@ where
     Children: BtChildren<C, A, S>,
 {
     type State = OrderedState<O::State, Children::State>;
+    type Memory = OrderedMemory<O::Memory, Children::Memory>;
     const LEN: usize = Children::LEN;
     const NODES: usize = Children::NODES;
 
@@ -143,6 +206,7 @@ where
     fn run_from(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         first: usize,
         ctx: &mut C,
         params: &mut S::Value<'_>,
@@ -159,7 +223,7 @@ where
         };
         let mut position = first;
         loop {
-            let succeeded = match self.child_at(state, position, ctx, entry) {
+            let succeeded = match self.child_at(state, &mut memory.order, position, ctx, entry) {
                 Ok(Some(child)) => {
                     // One child at a time: the order, not the tuple, decides
                     // which child the next position holds.
@@ -170,6 +234,7 @@ where
                     };
                     match self.children.run_from(
                         &mut state.children,
+                        &mut memory.children,
                         child as usize,
                         ctx,
                         params,
@@ -191,12 +256,22 @@ where
         }
     }
 
-    fn inspect_children(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    fn inspect_children(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         inspector.field(
             "order",
             &format_args!("{}", BtOrder::<C>::kind(&self.order)),
         );
-        BtOrder::<C>::inspect(&self.order, state.map(|state| &state.order), inspector);
+        BtOrder::<C>::inspect(
+            &self.order,
+            state.map(|state| &state.order),
+            &memory.order,
+            inspector,
+        );
         if let Some(OrderedState {
             used,
             at: Some((position, _)),
@@ -208,8 +283,11 @@ where
                 inspector.field("tried", &Tried(*used));
             }
         }
-        self.children
-            .inspect_children(state.map(|state| &state.children), inspector);
+        self.children.inspect_children(
+            state.map(|state| &state.children),
+            &memory.children,
+            inspector,
+        );
     }
 }
 
@@ -232,6 +310,7 @@ impl<O, Children> Ordered<O, Children> {
     fn child_at<C, A, S>(
         &self,
         state: &mut OrderedState<O::State, Children::State>,
+        memory: &mut O::Memory,
         position: usize,
         ctx: &mut C,
         entry: Entry<'_>,
@@ -243,9 +322,9 @@ impl<O, Children> Ordered<O, Children> {
     {
         Ok(match state.at {
             // A new pass: on entry, or Evaluate back at the start.
-            None if position == 0 => self.pick::<C, A, S>(state, ctx, 0, entry),
+            None if position == 0 => self.pick::<C, A, S>(state, memory, ctx, 0, entry),
             _ if position == 0 && entry.mode() == EntryMode::Evaluate => {
-                self.pick::<C, A, S>(state, ctx, 0, entry)
+                self.pick::<C, A, S>(state, memory, ctx, 0, entry)
             }
             // The same position again: Resume, or Evaluate continuing it.
             Some((at, child)) if at as usize == position => child,
@@ -254,7 +333,7 @@ impl<O, Children> Ordered<O, Children> {
                 if let Some(child) = child {
                     state.used |= 1 << child;
                 }
-                self.pick::<C, A, S>(state, ctx, position, entry)
+                self.pick::<C, A, S>(state, memory, ctx, position, entry)
             }
             _ => {
                 // A misuse by a custom control: logged, not traced, so this
@@ -270,6 +349,7 @@ impl<O, Children> Ordered<O, Children> {
     fn pick<C, A, S>(
         &self,
         state: &mut OrderedState<O::State, Children::State>,
+        memory: &mut O::Memory,
         ctx: &mut C,
         position: usize,
         entry: Entry<'_>,
@@ -282,18 +362,15 @@ impl<O, Children> Ordered<O, Children> {
         if position == 0 {
             state.used = 0;
         }
-        let running = self.children.active_child_index(&state.children);
+        let pass = Pass {
+            used: state.used,
+            running: self.children.active_child_index(&state.children),
+            child_count: Children::LEN,
+        };
         let child = self
             .order
-            .next(
-                &mut state.order,
-                ctx,
-                state.used,
-                running,
-                Children::LEN,
-                entry,
-            )
-            .filter(|child| *child < Children::LEN && state.used & (1 << child) == 0)
+            .next(&mut state.order, memory, ctx, pass, entry)
+            .filter(|child| pass.is_left(*child))
             .map(|child| child as u8);
         if let Some(child) = child {
             entry.record("pick", || usize::from(child));

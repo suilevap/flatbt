@@ -106,10 +106,12 @@ struct SuspendOnce(Arc<AtomicUsize>);
 
 impl BtNode<Vec<EntryMode>> for SuspendOnce {
     type State = OwnedState;
+    type Memory = ();
 
     fn update(
         &self,
         state: &mut OwnedState,
+        _: &mut (),
         modes: &mut Vec<EntryMode>,
         _: (),
         entry: Entry<'_>,
@@ -296,9 +298,11 @@ fn composed_state_drops_descendants_before_parents() {
     }
     impl<N: BtNode<Trace>> BtNode<Trace> for Scope<N> {
         type State = ScopeState<N::State>;
+        type Memory = N::Memory;
         fn update(
             &self,
             state: &mut Self::State,
+            memory: &mut Self::Memory,
             trace: &mut Trace,
             _: (),
             entry: Entry<'_>,
@@ -306,7 +310,8 @@ fn composed_state_drops_descendants_before_parents() {
             state
                 .lease
                 .get_or_insert_with(|| Lease(self.name, trace.clone()));
-            self.child.update(&mut state.child, trace, (), entry)
+            self.child
+                .update(&mut state.child, memory, trace, (), entry)
         }
     }
 

@@ -139,10 +139,12 @@ struct Act;
 
 impl BtNode<Agent, Acting> for Act {
     type State = u32;
+    type Memory = ();
 
     fn update(
         &self,
         turns: &mut u32,
+        _: &mut (),
         agent: &mut Agent,
         _: (),
         _: Entry<'_>,

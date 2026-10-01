@@ -226,22 +226,25 @@ pub fn label<N>(label: &'static str, node: N) -> Named<N> {
 
 impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Named<N> {
     type State = N::State;
+    type Memory = N::Memory;
     const NODES: usize = N::NODES;
 
     #[inline(always)]
     fn update(
         &self,
         state: &mut N::State,
+        memory: &mut N::Memory,
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        self.node.update(state, ctx, params, entry)
+        self.node.update(state, memory, ctx, params, entry)
     }
 
-    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
         self.node.inspect(
             state,
+            memory,
             &mut Rename {
                 inner: inspector,
                 name: Some(self.name),
@@ -334,6 +337,7 @@ fn last_segment(full: &str) -> &str {
 pub struct Describe<'a, N: BtNode<C, A>, C, A = ()> {
     node: &'a N,
     state: Option<&'a N::State>,
+    memory: &'a N::Memory,
     inactive: bool,
     context: PhantomData<fn(&mut C) -> A>,
 }
@@ -365,9 +369,13 @@ pub struct Describe<'a, N: BtNode<C, A>, C, A = ()> {
 /// }
 /// assert_eq!(logged, ["select > guard > leaf", "select > leaf"]);
 /// ```
-pub fn path_id<C, A, N: BtNode<C, A>>(node: &N, state: Option<&N::State>) -> u64 {
+pub fn path_id<C, A, N: BtNode<C, A>>(
+    node: &N,
+    state: Option<&N::State>,
+    memory: &N::Memory,
+) -> u64 {
     let mut hash = PathHash(0xcbf2_9ce4_8422_2325);
-    node.inspect(state, &mut hash);
+    node.inspect(state, memory, &mut hash);
     hash.0
 }
 
@@ -394,16 +402,18 @@ impl Inspector for PathHash {
     }
 }
 
-/// Describes `node` over `state`, for a driver holding state without a
-/// [`BtState`](crate::BtState), such as the slot [`update_slot`](crate::update_slot)
-/// takes.
+/// Describes `node` over `state` and `memory`, for a driver holding them
+/// without a [`BtState`](crate::BtState), such as the slots
+/// [`update_slot`](crate::update_slot) takes.
 pub fn describe<'a, C, A, N: BtNode<C, A>>(
     node: &'a N,
     state: Option<&'a N::State>,
+    memory: &'a N::Memory,
 ) -> Describe<'a, N, C, A> {
     Describe {
         node,
         state,
+        memory,
         inactive: false,
         context: PhantomData,
     }
@@ -432,7 +442,7 @@ impl<N: BtNode<C, A>, C, A> fmt::Display for Describe<'_, N, C, A> {
             fields: false,
             result: Ok(()),
         };
-        self.node.inspect(self.state, &mut text);
+        self.node.inspect(self.state, self.memory, &mut text);
         text.close_fields();
         if text.nodes == 0 {
             text.write(format_args!("not running"));

@@ -243,8 +243,16 @@ struct Remember;
 
 impl BtNode<Trace, Act> for Remember {
     type State = ();
+    type Memory = ();
 
-    fn update(&self, _: &mut (), trace: &mut Trace, _: (), entry: Entry<'_>) -> NodeResult<Act> {
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        trace: &mut Trace,
+        _: (),
+        entry: Entry<'_>,
+    ) -> NodeResult<Act> {
         trace.0.push(entry.mode());
         NodeResult::Running(Act::Firing)
     }
@@ -354,9 +362,11 @@ struct Approach;
 
 impl BtNode<Walker, WalkingTo> for Approach {
     type State = ();
+    type Memory = ();
 
     fn update(
         &self,
+        _: &mut (),
         _: &mut (),
         walker: &mut Walker,
         _: (),

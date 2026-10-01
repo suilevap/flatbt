@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use core::ops::Add;
 
-use super::BtOrder;
+use super::{BtOrder, Pass};
 use crate::Entry;
 
 /// Children ordered by score, highest first.
@@ -41,6 +41,7 @@ where
     S: Copy + PartialOrd + Add<Output = S> + Debug + 'static,
 {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "by_score"
@@ -50,23 +51,22 @@ where
     fn next(
         &self,
         _: &mut (),
+        _: &mut (),
         ctx: &mut C,
-        used: u64,
-        running: Option<usize>,
-        child_count: usize,
+        pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize> {
         let mut best: Option<(usize, S)> = None;
-        for index in (0..child_count).filter(|index| used & (1 << index) == 0) {
+        for index in pass.left() {
             let mut score = (self.score)(ctx, index);
             // Every child is scored at the first position; record them there.
-            if used == 0 {
+            if pass.is_start() {
                 entry.record("score", || score);
             }
             if score.partial_cmp(&score).is_none() {
                 continue;
             }
-            let keeps = running == Some(index);
+            let keeps = pass.running() == Some(index);
             if let (Some(bonus), true) = (self.inertia, keeps) {
                 score = score + bonus;
             }

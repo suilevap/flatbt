@@ -29,17 +29,27 @@ pub struct ControlState<S, ChildrenState> {
     inner: S,
 }
 
-/// Static control-flow policy with per-invocation state.
+/// Policy memory plus every child's memory.
+#[derive(Default)]
+pub struct ControlMemory<M, ChildrenMemory> {
+    children: ChildrenMemory,
+    inner: M,
+}
+
+/// Static control-flow policy with per-invocation state, and memory kept for
+/// the agent's lifetime (`()` for most policies; see [`BtNode::Memory`]).
 /// Child indices must be below `child_count`. Policies must terminate;
 /// execution has no iteration budget.
 pub trait BtControl<C> {
     type State: Default + Send + 'static;
+    type Memory: Default + Send + 'static;
 
     /// Selects a child on fresh entry or Evaluate. Resume skips this callback.
     /// `active_child_index` reports saved selection; the framework owns it.
     fn begin(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         active_child_index: Option<usize>,
         child_count: usize,
@@ -49,6 +59,7 @@ pub trait BtControl<C> {
     fn child_succeeded(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         completed_child_index: usize,
         child_count: usize,
@@ -58,6 +69,7 @@ pub trait BtControl<C> {
     fn child_failed(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         completed_child_index: usize,
         child_count: usize,
@@ -76,6 +88,7 @@ pub trait BtControl<C> {
     fn inspect(
         &self,
         _state: Option<&Self::State>,
+        _memory: &Self::Memory,
         _active_child_index: Option<usize>,
         _inspector: &mut dyn Inspector,
     ) {
@@ -99,6 +112,7 @@ where
     Children: BtChildren<C, A, Params::Shape>,
 {
     type State = ControlState<P::State, Children::State>;
+    type Memory = ControlMemory<P::Memory, Children::Memory>;
     const NODES: usize = 1 + Children::NODES;
 
     // A tree is one type. Inlining every level into the root's update lets the
@@ -107,6 +121,7 @@ where
     fn update(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         params: Params,
         entry: Entry<'_>,
@@ -116,9 +131,13 @@ where
         let op = match (entry.mode(), active_child_index) {
             (EntryMode::Resume, Some(child_index)) => ControlOp::RunChild(child_index),
             _ => {
-                let op =
-                    self.policy
-                        .begin(&mut state.inner, ctx, active_child_index, Children::LEN);
+                let op = self.policy.begin(
+                    &mut state.inner,
+                    &mut memory.inner,
+                    ctx,
+                    active_child_index,
+                    Children::LEN,
+                );
                 entry.record("next", || op);
                 op
             }
@@ -127,13 +146,18 @@ where
         // the compiler hoist every descendant's address out of it and spill them.
         // `run_from` already follows children in order, which is all that
         // `Sequence` and `Selector` ask for.
-        match self.run(state, op, ctx, &mut params, entry) {
+        match self.run(state, memory, op, ctx, &mut params, entry) {
             Ok(result) => result,
-            Err(op) => self.run_rest(state, op, ctx, &mut params, entry),
+            Err(op) => self.run_rest(state, memory, op, ctx, &mut params, entry),
         }
     }
 
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         let kind = BtControl::<C>::kind(&self.policy);
         inspector.node(NodeInfo::new(kind, state.is_some()), |inspector| {
             let children = state.map(|state| &state.children);
@@ -141,10 +165,11 @@ where
                 BtChildren::<C, A, Params::Shape>::active_child_index(&self.children, children)
             });
             let policy = state.map(|state| &state.inner);
-            BtControl::<C>::inspect(&self.policy, policy, active, inspector);
+            BtControl::<C>::inspect(&self.policy, policy, &memory.inner, active, inspector);
             BtChildren::<C, A, Params::Shape>::inspect_children(
                 &self.children,
                 children,
+                &memory.children,
                 inspector,
             );
         });
@@ -158,6 +183,7 @@ impl<P, Children> ControlNode<P, Children> {
     fn run<C, A, S: ParamShape>(
         &self,
         state: &mut ControlState<P::State, Children::State>,
+        memory: &mut ControlMemory<P::Memory, Children::Memory>,
         op: ControlOp,
         ctx: &mut C,
         params: &mut S::Value<'_>,
@@ -179,22 +205,24 @@ impl<P, Children> ControlNode<P, Children> {
             )));
         }
         let inner = &mut state.inner;
+        let inner_memory = &mut memory.inner;
         // The recorder, not the entry: capturing the entry's mode would change
         // this closure, and the code around it, in release builds.
         let recorder = entry.recorder();
         let mut next = |ctx: &mut C, completed: usize, succeeded: bool| {
             let op = if succeeded {
                 self.policy
-                    .child_succeeded(inner, ctx, completed, Children::LEN)
+                    .child_succeeded(inner, inner_memory, ctx, completed, Children::LEN)
             } else {
                 self.policy
-                    .child_failed(inner, ctx, completed, Children::LEN)
+                    .child_failed(inner, inner_memory, ctx, completed, Children::LEN)
             };
             recorder.value("next", || op);
             op
         };
         match self.children.run_from(
             &mut state.children,
+            &mut memory.children,
             child_index,
             ctx,
             params,
@@ -213,6 +241,7 @@ impl<P, Children> ControlNode<P, Children> {
     fn run_rest<C, A, S: ParamShape>(
         &self,
         state: &mut ControlState<P::State, Children::State>,
+        memory: &mut ControlMemory<P::Memory, Children::Memory>,
         mut op: ControlOp,
         ctx: &mut C,
         params: &mut S::Value<'_>,
@@ -223,7 +252,7 @@ impl<P, Children> ControlNode<P, Children> {
         Children: BtChildren<C, A, S>,
     {
         loop {
-            match self.run(state, op, ctx, params, entry) {
+            match self.run(state, memory, op, ctx, params, entry) {
                 Ok(result) => return result,
                 Err(next) => op = next,
             }
@@ -243,6 +272,7 @@ pub fn seq<Children>(children: Children) -> ControlNode<Sequence, Children> {
 
 impl<C> BtControl<C> for Sequence {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "seq"
@@ -251,6 +281,7 @@ impl<C> BtControl<C> for Sequence {
     #[inline(always)]
     fn begin(
         &self,
+        _: &mut (),
         _: &mut (),
         _: &mut C,
         active_child_index: Option<usize>,
@@ -267,6 +298,7 @@ impl<C> BtControl<C> for Sequence {
     fn child_succeeded(
         &self,
         _: &mut (),
+        _: &mut (),
         _: &mut C,
         completed_child_index: usize,
         child_count: usize,
@@ -281,6 +313,7 @@ impl<C> BtControl<C> for Sequence {
     #[inline(always)]
     fn child_failed(
         &self,
+        _: &mut (),
         _: &mut (),
         _: &mut C,
         _completed_child_index: usize,
@@ -302,6 +335,7 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
 
 impl<C> BtControl<C> for Selector {
     type State = ();
+    type Memory = ();
 
     fn kind(&self) -> &'static str {
         "select"
@@ -310,6 +344,7 @@ impl<C> BtControl<C> for Selector {
     #[inline(always)]
     fn begin(
         &self,
+        _: &mut (),
         _: &mut (),
         _: &mut C,
         _active_child_index: Option<usize>,
@@ -326,6 +361,7 @@ impl<C> BtControl<C> for Selector {
     fn child_succeeded(
         &self,
         _: &mut (),
+        _: &mut (),
         _: &mut C,
         _completed_child_index: usize,
         _child_count: usize,
@@ -336,6 +372,7 @@ impl<C> BtControl<C> for Selector {
     #[inline(always)]
     fn child_failed(
         &self,
+        _: &mut (),
         _: &mut (),
         _: &mut C,
         completed_child_index: usize,

@@ -44,13 +44,20 @@ assert_eq!(ammo, 0);
 One immutable tree can serve multiple agents. Each owns a `BtState` bound to that
 tree. The tree must outlive its states. `update` rejects a different root.
 A driver that cannot keep a `BtState` beside the tree it borrows, such as an ECS
-component, holds an `Option<Tree::State>` itself and calls `update_slot`.
+component, holds an `Option<Tree::State>` and a `Tree::Memory` itself and calls
+`update_slot`.
 
 | Event | State lifetime |
 | --- | --- |
 | `Running` | Preserve state for the next update. |
 | `Success` / `Failure` | Drop invocation state. Next update starts fresh. |
 | `state.reset()` or Drop | Drop saved state and descendants. Reset keeps the root binding. |
+
+A node that must remember across invocations, such as when it last ran, keeps
+it in its `Memory` instead: kept for every node, running or not, for the life
+of the `BtState`, and dropped only by `state.forget()` or Drop. A write by a
+candidate that is then rejected stays. Nodes without memory use `()`, and a
+tree of them keeps none.
 
 | Control | Behavior | On `Evaluate` |
 | --- | --- | --- |
@@ -212,7 +219,8 @@ preempts the running one, and `seq` does only while still on its first child.
   restarts a pass they keep the running child first, so a random choice holds
   while it runs; the rest is drawn afresh. A weight that is not positive leaves
   its child out.
-- At most 64 children; more fails to build. Custom orders implement `BtOrder`.
+- At most 64 children; more fails to build. Custom orders implement `BtOrder`,
+  whose `next` gets a `Pass`: the children left and the one still running.
 
 `per_child!` writes a value next to each child -- a score, a weight -- and
 returns the per-child function and the children, for any order:
@@ -519,7 +527,7 @@ entities match.
 Trees use FlatBT's own API over a plain blackboard and act type: `seq`,
 `select`, `check`, `leaf`, `choose!`, `scope!`, `action` and custom `BtNode`s. A
 subtree is a function returning `impl BehaviorNode<Guard, Act>`; a custom node
-implements `BtNode<Guard, Act>`. Tree state must be `Sync`, as Bevy requires of
+implements `BtNode<Guard, Act>`. Tree state and memory must be `Sync`, as Bevy requires of
 every component.
 
 ```sh
@@ -575,7 +583,7 @@ whose type is not `Debug` show as `..`.
 `.with_inactive()` adds the nodes off the path to `{:#}`, marked `-`. For
 another format, implement `inspect::Inspector` and pass it to
 `state.inspect(..)`. A driver using `update_slot` calls
-`inspect::describe(&tree, slot.as_ref())`; a Bevy agent,
+`inspect::describe(&tree, slot.as_ref(), &memory)`; a Bevy agent,
 `behavior.describe(tree.get())`.
 
 `state.path_id()` fingerprints the running path, ignoring field values: log
@@ -634,7 +642,7 @@ entry.record("target", || target); // runs only while traced
 Drivers take `log.entry(mode)` wherever they take a mode; the log reaches every
 node through its `Entry`. Each update clears the log and reuses its buffer. A
 driver using `update_slot` formats with `trace::trace(&tree, slot.as_ref(),
-&log)`. Traces record only in debug builds with `std`
+&memory, &log)`. Traces record only in debug builds with `std`
 (`flatbt::trace::ENABLED`): elsewhere `log.entry(mode)` is the mode alone and
 release code is unchanged.
 
@@ -687,13 +695,14 @@ struct FirstOf {
 
 impl<C> BtControl<C> for FirstOf {
     type State = u32; // failures so far
+    type Memory = ();
     // begin, child_succeeded, child_failed ...
 
     fn kind(&self) -> &'static str {
         "first_of"
     }
 
-    fn inspect(&self, failed: Option<&u32>, _: Option<usize>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, failed: Option<&u32>, _: &(), _: Option<usize>, inspector: &mut dyn Inspector) {
         inspector.field("tries", &self.tries);
         if let Some(failed) = failed {
             inspector.field("failed", failed);
@@ -714,19 +723,27 @@ struct Doubled<N>(N);
 
 impl<A, N: BtNode<u32, A>> BtNode<u32, A> for Doubled<N> {
     type State = N::State;
+    type Memory = N::Memory; // this node keeps none; the child's is passed on
     const NODES: usize = 1 + N::NODES; // this node and its subtree
 
-    fn update(&self, state: &mut N::State, ctx: &mut u32, _: (), entry: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        state: &mut N::State,
+        memory: &mut N::Memory,
+        ctx: &mut u32,
+        _: (),
+        entry: Entry<'_>,
+    ) -> NodeResult<A> {
         *ctx *= 2;
         // Offset 1: the first child. `run_candidate` for a fresh invocation.
-        let result = entry.run(1, &self.0, state, ctx, ());
+        let result = entry.run(1, &self.0, state, memory, ctx, ());
         *ctx /= 2;
         result
     }
 
-    fn inspect(&self, state: Option<&N::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
         inspector.node(NodeInfo::new("doubled", state.is_some()), |inspector| {
-            self.0.inspect(state, inspector)
+            self.0.inspect(state, memory, inspector)
         });
     }
 }

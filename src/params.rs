@@ -31,7 +31,8 @@ pub trait ParamValue {
 /// struct InvalidWriter;
 /// impl BtNode<(), (), &u32> for InvalidWriter {
 ///     type State = ();
-///     fn update(&self, _: &mut (), _: &mut (), input: &u32, _: Entry<'_>) -> NodeResult {
+///     type Memory = ();
+///     fn update(&self, _: &mut (), _: &mut (), _: &mut (), input: &u32, _: Entry<'_>) -> NodeResult {
 ///         *input = 10;
 ///         NodeResult::Success
 ///     }

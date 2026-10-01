@@ -50,6 +50,8 @@ impl<L, N, I> Scope<L, N, I> {
 pub trait ScopeInit<C, A, L> {
     /// Invocation state; for initializers, whether they ran.
     type State: Default + Send + 'static;
+    /// The initializers' memory.
+    type Memory: Default + Send + 'static;
     /// Nodes, numbered after the scope and before its child.
     const NODES: usize;
 
@@ -58,12 +60,18 @@ pub trait ScopeInit<C, A, L> {
     fn run(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         locals: &mut L,
         entry: Entry<'_>,
     ) -> Option<NodeResult<A>>;
 
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector);
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    );
 }
 
 /// No initializers: a scope that only owns its locals.
@@ -71,14 +79,22 @@ pub struct NoInit;
 
 impl<C, A, L> ScopeInit<C, A, L> for NoInit {
     type State = ();
+    type Memory = ();
     const NODES: usize = 0;
 
     #[inline(always)]
-    fn run(&self, _: &mut (), _: &mut C, _: &mut L, _: Entry<'_>) -> Option<NodeResult<A>> {
+    fn run(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        _: &mut C,
+        _: &mut L,
+        _: Entry<'_>,
+    ) -> Option<NodeResult<A>> {
         None
     }
 
-    fn inspect(&self, _: Option<&()>, _: &mut dyn Inspector) {}
+    fn inspect(&self, _: Option<&()>, _: &(), _: &mut dyn Inspector) {}
 }
 
 /// Initializers, from [`Scope::init`]: a tuple of nodes over the locals.
@@ -93,12 +109,14 @@ pub struct InitState<S> {
 
 impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Init<T> {
     type State = InitState<T::State>;
+    type Memory = T::Memory;
     const NODES: usize = T::NODES;
 
     #[inline]
     fn run(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         mut locals: &mut L,
         entry: Entry<'_>,
@@ -114,10 +132,15 @@ impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Ini
             }
         };
         // Initializers are numbered from the scope, like a control's children.
-        match self
-            .0
-            .run_from(&mut state.init, 0, ctx, &mut locals, entry, &mut next)
-        {
+        match self.0.run_from(
+            &mut state.init,
+            memory,
+            0,
+            ctx,
+            &mut locals,
+            entry,
+            &mut next,
+        ) {
             Err(ControlOp::RunChild(done)) if done == T::LEN => {
                 state.done = true;
                 None
@@ -127,10 +150,22 @@ impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Ini
         }
     }
 
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         self.0
-            .inspect_children(state.map(|state| &state.init), inspector);
+            .inspect_children(state.map(|state| &state.init), memory, inspector);
     }
+}
+
+/// Memory of a scope's child and initializers.
+#[derive(Default)]
+pub struct ScopeMemory<M, I = ()> {
+    child: M,
+    init: I,
 }
 
 /// Inline state; descendants drop before locals.
@@ -141,46 +176,59 @@ pub struct ScopeState<L, S, I = ()> {
     locals: L,
 }
 
-impl<C, A, P, L, N, S, I> BtNode<C, A, P> for Scope<L, N, I>
+impl<C, A, P, L, N, S, M, I> BtNode<C, A, P> for Scope<L, N, I>
 where
     L: Default + Send + 'static,
-    N: for<'a> BtNode<C, A, &'a mut L, State = S>,
+    N: for<'a> BtNode<C, A, &'a mut L, State = S, Memory = M>,
     S: Default + Send + 'static,
+    M: Default + Send + 'static,
     I: ScopeInit<C, A, L>,
 {
     type State = ScopeState<L, S, I::State>;
+    type Memory = ScopeMemory<M, I::Memory>;
     const NODES: usize = 1 + I::NODES + <N as BtNode<C, A, &'static mut L>>::NODES;
 
     fn update(
         &self,
         state: &mut Self::State,
+        memory: &mut Self::Memory,
         ctx: &mut C,
         _: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        if let Some(result) = self
-            .init
-            .run(&mut state.init, ctx, &mut state.locals, entry)
-        {
+        if let Some(result) = self.init.run(
+            &mut state.init,
+            &mut memory.init,
+            ctx,
+            &mut state.locals,
+            entry,
+        ) {
             return result;
         }
         entry.run(
             1 + I::NODES,
             &self.child,
             &mut state.child,
+            &mut memory.child,
             ctx,
             &mut state.locals,
         )
     }
 
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &Self::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         inspector.node(NodeInfo::new("scope", state.is_some()), |inspector| {
             if let Some(state) = state {
                 (self.inspect_locals)(&state.locals, inspector);
             }
-            self.init.inspect(state.map(|state| &state.init), inspector);
+            self.init
+                .inspect(state.map(|state| &state.init), &memory.init, inspector);
             let child = state.map(|state| &state.child);
-            BtNode::<C, A, &mut L>::inspect(&self.child, child, inspector);
+            BtNode::<C, A, &mut L>::inspect(&self.child, child, &memory.child, inspector);
         });
     }
 }
@@ -198,9 +246,11 @@ pub fn compute<F>(init: F) -> Compute<F> {
 
 impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
     type State = ();
+    type Memory = ();
 
     fn update(
         &self,
+        _: &mut (),
         _: &mut (),
         ctx: &mut C,
         output: &mut Option<T>,
@@ -210,7 +260,7 @@ impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
         NodeResult::Success
     }
 
-    fn inspect(&self, state: Option<&()>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
         inspector.node(NodeInfo::new("compute", state.is_some()), |_| {});
     }
 }

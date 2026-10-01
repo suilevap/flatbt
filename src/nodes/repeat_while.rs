@@ -85,19 +85,22 @@ pub struct RepeatWhileState<S> {
     ran: bool,
 }
 
-impl<C, A, P: ParamValue, F, N, S, M> BtNode<C, A, P> for RepeatWhile<F, N, M>
+impl<C, A, P: ParamValue, F, N, S, Mem, M> BtNode<C, A, P> for RepeatWhile<F, N, M>
 where
     F: ReadFn<C, P, bool, M>,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
+    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
     S: Default + Send + 'static,
+    Mem: Default + Send + 'static,
 {
     type State = RepeatWhileState<S>;
+    type Memory = Mem;
     const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
+        memory: &mut Mem,
         ctx: &mut C,
         params: P,
         entry: Entry<'_>,
@@ -113,9 +116,9 @@ where
             let child_params = P::Shape::reborrow(&mut params);
             // A restart is a fresh invocation of the child.
             let result = if restarted {
-                entry.run_candidate(1, &self.child, &mut state.child, ctx, child_params)
+                entry.run_candidate(1, &self.child, &mut state.child, memory, ctx, child_params)
             } else {
-                entry.run(1, &self.child, &mut state.child, ctx, child_params)
+                entry.run(1, &self.child, &mut state.child, memory, ctx, child_params)
             };
             if result.is_running() {
                 state.ran = true;
@@ -139,12 +142,13 @@ where
         }
     }
 
-    fn inspect(&self, state: Option<&Self::State>, inspector: &mut dyn Inspector) {
+    fn inspect(&self, state: Option<&Self::State>, memory: &Mem, inspector: &mut dyn Inspector) {
         let node = NodeInfo::new("repeat_while", state.is_some()).with_fn_name::<F>();
         inspector.node(node, |inspector| {
             BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state.map(|state| &state.child),
+                memory,
                 inspector,
             );
         });

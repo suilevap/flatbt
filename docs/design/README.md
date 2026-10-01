@@ -15,6 +15,7 @@ Code and tests define current behavior; historical proposals may differ.
 | [Actions](action.md) | Inline lifecycle and cancellation |
 | [Bevy integration](bevy-integration.md) | Blackboard as a component, tree resource, tick plugin |
 | [Inspection](inspect.md) | Node names and text views of running state |
+| [Tree memory](tree-memory-draft.md) | Per-node state that outlives a run, owned beside the run state |
 
 ## Proposals
 
