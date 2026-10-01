@@ -13,8 +13,10 @@ enum Goal {
     Climb,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
 enum Act {
+    #[default]
+    Idle,
     Walk(u32),
     Climb,
 }
@@ -207,8 +209,8 @@ fn a_failed_subgoal_is_not_asked_for_again_while_its_asker_stands() {
         Some("goals {stack: [Reach(7), Climb], failed: [OpenDoor]}")
     );
     assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(7)));
-    // Once to ask for the key, once to hear it cannot be had.
-    assert_eq!(world.door_tries, 2);
+    // Asked for the key once, and resumed with the answer.
+    assert_eq!(world.door_tries, 1);
 }
 
 #[test]

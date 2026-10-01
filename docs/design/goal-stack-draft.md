@@ -41,27 +41,29 @@ Each update runs only the top goal's subtree. No recursion: one loop in
 | Top goal's subtree | Then |
 | --- | --- |
 | `Running(act)` | The update returns it. |
-| A `need` pushed `g` | The subtree's turn ends and its run state is dropped; `g` goes on top and runs, in the same update. |
-| `Success` / `Failure` | The goal is popped and its result kept for the goal below, which runs again from its start in the same update. Popping the root ends the node with that result. |
+| Waiting at a `need` that pushed `g` | `g` goes on top and runs, in the same update. The waiting goal keeps its run state. |
+| `Success` / `Failure` | The goal is popped and its result kept for the goal below, which resumes at its `need` in the same update. Popping the root ends the node with that result. |
 
 `need(f)` asks `f(ctx, goal)` for a subgoal:
 
 | Answer | `need` |
 | --- | --- |
 | `None` | Succeeds: nothing in the way. |
-| `Some(g)`, already ended for this goal | Returns that result: the goal came back from `g`. |
+| `Some(g)`, already ended for this goal | Returns that result. |
 | `Some(g)`, on the stack | Fails: a cycle (the key is behind the door it opens). |
-| `Some(g)`, new | Pushes `g` and fails, ending the turn. |
+| `Some(g)`, new | Pushes `g` and waits: `Running(A::default())`. |
+
+Waiting is `Running`, so a `select` or `seq` stops at the `need` as it would at
+any running child, and the goal resumes there with `Resume` when `g` returns,
+its sequence progress intact. The act inside is a placeholder: `goals` sees the
+push and runs `g` in the same update, so it never leaves the stack. `need`
+therefore needs `A: Default`.
 
 Each goal asks for a given subgoal at most once while it is on the stack, so a
-failed way is not retried and `select` falls through to the next. The results
-go when their asker is popped. This also bounds the work per update; a
-backstop logs a diagnostic and fails the node if it does not settle.
-
-A goal re-runs from its start when its subgoal returns, rather than resuming
-where it asked: its subtree could only have stopped there with `Failure`, and
-the world has changed since. Its `need`s answer from the results, so the
-re-run is cheap and reaches the same point.
+failed way is not retried when `Evaluate` rescans it, and `select` falls
+through to the next. The results go when their asker is popped. This also
+bounds the work per update; a backstop logs a diagnostic and fails the node if
+it does not settle.
 
 ### Reactivity
 
@@ -74,9 +76,9 @@ preemption drops it; a goal that must survive belongs in the blackboard, where
 
 ### Storage
 
-Run state: `N` goals, their results, and one run state of the dispatch
-subtree, for the top goal. Memory: the dispatch subtree's, shared by every
-goal, as it is one subtree. No heap.
+Run state: `N` goals, each with a run state of the dispatch subtree, and their
+results; so `N` times the dispatch subtree's run state. Memory: the dispatch
+subtree's, shared by every goal, as only one runs at a time. No heap.
 
 ### Parameters
 
@@ -85,16 +87,20 @@ nodes pass it through. `with_goal(node)` gives a node `&Goal`;
 `no_params(node)` a node taking `()`, such as an `action` of a
 `BtAction<C, A>`.
 
-### Rejected: `need` as a call
+### Rejected
 
-A first version ran the subgoal from inside `need` and returned its result,
-every update walking from the root goal down. It was reactive without `done`,
-but recursive, with one dispatch run state and memory per stack depth, and
-traces stopped at `need`.
+- **`need` as a call**: running the subgoal from inside `need`, every update
+  walking from the root goal down. Reactive without `done`, but recursive,
+  with a memory per stack depth, and traces stopped at `need`.
+- **`need` failing to end the turn**, the parent re-running from its start on
+  return: a `select` ran the nodes after the `need` in the same turn, and the
+  parent lost its progress.
 
 ## Open
 
-- A `need` that pushed fails, so in a `select` the nodes after it still run in
-  that turn. Put `need` last in its branch.
+- A `need` inside a `scope!` does not see the goal: a scope gives its children
+  its locals, not its own parameters.
+- The placeholder act needs `A: Default`; an act type without one cannot use
+  `need`.
 - `goal_match!` patterns cannot bind into the subtree; closures read the goal.
 - `need` as the name; `require`, `achieve` and `subgoal` are candidates.

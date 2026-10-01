@@ -34,8 +34,8 @@
 //! assert!(world.key && world.open);
 //! ```
 //!
-//! No recursion and no heap: the run state is `N` goals and one run state of
-//! the dispatch subtree, for the goal on top.
+//! No recursion and no heap: the run state is `N` goals, each with a run
+//! state of the dispatch subtree, waiting where it asked for the goal above.
 
 mod dispatch;
 mod need;

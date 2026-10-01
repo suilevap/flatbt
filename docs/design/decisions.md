@@ -566,11 +566,14 @@ fired after its branch ended. See [Tree memory](tree-memory-draft.md).
 See [Goal stack](goal-stack-draft.md).
 
 - **One goal runs at a time.** `goals` runs the top goal's subtree; `need`
-  pushes a subgoal and ends the turn; a finished goal is popped and the goal
-  below re-runs, where `need` returns the result. A loop, not recursion.
+  pushes a subgoal and waits; a finished goal is popped and the goal below
+  resumes, where `need` returns the result. A loop, not recursion.
+- **Waiting is `Running` with a placeholder act** (`A: Default`), replaced by
+  the subgoal's act in the same update. A `need` that failed to end the turn
+  let a `select` run the nodes after it, and the parent lost its progress.
 - **`need` as a call was tried first and dropped**: it re-walked every goal
-  from the root on each update, needed a dispatch run state and memory per
-  depth, and hid subgoals from traces.
+  from the root on each update, needed a memory per depth, and hid subgoals
+  from traces.
 - **Each goal asks for a subgoal at most once** while it is on the stack; the
   result is kept, so a failed way falls through to the next and the loop ends.
 - **Reactivity through `done`**, asked for every goal on the stack, since goals
