@@ -116,32 +116,19 @@ ordinary `.with(..)` bindings, so `scope!` needs no macro changes.
 Policy bitmask limit: 64 children. A larger `FLATBT_MAX_CHILDREN` makes
 `begin` report `ControlOp::error` instead of misbehaving.
 
-## Time (separate milestone)
+## Time -- done
 
-Time is not part of the API today, and adding it ad hoc to each node would be
-convoluted. Candidate shape: an optional trait the blackboard implements,
+The context implements `BtClock { type Instant; type Duration; fn now() }`,
+with `Instant: Add<Duration, Output = Instant> + PartialOrd`, which covers
+`f32` seconds, turn counters, `std::time` and Bevy's `Duration` since startup.
+Spans are fixed values in the node. Shipped: `action_wait`, `timeout`,
+`cooldown` (from each try), `success_cooldown` and `reevaluate_every`. The
+cooldowns keep their time in [tree memory](tree-memory-draft.md), not the
+blackboard. Bevy keeps its per-agent staggering (`evaluate_every`, `act_every`)
+in `tick_mode`, which runs before the tree.
 
-```rust,ignore
-pub trait BtClock {
-    type Instant: Copy + Ord + Send + 'static;
-    fn now(&self) -> Self::Instant;
-}
-```
-
-It would unlock, together:
-
-- `timeout(limit, child)`: abort and fail past `limit`.
-- `action_wait(duration, act)`: report `act` until `duration` has passed.
-- `cooldown(period, memory, child)`: fail while in cooldown; the last
-  completion lives in the blackboard.
-- `reevaluate_every(period, child)`: a time-based `reevaluate_when`.
-
-Update counting (`wait_updates`) belongs here too: an update is not a frame
-under `Tick::Skip`, so counting updates is a clock in disguise.
-
-Open: how durations are represented without a dependency (an associated
-`Duration` type with `Add<Duration, Output = Instant>`?), and whether Bevy's
-`Time` can back it directly.
+Not done: `wait_updates` (an update count is a clock the game can provide),
+spans read from the context.
 
 ## Core changes
 
@@ -195,7 +182,7 @@ for what shipped, and a decision-log entry.
 - `round_robin`, `seq_any`, `chance`.
 - `parallel`, with the shared tuple generator.
 
-**Time milestone** (after Phase 3): `BtClock`, then the nodes it unlocks.
+**Time milestone** -- done: `BtClock`, then the nodes it unlocks.
 
 ## Deferred
 

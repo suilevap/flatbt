@@ -351,6 +351,35 @@ The target is picked once per invocation and every node below the guard
 receives it: `Approach` and `Attack` implement `BtAction<World, Act, &Entity>`.
 A child that takes no parameters needs `no_params(..)`.
 
+### Time
+
+Time is the game's: seconds, turns or simulation ticks. The context implements
+`BtClock`, and spans are in its `Duration`.
+
+```rust
+use flatbt::prelude::*;
+
+struct Game { turn: u32 }
+impl BtClock for Game {
+    type Instant = u32;  // `Instant + Duration` is the instant a span later
+    type Duration = u32;
+    fn now(&self) -> u32 { self.turn }
+}
+```
+
+| Node | Behavior |
+| --- | --- |
+| `action_wait(span, act)` | Report `act` until `span` has passed since the node started, then succeed. |
+| `timeout(span, child)` | Fail once `span` has passed since the node started, dropping (cancelling) a running child. |
+| `cooldown(span, child)` | Fail without starting `child` until `span` has passed since it last started. |
+| `success_cooldown(span, child)` | The same, counted from the child's last success: failed tries can be retried at once. |
+| `reevaluate_every(span, child)` | Pass `Resume` down as `Evaluate` once per `span`. |
+
+A cooldown keeps its time in node memory: per node and per agent, kept while
+its branch is not running, and shown by `describe().with_inactive()`. In Bevy,
+copy `Time::elapsed()` into the blackboard in the gather system, and use
+`Duration` for both types.
+
 ## Bevy
 
 Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns what
