@@ -383,9 +383,9 @@ copy `Time::elapsed()` into the blackboard in the gather system, and use
 ## Goals
 
 `goals` keeps a stack of goals and runs one subtree per kind of goal for the
-goal on top. A goal asks for what it needs first with `need`: it waits there, the subgoal
-goes on top, and when the subgoal ends the goal resumes and `need` returns how
-it went.
+goal on top. A goal asks for what it needs first with `need`: the subgoal goes on top, and
+when it ends, the goal runs again from its start and `need` returns how it
+went.
 A blocker is just a goal: `select` and `seq` decide what to do about it.
 
 ```rust,ignore
@@ -406,17 +406,18 @@ let tree = goals::<8, _, _>(
 
 - Only the top goal runs. Pushing and popping happen in the same update, so the
   update returns the act of whichever goal ends up working.
-- `need(f)`: `None` succeeds. A new subgoal is pushed and `need` waits,
-  `Running`, until it ends, then returns its result. The waiting act is a
-  placeholder (`A: Default`) that never leaves the stack.
+- `need(f)`: `None` succeeds. A new subgoal is pushed, and the goal's run
+  stops there with `Running`, a placeholder act (`A: Default`) that never
+  leaves the stack. When the goal runs again, `need` returns the subgoal's
+  result.
 - A goal asks for each subgoal at most once while it is on the stack, so a
   failed way falls through to the next. A goal already on the stack (a cycle)
   or a full stack fails `need`.
 - `.done(..)` is asked for every goal on the stack each update: one achieved by
   other means is popped with the goals above it. A changed root goal starts
   over.
-- Run state: `N` goals, each with a run state of the goal subtree. No heap.
-  Preemption drops the stack.
+- Run state: `N` goals and one run state of the goal subtree, for the top
+  goal. No heap. Preemption drops the stack.
 - Subtrees receive the goal as a parameter: `with_goal(node)` gives a node
   `&Goal`, `no_params(node)` adapts a node taking `()`.
 

@@ -2,9 +2,10 @@
 //! goals first.
 //!
 //! [`goals`] keeps a stack of goals and runs a dispatch subtree for the one
-//! on top. Inside it, [`need`] pushes a subgoal: the current goal's turn ends
+//! on top. Inside it, [`need`] pushes a subgoal: the current goal's run stops
 //! and the subgoal runs next. When a goal's subtree succeeds or fails, the goal
-//! is popped and the one below runs again, where `need` returns that result.
+//! is popped and the one below runs again from its start, where its `need`
+//! returns that result.
 //! So a blocker is just a goal, and ordinary `select` and `seq` decide what to
 //! do about it.
 //!
@@ -34,8 +35,8 @@
 //! assert!(world.key && world.open);
 //! ```
 //!
-//! No recursion and no heap: the run state is `N` goals, each with a run
-//! state of the dispatch subtree, waiting where it asked for the goal above.
+//! No recursion and no heap: the run state is `N` goals and one run state of
+//! the dispatch subtree, for the goal on top.
 
 mod dispatch;
 mod need;

@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
-use crate::{BtNode, Entry, EntryMode, NodeResult};
+use crate::{BtNode, Entry, NodeResult};
 
 /// The parameters of a goal's subtree: the goal, and the stack it runs in.
 pub struct GoalCall<'a, G> {
@@ -98,11 +98,11 @@ pub struct Goals<R, D, Q, const N: usize> {
 /// Runs `dispatch` for the goal on top of a stack of at most `N` goals,
 /// starting with the one `root` reads from the context.
 ///
-/// Only the top goal's subtree runs. When it asks for a subgoal with
-/// [`need`](super::need), it waits there, and the subgoal goes on top and runs
-/// in the same update. When the top goal's subtree succeeds or fails, the goal
-/// is popped and the goal below resumes where it waited, its `need` returning
-/// that result. The node ends with the root goal.
+/// Only the top goal's subtree runs, and only it has run state. When it asks
+/// for a subgoal with [`need`](super::need), its run ends and the subgoal goes
+/// on top and runs, in the same update. When the top goal's subtree succeeds
+/// or fails, the goal is popped and the goal below runs again from its start,
+/// where its `need` returns that result. The node ends with the root goal.
 ///
 /// `root` is read on every update; when it changes, the stack starts over.
 /// Goals below the top do not run while it works, so a goal achieved by other
@@ -156,11 +156,9 @@ impl<C, G, F: Fn(&C, &G) -> bool> GoalDone<C, G> for F {
     }
 }
 
-/// The stack: each goal and its subtree's run state, waiting where it asked
-/// for the goal above; and the results subgoals returned.
+/// The stack, the results subgoals returned, and the top goal's run state.
 pub struct GoalsState<G, S, const N: usize> {
-    // Drop subtrees first, as the rest of the tree does.
-    states: [S; N],
+    top: S,
     goals: [Option<G>; N],
     results: [Option<Outcome<G>>; N],
 }
@@ -168,7 +166,7 @@ pub struct GoalsState<G, S, const N: usize> {
 impl<G, S: Default, const N: usize> Default for GoalsState<G, S, N> {
     fn default() -> Self {
         Self {
-            states: core::array::from_fn(|_| S::default()),
+            top: S::default(),
             goals: core::array::from_fn(|_| None),
             results: core::array::from_fn(|_| None),
         }
@@ -180,18 +178,13 @@ impl<G, S: Default, const N: usize> GoalsState<G, S, N> {
         self.goals.iter().take_while(|goal| goal.is_some()).count()
     }
 
-    /// Pops goals down to `depth`, ending their subtrees, and forgets what
-    /// they were told.
+    /// Pops goals down to `depth` and forgets what they were told. The top
+    /// goal's run ends.
     fn truncate(&mut self, depth: usize) {
-        for (goal, state) in self.goals[depth..]
-            .iter_mut()
-            .zip(&mut self.states[depth..])
-        {
-            if goal.take().is_none() {
-                break;
-            }
-            *state = S::default();
+        for goal in &mut self.goals[depth..] {
+            *goal = None;
         }
+        self.top = S::default();
         for result in &mut self.results {
             if result
                 .as_ref()
@@ -227,17 +220,6 @@ impl<G, S: Default, const N: usize> GoalsState<G, S, N> {
     }
 }
 
-/// How the top goal's subtree is entered.
-#[derive(Clone, Copy)]
-enum Step {
-    /// As the update entered `goals`.
-    Continue,
-    /// Fresh: just pushed.
-    Pushed,
-    /// Resumed at its `need`: the goal above it was popped.
-    Returned,
-}
-
 #[cold]
 #[inline(never)]
 fn too_many_steps<A>(entry: Entry<'_>) -> NodeResult<A> {
@@ -265,12 +247,14 @@ where
         _: P,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        let mut step = Step::Continue;
+        // Whether the top goal's run starts now: pushed, or back from a
+        // subgoal. Otherwise it continues as the update entered `goals`.
+        let mut fresh = false;
         let root = (self.root)(ctx);
         if state.goals[0].as_ref() != Some(&root) {
             state.truncate(0);
             state.goals[0] = Some(root);
-            step = Step::Pushed;
+            fresh = true;
         }
         if let Some(done) = state
             .goals
@@ -286,7 +270,7 @@ where
             // As if the goal had succeeded: popped, and its asker told so.
             state.truncate(done + 1);
             state.pop(true);
-            step = Step::Returned;
+            fresh = true;
         }
         // Each step pushes a new goal or pops one. Pushes are bounded by the
         // stack and by each asker's results; this is a backstop.
@@ -300,19 +284,18 @@ where
                 results: &state.results,
                 pending: &mut pending,
             };
-            let top = &mut state.states[depth - 1];
-            let result = match step {
-                Step::Continue => entry.run(1, &self.dispatch, top, memory, ctx, call),
-                Step::Pushed => entry.run_candidate(1, &self.dispatch, top, memory, ctx, call),
-                Step::Returned => {
-                    let entry = entry.with_mode(EntryMode::Resume);
-                    entry.run(1, &self.dispatch, top, memory, ctx, call)
-                }
+            let top = &mut state.top;
+            let result = if fresh {
+                entry.run_candidate(1, &self.dispatch, top, memory, ctx, call)
+            } else {
+                entry.run(1, &self.dispatch, top, memory, ctx, call)
             };
             if let Some(subgoal) = pending {
-                // Waiting at its `need`; the act it returned is a placeholder.
+                // Stopped at its `need`; the act it returned is a placeholder.
+                // Its run ends: it starts over when the subgoal returns.
+                state.top = S::default();
                 state.goals[depth] = Some(subgoal);
-                step = Step::Pushed;
+                fresh = true;
                 continue;
             }
             match result {
@@ -322,7 +305,7 @@ where
                     if !state.pop(succeeded) {
                         return result;
                     }
-                    step = Step::Returned;
+                    fresh = true;
                 }
             }
         }
@@ -347,7 +330,7 @@ where
             }
             BtNode::<C, A, GoalCall<'_, G>>::inspect(
                 &self.dispatch,
-                state.map(|state| &state.states[depth - 1]),
+                state.map(|state| &state.top),
                 memory,
                 inspector,
             );

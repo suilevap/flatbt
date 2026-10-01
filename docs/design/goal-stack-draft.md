@@ -41,8 +41,8 @@ Each update runs only the top goal's subtree. No recursion: one loop in
 | Top goal's subtree | Then |
 | --- | --- |
 | `Running(act)` | The update returns it. |
-| Waiting at a `need` that pushed `g` | `g` goes on top and runs, in the same update. The waiting goal keeps its run state. |
-| `Success` / `Failure` | The goal is popped and its result kept for the goal below, which resumes at its `need` in the same update. Popping the root ends the node with that result. |
+| Stopped at a `need` that pushed `g` | Its run ends; `g` goes on top and runs, in the same update. |
+| `Success` / `Failure` | The goal is popped and its result kept for the goal below, which runs again from its start in the same update. Popping the root ends the node with that result. |
 
 `need(f)` asks `f(ctx, goal)` for a subgoal:
 
@@ -51,13 +51,17 @@ Each update runs only the top goal's subtree. No recursion: one loop in
 | `None` | Succeeds: nothing in the way. |
 | `Some(g)`, already ended for this goal | Returns that result. |
 | `Some(g)`, on the stack | Fails: a cycle (the key is behind the door it opens). |
-| `Some(g)`, new | Pushes `g` and waits: `Running(A::default())`. |
+| `Some(g)`, new | Pushes `g` and stops the run: `Running(A::default())`. |
 
-Waiting is `Running`, so a `select` or `seq` stops at the `need` as it would at
-any running child, and the goal resumes there with `Resume` when `g` returns,
-its sequence progress intact. The act inside is a placeholder: `goals` sees the
-push and runs `g` in the same update, so it never leaves the stack. `need`
-therefore needs `A: Default`.
+The push returns `Running` so that a `select` or `seq` stops at the `need`, as
+it would at any running child: nothing after it runs. The act inside is a
+placeholder: `goals` sees the push and runs `g` in the same update, so it never
+leaves the stack. `need` therefore needs `A: Default`.
+
+A goal runs again from its start when its subgoal returns, rather than
+resuming: only the top goal keeps run state. Its `need`s answer from the
+results, so it goes on past a blocker that was solved, or to another way past
+one that failed.
 
 Each goal asks for a given subgoal at most once while it is on the stack, so a
 failed way is not retried when `Evaluate` rescans it, and `select` falls
@@ -76,9 +80,9 @@ preemption drops it; a goal that must survive belongs in the blackboard, where
 
 ### Storage
 
-Run state: `N` goals, each with a run state of the dispatch subtree, and their
-results; so `N` times the dispatch subtree's run state. Memory: the dispatch
-subtree's, shared by every goal, as only one runs at a time. No heap.
+Run state: `N` goals, their results, and one run state of the dispatch
+subtree, for the top goal. Memory: the dispatch subtree's, shared by every
+goal, as only one runs at a time. No heap.
 
 ### Parameters
 
@@ -92,9 +96,11 @@ nodes pass it through. `with_goal(node)` gives a node `&Goal`;
 - **`need` as a call**: running the subgoal from inside `need`, every update
   walking from the root goal down. Reactive without `done`, but recursive,
   with a memory per stack depth, and traces stopped at `need`.
-- **`need` failing to end the turn**, the parent re-running from its start on
-  return: a `select` ran the nodes after the `need` in the same turn, and the
-  parent lost its progress.
+- **`need` failing to end the run**: a `select` ran the nodes after the `need`
+  in the same update.
+- **Resuming the asking goal** where it stopped: it needs a run state per goal
+  on the stack, `N` times the dispatch subtree's, to keep progress that the
+  results already make cheap to redo.
 
 ## Open
 
