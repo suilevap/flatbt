@@ -380,6 +380,49 @@ its branch is not running, and shown by `describe().with_inactive()`. In Bevy,
 copy `Time::elapsed()` into the blackboard in the gather system, and use
 `Duration` for both types.
 
+## Goals
+
+`goals` keeps a stack of goals and runs one subtree per kind of goal for the
+goal on top. A goal asks for what it needs first with `need`: the subgoal goes on top, and
+when it ends, the goal runs again from its start and `need` returns how it
+went.
+A blocker is just a goal: `select` and `seq` decide what to do about it.
+
+```rust,ignore
+let tree = goals::<8, _, _>(
+    |w: &World| Goal::Reach(w.target),
+    goal_match!(|goal: &Goal| {
+        Goal::Reach(_) => select((
+            seq((need(|w: &World, g: &Goal| w.door_on_the_way(g).then_some(Goal::OpenDoor)), walk)),
+            seq((need(|w: &World, g: &Goal| w.door_on_the_way(g).then_some(Goal::Climb)), walk)),
+        )),
+        Goal::OpenDoor => seq((need(|w: &World, _: &Goal| (!w.has_key).then_some(Goal::GetKey)), open)),
+        Goal::GetKey => seq((need(|w: &World, _: &Goal| Some(Goal::Reach(w.key_at))), pick_up)),
+        Goal::Climb => climb,
+    }),
+)
+.done(|w: &World, goal: &Goal| w.achieved(goal));
+```
+
+- Only the top goal runs. Pushing and popping happen in the same update, so the
+  update returns the act of whichever goal ends up working.
+- `need(f)`: `None` succeeds. A new subgoal is requested, and the goal's run
+  stops there with `Running`, a placeholder act (`A: Default`) that never
+  leaves the stack. When the goal runs again, `need` returns the subgoal's
+  result.
+- Subtrees do not see the stack: `goals` pushes a requested subgoal, or
+  refuses it as failed when it is already on the stack (a cycle) or the stack
+  is full. A subtree can read how its subgoals ended with `GoalCall::result`.
+- A goal asks for each subgoal at most once while it is on the stack, so a
+  failed way falls through to the next.
+- `.done(..)` is asked for every goal on the stack each update: one achieved by
+  other means is popped with the goals above it. A changed root goal starts
+  over.
+- Run state: `DEPTH` goals and one run state of the goal subtree, for the top
+  goal. No heap. Preemption drops the stack.
+- Subtrees receive the goal as a parameter: `with_goal(node)` gives a node
+  `&Goal`, `no_params(node)` adapts a node taking `()`.
+
 ## Bevy
 
 Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns what

@@ -560,3 +560,29 @@ fired after its branch ended. See [Tree memory](tree-memory-draft.md).
   included, since the subtree has just reconsidered either way.
 - **Bevy staggering stays in `tick_mode`**: it decides whether the tree runs at
   all, which no node can.
+
+## 2026-10-01 — Goal stack
+
+See [Goal stack](goal-stack-draft.md).
+
+- **One goal runs at a time.** `goals` runs the top goal's subtree; `need`
+  pushes a subgoal and stops the run; a finished goal is popped and the goal
+  below runs again from its start, where `need` returns the result. A loop,
+  not recursion, and one run state, for the top goal.
+- **Subtrees request, `goals` owns the stack.** `need` writes the subgoal to
+  a one-slot request in its parameters; `goals` pushes it, or refuses it as a
+  cycle or for a full stack and records a failure. Carrying the request in the
+  act would need a variant in the user's act type or a separate act type for
+  goal subtrees.
+- **The request stops the run with `Running` and a placeholder act**
+  (`A: Default`), replaced by the subgoal's act in the same update. Failing
+  instead let a `select` run the nodes after the `need`.
+- **`need` as a call was tried first and dropped**: it re-walked every goal
+  from the root on each update, needed a memory per depth, and hid subgoals
+  from traces.
+- **Each goal asks for a subgoal at most once** while it is on the stack; the
+  result is kept, so a failed way falls through to the next and the loop ends.
+- **Reactivity through `done`**, asked for every goal on the stack, since goals
+  below the top do not run.
+- **The stack is run state.** A goal that must outlive preemption lives in the
+  blackboard and is read by `root`.
