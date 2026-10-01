@@ -13,6 +13,7 @@ pub mod reevaluate;
 pub mod remap;
 pub mod repeat;
 pub mod repeat_while;
+pub mod time;
 
 pub use action::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
 pub use choose::{Choose, ChooseNode};
@@ -28,3 +29,7 @@ pub use reevaluate::{ReevaluateWhen, reevaluate_when};
 pub use remap::{Remap, force_failure, force_success, invert};
 pub use repeat::{Repeat, Retry, repeat, retry};
 pub use repeat_while::{RepeatWhile, RepeatWhileState, repeat_while};
+pub use time::{
+    ActionWait, BtClock, Cooldown, ReevaluateEvery, Timeout, action_wait, cooldown,
+    reevaluate_every, success_cooldown, timeout,
+};

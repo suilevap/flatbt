@@ -542,3 +542,21 @@ fired after its branch ended. See [Tree memory](tree-memory-draft.md).
   tests. `BtChildren::run_from` keeps its arguments and allows
   `clippy::too_many_arguments`: a `(state, memory)` pair read worse without
   removing anything.
+
+## 2026-10-01 — Time nodes
+
+- **The clock is a trait on the context**, `BtClock`, with associated
+  `Instant` and `Duration` and `Instant + Duration` for "a span later". No
+  time type is built in: turns, `f32` seconds and `Duration` since startup all
+  fit. Reading it through a closure per node was rejected as repetition.
+- **Spans are fixed per node** for now; one read from the context can come
+  later as another constructor.
+- **`cooldown` counts from each try, `success_cooldown` from each success.**
+  Both keep the time in node memory, so a rejected candidate spends a
+  `cooldown`, and two agents, or two cooldowns, never share one.
+- **`timeout` and `action_wait` keep their start in run state**: they measure
+  one run, which `Evaluate` continues and completion ends.
+- **`reevaluate_every` restarts its period on any `Evaluate`**, its parent's
+  included, since the subtree has just reconsidered either way.
+- **Bevy staggering stays in `tick_mode`**: it decides whether the tree runs at
+  all, which no node can.

@@ -116,32 +116,40 @@ ordinary `.with(..)` bindings, so `scope!` needs no macro changes.
 Policy bitmask limit: 64 children. A larger `FLATBT_MAX_CHILDREN` makes
 `begin` report `ControlOp::error` instead of misbehaving.
 
-## Time (separate milestone)
+## Time -- done
 
-Time is not part of the API today, and adding it ad hoc to each node would be
-convoluted. Candidate shape: an optional trait the blackboard implements,
+The context implements `BtClock { type Instant; type Duration; fn now() }`,
+with `Instant: Add<Duration, Output = Instant> + PartialOrd`, which covers
+`f32` seconds, turn counters, `std::time` and Bevy's `Duration` since startup.
+Spans are fixed values in the node. Shipped: `action_wait`, `timeout`,
+`cooldown` (from each try), `success_cooldown` and `reevaluate_every`. The
+cooldowns keep their time in [tree memory](tree-memory-draft.md), not the
+blackboard. Bevy keeps its per-agent staggering (`evaluate_every`, `act_every`)
+in `tick_mode`, which runs before the tree.
 
-```rust,ignore
-pub trait BtClock {
-    type Instant: Copy + Ord + Send + 'static;
-    fn now(&self) -> Self::Instant;
-}
-```
+Not done: `wait_updates` (an update count is a clock the game can provide),
+spans read from the context.
 
-It would unlock, together:
+## Nodes that tree memory unlocks -- proposed
 
-- `timeout(limit, child)`: abort and fail past `limit`.
-- `action_wait(duration, act)`: report `act` until `duration` has passed.
-- `cooldown(period, memory, child)`: fail while in cooldown; the last
-  completion lives in the blackboard.
-- `reevaluate_every(period, child)`: a time-based `reevaluate_when`.
+[Tree memory](tree-memory-draft.md) keeps per-node, per-agent state that
+outlives a run. These used to need a blackboard field or accessor each.
 
-Update counting (`wait_updates`) belongs here too: an update is not a frame
-under `Tick::Skip`, so counting updates is a clock in disguise.
-
-Open: how durations are represented without a dependency (an associated
-`Duration` type with `Add<Duration, Output = Instant>`?), and whether Bevy's
-`Time` can back it directly.
+| Node | Memory holds | Size |
+| --- | --- | --- |
+| `check_hysteresis(enter, exit)`, and a `guard` form | The last answer: enter when `enter` holds, leave when `exit` does. Stops flip-flopping at a threshold. | S |
+| `on_rise(cond, child)`, `reevaluate_on_change(key, child)` | The previous value: react once when a condition turns true, reconsider when a value changes. Replaces `*_changed` flags computed in gather. | S |
+| `check_for(span, cond)` | Since when `cond` has held: true only after it held for `span` (perception delay). | S |
+| `backoff(base, child)` | Consecutive failures: a cooldown that doubles after each failure, reset by a success. | S |
+| `once(child)`, `at_most(n, child)`, `latch(child)` | Runs so far, or a latched success, for the agent's life. | S |
+| `round_robin()` order | The last child; replaces the accessor in the candidate above. | S |
+| Shuffle bag order | Children not yet run: random without repeats until all have run. | S |
+| `leaf_with_memory(\|ctx, mem: &mut M\| ..)` | Anything: a closure leaf with its own memory, for one-off counters and latches. | S |
+| Novelty in `by_score` | When each child last ran: penalise recent ones for variety. | M |
+| Adaptive `weighted` | Weights moved toward children that succeed. | M |
+| Per-node stats wrapper | Runs, outcomes, last run: what an agent actually does, for debug views. | M |
+| Persistent `scope!` locals (`remember let x = ..`) | A local that outlives the invocation; most rows above inline in the DSL. Needs its own design note. | M-L |
+| Snapshot and restore | Memory is plain per-agent data; with an optional `serde` dependency (its own feature), save games and replays. | M |
 
 ## Core changes
 
@@ -195,7 +203,7 @@ for what shipped, and a decision-log entry.
 - `round_robin`, `seq_any`, `chance`.
 - `parallel`, with the shared tuple generator.
 
-**Time milestone** (after Phase 3): `BtClock`, then the nodes it unlocks.
+**Time milestone** -- done: `BtClock`, then the nodes it unlocks.
 
 ## Deferred
 
