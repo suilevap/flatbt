@@ -6,7 +6,7 @@ use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
 /// Stateless callable. Captures hold configuration; context holds mutable data.
-pub struct Leaf<F>(F);
+pub struct Leaf<Function>(Function);
 
 /// Wraps a callable. Context effects are immediate and survive failure.
 /// Implement [`BtNode`] directly for invocation-local state.
@@ -18,42 +18,60 @@ pub struct Leaf<F>(F);
 /// A leaf that returns `Running` has to say what the agent is doing, which is
 /// usually a sign it wants writing as an action instead -- a leaf is re-entered
 /// on every resume and has no state to make progress with.
-pub fn leaf<F>(f: F) -> Leaf<F> {
+pub fn leaf<Function>(f: Function) -> Leaf<Function> {
     Leaf(f)
 }
 
-impl<C, A, P, F: Fn(&mut C) -> NodeResult<A>> BtNode<C, A, P> for Leaf<F> {
+impl<Context, Act, Params, Function: Fn(&mut Context) -> NodeResult<Act>>
+    BtNode<Context, Act, Params> for Leaf<Function>
+{
     type State = ();
     type Memory = ();
 
     #[inline(always)]
-    fn update(&self, _: &mut (), _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut Context,
+        _: Params,
+        _: Entry<'_>,
+    ) -> NodeResult<Act> {
         (self.0)(ctx)
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("leaf", state.is_some()).with_fn_name::<F>();
+        let node = NodeInfo::new("leaf", state.is_some()).with_fn_name::<Function>();
         inspector.node(node, |_| {});
     }
 }
 
 /// Predicate over shared context.
-pub struct Check<F>(F);
+pub struct Check<Predicate>(Predicate);
 
 /// Returns Success for true, Failure for false. Checked where the tree runs,
 /// like [`leaf`].
 ///
 /// A predicate never occupies the agent, so it never names the act type.
-pub fn check<F>(predicate: F) -> Check<F> {
+pub fn check<Predicate>(predicate: Predicate) -> Check<Predicate> {
     Check(predicate)
 }
 
-impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
+impl<Context, Act, Params, Predicate: Fn(&Context) -> bool> BtNode<Context, Act, Params>
+    for Check<Predicate>
+{
     type State = ();
     type Memory = ();
 
     #[inline(always)]
-    fn update(&self, _: &mut (), _: &mut (), ctx: &mut C, _: P, _: Entry<'_>) -> NodeResult<A> {
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut Context,
+        _: Params,
+        _: Entry<'_>,
+    ) -> NodeResult<Act> {
         if (self.0)(ctx) {
             NodeResult::Success
         } else {
@@ -62,16 +80,16 @@ impl<C, A, P, F: Fn(&C) -> bool> BtNode<C, A, P> for Check<F> {
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("check", state.is_some()).with_fn_name::<F>();
+        let node = NodeInfo::new("check", state.is_some()).with_fn_name::<Predicate>();
         inspector.node(node, |_| {});
     }
 }
 
 /// A child that runs only while a predicate holds.
-pub struct Guarded<F, N, M> {
-    predicate: F,
-    child: N,
-    reads: PhantomData<fn() -> M>,
+pub struct Guarded<Predicate, Child, Reads> {
+    predicate: Predicate,
+    child: Child,
+    reads: PhantomData<fn() -> Reads>,
 }
 
 /// Runs `child` while `predicate` holds; fails without entering it otherwise.
@@ -92,12 +110,15 @@ pub struct Guarded<F, N, M> {
 /// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Failure);
 /// ```
 ///
-/// The predicate is `Fn(&C) -> bool`, or `Fn(&C, P) -> bool` to also read the
+/// The predicate is `Fn(&Context) -> bool`, or `Fn(&Context, Params) -> bool` to also read the
 /// parameters it forwards to `child` -- a target bound with `.with(target)`,
 /// asked about on every update. See [`ReadFn`].
 ///
 /// [`seq`]: crate::seq
-pub fn guard<F, N, M>(predicate: F, child: N) -> Guarded<F, N, M> {
+pub fn guard<Predicate, Child, Reads>(
+    predicate: Predicate,
+    child: Child,
+) -> Guarded<Predicate, Child, Reads> {
     Guarded {
         predicate,
         child,
@@ -105,28 +126,38 @@ pub fn guard<F, N, M>(predicate: F, child: N) -> Guarded<F, N, M> {
     }
 }
 
-impl<C, A, P: ParamValue, F, N, S, Mem, M> BtNode<C, A, P> for Guarded<F, N, M>
+impl<Context, Act, Params: ParamValue, Predicate, Child, ChildState, ChildMemory, Reads>
+    BtNode<Context, Act, Params> for Guarded<Predicate, Child, Reads>
 where
-    F: ReadFn<C, P, bool, M>,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
-    S: Default + Send + 'static,
-    Mem: Default + Send + 'static,
+    Predicate: ReadFn<Context, Params, bool, Reads>,
+    Child: for<'a> BtNode<
+            Context,
+            Act,
+            <Params::Shape as ParamShape>::Value<'a>,
+            State = ChildState,
+            Memory = ChildMemory,
+        >,
+    ChildState: Default + Send + 'static,
+    ChildMemory: Default + Send + 'static,
 {
-    type State = S;
-    type Memory = Mem;
-    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
+    type State = ChildState;
+    type Memory = ChildMemory;
+    const NODES: usize =
+        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline(always)]
     fn update(
         &self,
-        state: &mut S,
-        memory: &mut Mem,
-        ctx: &mut C,
-        params: P,
+        state: &mut ChildState,
+        memory: &mut ChildMemory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let mut params = params.into_value();
-        let holds = self.predicate.call(ctx, P::Shape::reborrow(&mut params));
+        let holds = self
+            .predicate
+            .call(ctx, Params::Shape::reborrow(&mut params));
         entry.record("if", || holds);
         if holds {
             entry.run(1, &self.child, state, memory, ctx, params)
@@ -135,10 +166,15 @@ where
         }
     }
 
-    fn inspect(&self, state: Option<&S>, memory: &Mem, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("guard", state.is_some()).with_fn_name::<F>();
+    fn inspect(
+        &self,
+        state: Option<&ChildState>,
+        memory: &ChildMemory,
+        inspector: &mut dyn Inspector,
+    ) {
+        let node = NodeInfo::new("guard", state.is_some()).with_fn_name::<Predicate>();
         inspector.node(node, |inspector| {
-            BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+            BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state,
                 memory,

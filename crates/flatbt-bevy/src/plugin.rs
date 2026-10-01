@@ -49,24 +49,27 @@ pub struct BehaviorSystems;
 ///
 /// App::new().add_plugins(BehaviorPlugin::for_tree(shoot));
 /// ```
-pub struct BehaviorPlugin<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
-{
-    builder: F,
-    tick_mode: TickFn<C>,
+pub struct BehaviorPlugin<
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
+> {
+    builder: Builder,
+    tick_mode: TickFn<Blackboard>,
     schedule: InternedScheduleLabel,
     parallel: bool,
-    act: core::marker::PhantomData<fn() -> A>,
+    act: core::marker::PhantomData<fn() -> Act>,
 }
 
-impl<C, A, F> BehaviorPlugin<C, A, F>
+impl<Blackboard, Act, Builder> BehaviorPlugin<Blackboard, Act, Builder>
 where
-    C: Component<Mutability = Mutable>,
-    A: Component<Mutability = Mutable> + PartialEq,
-    F: TreeBuilder<C, A>,
+    Blackboard: Component<Mutability = Mutable>,
+    Act: Component<Mutability = Mutable> + PartialEq,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     /// Builds the tree once and ticks its agents in [`Update`], one at a time,
     /// in query order. All three type parameters come from the builder.
-    pub fn for_tree(builder: F) -> Self {
+    pub fn for_tree(builder: Builder) -> Self {
         Self {
             builder,
             tick_mode: |_, _| Tick::Evaluate,
@@ -111,7 +114,7 @@ where
     ///     }
     /// });
     /// ```
-    pub fn tick_mode(mut self, tick_mode: TickFn<C>) -> Self {
+    pub fn tick_mode(mut self, tick_mode: TickFn<Blackboard>) -> Self {
         self.tick_mode = tick_mode;
         self
     }
@@ -138,23 +141,27 @@ where
     }
 }
 
-impl<C, A, F> Plugin for BehaviorPlugin<C, A, F>
+impl<Blackboard, Act, Builder> Plugin for BehaviorPlugin<Blackboard, Act, Builder>
 where
-    C: Component<Mutability = Mutable>,
-    A: Component<Mutability = Mutable> + PartialEq,
-    F: TreeBuilder<C, A>,
+    Blackboard: Component<Mutability = Mutable>,
+    Act: Component<Mutability = Mutable> + PartialEq,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(BehaviorTree::<C, A, F>::new(&self.builder, self.tick_mode))
-            .insert_resource(ActChanges::<C, A, F>::default());
-        let apply = apply_act_changes::<C, A, F>.run_if(has_act_changes::<C, A, F>);
+        app.insert_resource(BehaviorTree::<Blackboard, Act, Builder>::new(
+            &self.builder,
+            self.tick_mode,
+        ))
+        .insert_resource(ActChanges::<Blackboard, Act, Builder>::default());
+        let apply = apply_act_changes::<Blackboard, Act, Builder>
+            .run_if(has_act_changes::<Blackboard, Act, Builder>);
         if self.parallel {
             app.add_systems(
                 self.schedule,
                 (
-                    tick_behaviors_parallel::<C, A, F>,
+                    tick_behaviors_parallel::<Blackboard, Act, Builder>,
                     apply,
-                    describe_behaviors::<C, A, F>,
+                    describe_behaviors::<Blackboard, Act, Builder>,
                 )
                     .chain()
                     .in_set(BehaviorSystems),
@@ -163,9 +170,9 @@ where
             app.add_systems(
                 self.schedule,
                 (
-                    tick_behaviors::<C, A, F>,
+                    tick_behaviors::<Blackboard, Act, Builder>,
                     apply,
-                    describe_behaviors::<C, A, F>,
+                    describe_behaviors::<Blackboard, Act, Builder>,
                 )
                     .chain()
                     .in_set(BehaviorSystems),
@@ -177,31 +184,31 @@ where
 /// The agents one tick system drives: their saved state, their blackboard, and
 /// whatever they are currently doing.
 ///
-/// The act is `Option<&mut A>` because an agent that decided nothing carries no
+/// The act is `Option<&mut Act>` because an agent that decided nothing carries no
 /// act component at all -- "doing nothing" is the absence of the component, not
 /// a variant of it. An act that merely *changes* is written in place, so an
 /// agent that keeps doing the same kind of thing never moves archetype.
-type Agents<'w, 's, C, A, F> = Query<
+type Agents<'w, 's, Blackboard, Act, Builder> = Query<
     'w,
     's,
     (
         Entity,
-        &'static mut Behavior<C, A, F>,
-        &'static mut C,
-        Option<&'static mut A>,
+        &'static mut Behavior<Blackboard, Act, Builder>,
+        &'static mut Blackboard,
+        Option<&'static mut Act>,
     ),
 >;
 
-/// Ticks every agent running the tree named by `F`, in query order.
-fn tick_behaviors<C, A, F>(
-    tree: Res<BehaviorTree<C, A, F>>,
+/// Ticks every agent running the tree named by `Builder`, in query order.
+fn tick_behaviors<Blackboard, Act, Builder>(
+    tree: Res<BehaviorTree<Blackboard, Act, Builder>>,
     time: Option<Res<Time>>,
-    mut agents: Agents<C, A, F>,
-    changes: Res<ActChanges<C, A, F>>,
+    mut agents: Agents<Blackboard, Act, Builder>,
+    changes: Res<ActChanges<Blackboard, Act, Builder>>,
 ) where
-    C: Component<Mutability = Mutable>,
-    A: Component<Mutability = Mutable> + PartialEq,
-    F: TreeBuilder<C, A>,
+    Blackboard: Component<Mutability = Mutable>,
+    Act: Component<Mutability = Mutable> + PartialEq,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     let clock = clock(time.as_deref());
     for (entity, behavior, bb, held) in agents.iter_mut() {
@@ -209,16 +216,16 @@ fn tick_behaviors<C, A, F>(
     }
 }
 
-/// Ticks every agent running the tree named by `F` across the task pool.
-fn tick_behaviors_parallel<C, A, F>(
-    tree: Res<BehaviorTree<C, A, F>>,
+/// Ticks every agent running the tree named by `Builder` across the task pool.
+fn tick_behaviors_parallel<Blackboard, Act, Builder>(
+    tree: Res<BehaviorTree<Blackboard, Act, Builder>>,
     time: Option<Res<Time>>,
-    mut agents: Agents<C, A, F>,
-    changes: Res<ActChanges<C, A, F>>,
+    mut agents: Agents<Blackboard, Act, Builder>,
+    changes: Res<ActChanges<Blackboard, Act, Builder>>,
 ) where
-    C: Component<Mutability = Mutable>,
-    A: Component<Mutability = Mutable> + PartialEq,
-    F: TreeBuilder<C, A>,
+    Blackboard: Component<Mutability = Mutable>,
+    Act: Component<Mutability = Mutable> + PartialEq,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     let clock = clock(time.as_deref());
     agents
@@ -241,23 +248,23 @@ fn clock(time: Option<&Time>) -> impl Fn(Entity) -> TickAt + Sync {
 }
 
 /// One agent's tick, and what it left for a command.
-fn tick_agent<C, A, F>(
-    tree: &BehaviorTree<C, A, F>,
+fn tick_agent<Blackboard, Act, Builder>(
+    tree: &BehaviorTree<Blackboard, Act, Builder>,
     at: TickAt,
-    mut behavior: Mut<'_, Behavior<C, A, F>>,
-    mut bb: Mut<'_, C>,
-    held: Option<Mut<'_, A>>,
-) -> ActChange<A>
+    mut behavior: Mut<'_, Behavior<Blackboard, Act, Builder>>,
+    mut bb: Mut<'_, Blackboard>,
+    held: Option<Mut<'_, Act>>,
+) -> ActChange<Act>
 where
-    C: Component<Mutability = Mutable>,
-    A: Component<Mutability = Mutable> + PartialEq,
-    F: TreeBuilder<C, A>,
+    Blackboard: Component<Mutability = Mutable>,
+    Act: Component<Mutability = Mutable> + PartialEq,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     // Whether a blackboard changed is the gather's business, not the tick's: it
     // is rewritten every tick anyway, and marking the whole population changed
     // would drag the rest of the engine along. Nodes may write to it -- it is
     // how they leave notes for each other -- and those writes are *not* visible
-    // to `Changed<C>` either. The blackboard is the tree's input; its output is
+    // to `Changed<Blackboard>` either. The blackboard is the tree's input; its output is
     // the act.
     let bb = bb.bypass_change_detection();
     let Some(mode) = tree.tick_mode()(bb, at).entry_mode() else {
@@ -280,10 +287,10 @@ where
 
 /// What a tick left for a command: an act appearing or going is a structural
 /// change, which a tick cannot make itself.
-enum ActChange<A> {
+enum ActChange<Act> {
     /// Written in place, or nothing to write.
     Settled,
-    Appeared(A),
+    Appeared(Act),
     Gone,
 }
 
@@ -296,13 +303,13 @@ enum ActChange<A> {
 /// run condition skips it -- at no cost -- on the common frame where every act
 /// was only written in place.
 #[derive(Resource)]
-struct ActChanges<C, A: Send, F> {
-    queued: Parallel<Vec<(Entity, Option<A>)>>,
+struct ActChanges<Blackboard, Act: Send, Builder> {
+    queued: Parallel<Vec<(Entity, Option<Act>)>>,
     any: AtomicBool,
-    names: PhantomData<fn() -> (C, F)>,
+    names: PhantomData<fn() -> (Blackboard, Builder)>,
 }
 
-impl<C, A: Send, F> Default for ActChanges<C, A, F> {
+impl<Blackboard, Act: Send, Builder> Default for ActChanges<Blackboard, Act, Builder> {
     fn default() -> Self {
         Self {
             queued: Parallel::default(),
@@ -312,8 +319,8 @@ impl<C, A: Send, F> Default for ActChanges<C, A, F> {
     }
 }
 
-impl<C, A: Send, F> ActChanges<C, A, F> {
-    fn record(&self, entity: Entity, change: ActChange<A>) {
+impl<Blackboard, Act: Send, Builder> ActChanges<Blackboard, Act, Builder> {
+    fn record(&self, entity: Entity, change: ActChange<Act>) {
         let act = match change {
             ActChange::Settled => return,
             ActChange::Appeared(act) => Some(act),
@@ -324,11 +331,13 @@ impl<C, A: Send, F> ActChanges<C, A, F> {
     }
 }
 
-fn has_act_changes<C, A, F>(changes: Res<ActChanges<C, A, F>>) -> bool
+fn has_act_changes<Blackboard, Act, Builder>(
+    changes: Res<ActChanges<Blackboard, Act, Builder>>,
+) -> bool
 where
-    C: Send + Sync + 'static,
-    A: Send + Sync + 'static,
-    F: TreeBuilder<C, A>,
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     changes.any.load(Ordering::Relaxed)
 }
@@ -337,31 +346,33 @@ where
 ///
 /// Chained right after the tick inside [`BehaviorSystems`], so an act is up to
 /// date when the set ends, with no sync point needed.
-fn apply_act_changes<C, A, F>(world: &mut World)
+fn apply_act_changes<Blackboard, Act, Builder>(world: &mut World)
 where
-    C: Send + Sync + 'static,
-    A: Component,
-    F: TreeBuilder<C, A>,
+    Blackboard: Send + Sync + 'static,
+    Act: Component,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
-    world.resource_scope(|world, mut changes: Mut<ActChanges<C, A, F>>| {
-        *changes.any.get_mut() = false;
-        for queue in changes.queued.iter_mut() {
-            // `drain(..)` rather than `Parallel::drain`, which takes the vector
-            // and its capacity with it.
-            for (entity, act) in queue.drain(..) {
-                // Gone when a system despawned it after the tick.
-                let Ok(mut agent) = world.get_entity_mut(entity) else {
-                    continue;
-                };
-                match act {
-                    Some(act) => {
-                        agent.insert(act);
-                    }
-                    None => {
-                        agent.remove::<A>();
+    world.resource_scope(
+        |world, mut changes: Mut<ActChanges<Blackboard, Act, Builder>>| {
+            *changes.any.get_mut() = false;
+            for queue in changes.queued.iter_mut() {
+                // `drain(..)` rather than `Parallel::drain`, which takes the vector
+                // and its capacity with it.
+                for (entity, act) in queue.drain(..) {
+                    // Gone when a system despawned it after the tick.
+                    let Ok(mut agent) = world.get_entity_mut(entity) else {
+                        continue;
+                    };
+                    match act {
+                        Some(act) => {
+                            agent.insert(act);
+                        }
+                        None => {
+                            agent.remove::<Act>();
+                        }
                     }
                 }
             }
-        }
-    });
+        },
+    );
 }

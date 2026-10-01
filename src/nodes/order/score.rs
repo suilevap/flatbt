@@ -5,9 +5,9 @@ use super::{BtOrder, Pass};
 use crate::Entry;
 
 /// Children ordered by score, highest first.
-pub struct ByScore<F, S> {
-    score: F,
-    inertia: Option<S>,
+pub struct ByScore<ScoreFn, Score> {
+    score: ScoreFn,
+    inertia: Option<Score>,
 }
 
 /// Orders children by `score(ctx, index)`, highest first. Under
@@ -19,26 +19,26 @@ pub struct ByScore<F, S> {
 /// score that is not comparable with itself (NaN) leaves its child out.
 /// Integer scores make a dynamic priority order. [`crate::per_child!`] writes
 /// the scorer as one arm per child, next to the child it scores.
-pub fn by_score<F, S>(score: F) -> ByScore<F, S> {
+pub fn by_score<ScoreFn, Score>(score: ScoreFn) -> ByScore<ScoreFn, Score> {
     ByScore {
         score,
         inertia: None,
     }
 }
 
-impl<F, S> ByScore<F, S> {
+impl<ScoreFn, Score> ByScore<ScoreFn, Score> {
     /// Adds `bonus` to the running child's score, so a challenger has to beat
     /// it by more than `bonus` to go first.
-    pub fn inertia(mut self, bonus: S) -> Self {
+    pub fn inertia(mut self, bonus: Score) -> Self {
         self.inertia = Some(bonus);
         self
     }
 }
 
-impl<C, F, S> BtOrder<C> for ByScore<F, S>
+impl<Context, ScoreFn, Score> BtOrder<Context> for ByScore<ScoreFn, Score>
 where
-    F: Fn(&C, usize) -> S,
-    S: Copy + PartialOrd + Add<Output = S> + Debug + 'static,
+    ScoreFn: Fn(&Context, usize) -> Score,
+    Score: Copy + PartialOrd + Add<Output = Score> + Debug + 'static,
 {
     type State = ();
     type Memory = ();
@@ -52,11 +52,11 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
+        ctx: &mut Context,
         pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize> {
-        let mut best: Option<(usize, S)> = None;
+        let mut best: Option<(usize, Score)> = None;
         for index in pass.left() {
             let mut score = (self.score)(ctx, index);
             // Every child is scored at the first position; record them there.

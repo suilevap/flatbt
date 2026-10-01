@@ -48,7 +48,7 @@ const MAX_CHILDREN: usize = 64;
 ///
 /// `State` lives as long as the invocation and survives `Evaluate`; `Memory`
 /// lives as long as the agent (see [`BtNode::Memory`](crate::BtNode::Memory)).
-pub trait BtOrder<C> {
+pub trait BtOrder<Context> {
     type State: Default + Send + 'static;
     type Memory: Default + Send + 'static;
 
@@ -63,7 +63,7 @@ pub trait BtOrder<C> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        ctx: &mut Context,
         pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize>;
@@ -134,8 +134,8 @@ impl Pass {
 }
 
 /// Children visited in the order a [`BtOrder`] decides.
-pub struct Ordered<O, Children> {
-    order: O,
+pub struct Ordered<Order, Children> {
+    order: Order,
     children: Children,
 }
 
@@ -151,7 +151,7 @@ pub struct Ordered<O, Children> {
 /// Only controls that visit positions in order -- 0, the running one, or the
 /// next -- are supported, as `select` and `seq` do. Any other position reports
 /// a diagnostic and fails. At most 64 children; more fails to build.
-pub fn order_by<O, Children>(order: O, children: Children) -> Ordered<O, Children> {
+pub fn order_by<Order, Children>(order: Order, children: Children) -> Ordered<Order, Children> {
     Ordered { order, children }
 }
 
@@ -184,14 +184,15 @@ fn unsupported(position: usize, at: Option<usize>) {
     ));
 }
 
-impl<C, A, S, O, Children> BtChildren<C, A, S> for Ordered<O, Children>
+impl<Context, Act, Shape, Order, Children> BtChildren<Context, Act, Shape>
+    for Ordered<Order, Children>
 where
-    S: ParamShape,
-    O: BtOrder<C>,
-    Children: BtChildren<C, A, S>,
+    Shape: ParamShape,
+    Order: BtOrder<Context>,
+    Children: BtChildren<Context, Act, Shape>,
 {
-    type State = OrderedState<O::State, Children::State>;
-    type Memory = OrderedMemory<O::Memory, Children::Memory>;
+    type State = OrderedState<Order::State, Children::State>;
+    type Memory = OrderedMemory<Order::Memory, Children::Memory>;
     const LEN: usize = Children::LEN;
     const NODES: usize = Children::NODES;
 
@@ -208,11 +209,11 @@ where
         state: &mut Self::State,
         memory: &mut Self::Memory,
         first: usize,
-        ctx: &mut C,
-        params: &mut S::Value<'_>,
+        ctx: &mut Context,
+        params: &mut Shape::Value<'_>,
         entry: Entry<'_>,
-        next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
-    ) -> Result<NodeResult<A>, ControlOp> {
+        next: &mut impl FnMut(&mut Context, usize, bool) -> ControlOp,
+    ) -> Result<NodeResult<Act>, ControlOp> {
         // The child count is static, so too many is a build error, not a check
         // on every update.
         const {
@@ -228,7 +229,7 @@ where
                     // One child at a time: the order, not the tuple, decides
                     // which child the next position holds.
                     let mut ended = false;
-                    let mut stop = |_: &mut C, _: usize, succeeded: bool| {
+                    let mut stop = |_: &mut Context, _: usize, succeeded: bool| {
                         ended = succeeded;
                         ControlOp::Failure
                     };
@@ -264,9 +265,9 @@ where
     ) {
         inspector.field(
             "order",
-            &format_args!("{}", BtOrder::<C>::kind(&self.order)),
+            &format_args!("{}", BtOrder::<Context>::kind(&self.order)),
         );
-        BtOrder::<C>::inspect(
+        BtOrder::<Context>::inspect(
             &self.order,
             state.map(|state| &state.order),
             &memory.order,
@@ -303,28 +304,28 @@ impl core::fmt::Debug for Tried {
     }
 }
 
-impl<O, Children> Ordered<O, Children> {
+impl<Order, Children> Ordered<Order, Children> {
     /// The child at `position`, picking it if the pass has moved on. `Err`
     /// after reporting a position out of order.
     #[inline]
-    fn child_at<C, A, S>(
+    fn child_at<Context, Act, Shape>(
         &self,
-        state: &mut OrderedState<O::State, Children::State>,
-        memory: &mut O::Memory,
+        state: &mut OrderedState<Order::State, Children::State>,
+        memory: &mut Order::Memory,
         position: usize,
-        ctx: &mut C,
+        ctx: &mut Context,
         entry: Entry<'_>,
     ) -> Result<Option<u8>, ()>
     where
-        S: ParamShape,
-        O: BtOrder<C>,
-        Children: BtChildren<C, A, S>,
+        Shape: ParamShape,
+        Order: BtOrder<Context>,
+        Children: BtChildren<Context, Act, Shape>,
     {
         Ok(match state.at {
             // A new pass: on entry, or Evaluate back at the start.
-            None if position == 0 => self.pick::<C, A, S>(state, memory, ctx, 0, entry),
+            None if position == 0 => self.pick::<Context, Act, Shape>(state, memory, ctx, 0, entry),
             _ if position == 0 && entry.mode() == EntryMode::Evaluate => {
-                self.pick::<C, A, S>(state, memory, ctx, 0, entry)
+                self.pick::<Context, Act, Shape>(state, memory, ctx, 0, entry)
             }
             // The same position again: Resume, or Evaluate continuing it.
             Some((at, child)) if at as usize == position => child,
@@ -333,7 +334,7 @@ impl<O, Children> Ordered<O, Children> {
                 if let Some(child) = child {
                     state.used |= 1 << child;
                 }
-                self.pick::<C, A, S>(state, memory, ctx, position, entry)
+                self.pick::<Context, Act, Shape>(state, memory, ctx, position, entry)
             }
             _ => {
                 // A misuse by a custom control: logged, not traced, so this
@@ -346,18 +347,18 @@ impl<O, Children> Ordered<O, Children> {
 
     /// Asks the order for the child at `position` and records it.
     #[inline]
-    fn pick<C, A, S>(
+    fn pick<Context, Act, Shape>(
         &self,
-        state: &mut OrderedState<O::State, Children::State>,
-        memory: &mut O::Memory,
-        ctx: &mut C,
+        state: &mut OrderedState<Order::State, Children::State>,
+        memory: &mut Order::Memory,
+        ctx: &mut Context,
         position: usize,
         entry: Entry<'_>,
     ) -> Option<u8>
     where
-        S: ParamShape,
-        O: BtOrder<C>,
-        Children: BtChildren<C, A, S>,
+        Shape: ParamShape,
+        Order: BtOrder<Context>,
+        Children: BtChildren<Context, Act, Shape>,
     {
         if position == 0 {
             state.used = 0;
@@ -385,37 +386,37 @@ impl<O, Children> Ordered<O, Children> {
 /// `select(order_by(by_score(score), children))`: a utility selector. For
 /// inertia, write the composition with `by_score(score).inertia(x)`;
 /// [`crate::per_child!`] writes the scores next to their children.
-pub fn utility<F, S, Children>(
-    score: F,
+pub fn utility<ScoreFn, Score, Children>(
+    score: ScoreFn,
     children: Children,
-) -> ControlNode<Selector, Ordered<ByScore<F, S>, Children>> {
+) -> ControlNode<Selector, Ordered<ByScore<ScoreFn, Score>, Children>> {
     select(order_by(by_score(score), children))
 }
 
 /// `select(order_by(shuffled(rng), children))`: runs a random child, falling
 /// back to a random one of the rest.
-pub fn random_select<R, Children>(
-    rng: R,
+pub fn random_select<Rng, Children>(
+    rng: Rng,
     children: Children,
-) -> ControlNode<Selector, Ordered<Shuffled<R>, Children>> {
+) -> ControlNode<Selector, Ordered<Shuffled<Rng>, Children>> {
     select(order_by(shuffled(rng), children))
 }
 
 /// `select(order_by(weighted(rng, weight), children))`: runs a child drawn by
 /// weight, falling back to one drawn from the rest.
-pub fn weighted_select<R, W, Children>(
-    rng: R,
-    weight: W,
+pub fn weighted_select<Rng, Weight, Children>(
+    rng: Rng,
+    weight: Weight,
     children: Children,
-) -> ControlNode<Selector, Ordered<Weighted<R, W>, Children>> {
+) -> ControlNode<Selector, Ordered<Weighted<Rng, Weight>, Children>> {
     select(order_by(weighted(rng, weight), children))
 }
 
 /// `seq(order_by(shuffled(rng), children))`: runs every child in a random
 /// order.
-pub fn shuffle_seq<R, Children>(
-    rng: R,
+pub fn shuffle_seq<Rng, Children>(
+    rng: Rng,
     children: Children,
-) -> ControlNode<Sequence, Ordered<Shuffled<R>, Children>> {
+) -> ControlNode<Sequence, Ordered<Shuffled<Rng>, Children>> {
     seq(order_by(shuffled(rng), children))
 }

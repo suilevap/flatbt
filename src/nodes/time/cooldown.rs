@@ -4,9 +4,9 @@ use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
 /// A child that cannot start again until a span of time has passed.
-pub struct Cooldown<D, N> {
-    span: D,
-    child: N,
+pub struct Cooldown<Span, Child> {
+    span: Span,
+    child: Child,
     after_success: bool,
 }
 
@@ -18,7 +18,7 @@ pub struct Cooldown<D, N> {
 /// agent's own. A child that starts and is rejected in the same update, such
 /// as a failed candidate under `Evaluate`, still counts as a try. A running
 /// child is never interrupted.
-pub fn cooldown<D, N>(span: D, child: N) -> Cooldown<D, N> {
+pub fn cooldown<Span, Child>(span: Span, child: Child) -> Cooldown<Span, Child> {
     Cooldown {
         span,
         child,
@@ -29,7 +29,7 @@ pub fn cooldown<D, N>(span: D, child: N) -> Cooldown<D, N> {
 /// Like [`cooldown`], but measured from the child's last success: failed
 /// attempts can be retried at once. `success_cooldown(10s, heal)` heals at
 /// most once every ten seconds, however many heals were interrupted.
-pub fn success_cooldown<D, N>(span: D, child: N) -> Cooldown<D, N> {
+pub fn success_cooldown<Span, Child>(span: Span, child: Child) -> Cooldown<Span, Child> {
     Cooldown {
         span,
         child,
@@ -39,48 +39,56 @@ pub fn success_cooldown<D, N>(span: D, child: N) -> Cooldown<D, N> {
 
 /// Whether the child has started in this run, and its state.
 #[derive(Default)]
-pub struct CooldownState<S> {
-    child: S,
+pub struct CooldownState<ChildState> {
+    child: ChildState,
     started: bool,
 }
 
 /// When the cooldown last began, and the child's memory.
-pub struct CooldownMemory<I, M> {
-    child: M,
-    last: Option<I>,
+pub struct CooldownMemory<Instant, ChildMemory> {
+    child: ChildMemory,
+    last: Option<Instant>,
 }
 
-// Derived `Default` would require `I: Default`.
-impl<I, M: Default> Default for CooldownMemory<I, M> {
+// Derived `Default` would require `Instant: Default`.
+impl<Instant, ChildMemory: Default> Default for CooldownMemory<Instant, ChildMemory> {
     fn default() -> Self {
         Self {
-            child: M::default(),
+            child: ChildMemory::default(),
             last: None,
         }
     }
 }
 
-impl<C, A, P, N, S, Mem> BtNode<C, A, P> for Cooldown<C::Duration, N>
+impl<Context, Act, Params, Child, ChildState, ChildMemory> BtNode<Context, Act, Params>
+    for Cooldown<Context::Duration, Child>
 where
-    C: BtClock,
-    P: ParamValue,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
-    S: Default + Send + 'static,
-    Mem: Default + Send + 'static,
+    Context: BtClock,
+    Params: ParamValue,
+    Child: for<'a> BtNode<
+            Context,
+            Act,
+            <Params::Shape as ParamShape>::Value<'a>,
+            State = ChildState,
+            Memory = ChildMemory,
+        >,
+    ChildState: Default + Send + 'static,
+    ChildMemory: Default + Send + 'static,
 {
-    type State = CooldownState<S>;
-    type Memory = CooldownMemory<C::Instant, Mem>;
-    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
+    type State = CooldownState<ChildState>;
+    type Memory = CooldownMemory<Context::Instant, ChildMemory>;
+    const NODES: usize =
+        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         if !state.started {
             if let Some(last) = memory.last
                 && !elapsed(ctx, last, self.span)
@@ -123,7 +131,7 @@ where
             if let Some(last) = &memory.last {
                 inspector.field("last", last);
             }
-            BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+            BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state.map(|state| &state.child),
                 &memory.child,

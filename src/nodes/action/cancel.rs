@@ -15,13 +15,13 @@ pub trait BtCancel {
 /// Stores the value and an optional function pointer inline, without allocation.
 /// Callbacks cannot capture variables; keep cancellation data in the value.
 /// Cancellation may call the function indirectly. Deref/DerefMut expose the value.
-pub struct CancelOnDrop<T> {
-    value: T,
-    cancel: Option<fn(&mut T)>,
+pub struct CancelOnDrop<Inner> {
+    value: Inner,
+    cancel: Option<fn(&mut Inner)>,
 }
 
-impl<T> CancelOnDrop<T> {
-    pub fn new(value: T, cancel: fn(&mut T)) -> Self {
+impl<Inner> CancelOnDrop<Inner> {
+    pub fn new(value: Inner, cancel: fn(&mut Inner)) -> Self {
         Self {
             value,
             cancel: Some(cancel),
@@ -34,27 +34,27 @@ impl<T> CancelOnDrop<T> {
     }
 }
 
-impl<T: BtCancel> From<T> for CancelOnDrop<T> {
-    fn from(value: T) -> Self {
-        Self::new(value, T::cancel)
+impl<Inner: BtCancel> From<Inner> for CancelOnDrop<Inner> {
+    fn from(value: Inner) -> Self {
+        Self::new(value, Inner::cancel)
     }
 }
 
-impl<T> Deref for CancelOnDrop<T> {
-    type Target = T;
+impl<Inner> Deref for CancelOnDrop<Inner> {
+    type Target = Inner;
 
-    fn deref(&self) -> &T {
+    fn deref(&self) -> &Inner {
         &self.value
     }
 }
 
-impl<T> DerefMut for CancelOnDrop<T> {
-    fn deref_mut(&mut self) -> &mut T {
+impl<Inner> DerefMut for CancelOnDrop<Inner> {
+    fn deref_mut(&mut self) -> &mut Inner {
         &mut self.value
     }
 }
 
-impl<T> Drop for CancelOnDrop<T> {
+impl<Inner> Drop for CancelOnDrop<Inner> {
     fn drop(&mut self) {
         if let Some(cancel) = self.cancel {
             cancel(&mut self.value);

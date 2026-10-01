@@ -60,6 +60,10 @@ pub trait BtClock {
 
 /// Whether `span` has passed since `since`.
 #[inline]
-fn elapsed<C: BtClock>(ctx: &C, since: C::Instant, span: C::Duration) -> bool {
+fn elapsed<Context: BtClock>(
+    ctx: &Context,
+    since: Context::Instant,
+    span: Context::Duration,
+) -> bool {
     ctx.now() >= since + span
 }

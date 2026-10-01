@@ -10,7 +10,7 @@ enum Outcome {
 
 impl Outcome {
     #[inline]
-    fn result<A>(self) -> NodeResult<A> {
+    fn result<Act>(self) -> NodeResult<Act> {
         match self {
             Self::Success => NodeResult::Success,
             Self::Failure => NodeResult::Failure,
@@ -19,14 +19,14 @@ impl Outcome {
 }
 
 /// A child whose terminal results are mapped; `Running` passes through.
-pub struct Remap<N> {
-    child: N,
+pub struct Remap<Child> {
+    child: Child,
     success: Outcome,
     failure: Outcome,
 }
 
 /// Swaps Success and Failure; `Running` and its act pass through.
-pub fn invert<N>(child: N) -> Remap<N> {
+pub fn invert<Child>(child: Child) -> Remap<Child> {
     Remap {
         child,
         success: Outcome::Failure,
@@ -35,7 +35,7 @@ pub fn invert<N>(child: N) -> Remap<N> {
 }
 
 /// Succeeds whenever `child` ends; `Running` passes through.
-pub fn force_success<N>(child: N) -> Remap<N> {
+pub fn force_success<Child>(child: Child) -> Remap<Child> {
     Remap {
         child,
         success: Outcome::Success,
@@ -44,7 +44,7 @@ pub fn force_success<N>(child: N) -> Remap<N> {
 }
 
 /// Fails whenever `child` ends; `Running` passes through.
-pub fn force_failure<N>(child: N) -> Remap<N> {
+pub fn force_failure<Child>(child: Child) -> Remap<Child> {
     Remap {
         child,
         success: Outcome::Failure,
@@ -52,20 +52,22 @@ pub fn force_failure<N>(child: N) -> Remap<N> {
     }
 }
 
-impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
-    type State = N::State;
-    type Memory = N::Memory;
-    const NODES: usize = 1 + N::NODES;
+impl<Context, Act, Params, Child: BtNode<Context, Act, Params>> BtNode<Context, Act, Params>
+    for Remap<Child>
+{
+    type State = Child::State;
+    type Memory = Child::Memory;
+    const NODES: usize = 1 + Child::NODES;
 
     #[inline]
     fn update(
         &self,
-        state: &mut N::State,
-        memory: &mut N::Memory,
-        ctx: &mut C,
-        params: P,
+        state: &mut Child::State,
+        memory: &mut Child::Memory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         match entry.run(1, &self.child, state, memory, ctx, params) {
             running @ NodeResult::Running(_) => running,
             NodeResult::Success => self.success.result(),
@@ -73,7 +75,12 @@ impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Remap<N> {
         }
     }
 
-    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Child::State>,
+        memory: &Child::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         let kind = match (self.success, self.failure) {
             (Outcome::Failure, Outcome::Success) => "invert",
             (Outcome::Success, _) => "force_success",

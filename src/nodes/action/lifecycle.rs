@@ -13,13 +13,13 @@ use crate::{BtNode, Entry, NodeResult};
 ///
 /// State owns cancellation. Use [`crate::CancelOnDrop`] or a custom Drop;
 /// disarm in complete when cancellation is no longer needed. No cancel traversal.
-/// `P` carries inputs/outputs separately from `C`. Parameters are borrowed each
+/// `Params` carries inputs/outputs separately from `Context`. Parameters are borrowed each
 /// update; store owned snapshots in State when needed.
-pub trait BtAction<C, A = (), P = ()> {
+pub trait BtAction<Context, Act = (), Params = ()> {
     type State: Send + 'static;
 
-    fn start(&self, ctx: &mut C, params: P) -> Option<Self::State>;
-    fn is_in_progress(&self, state: &Self::State, ctx: &C, params: P) -> bool;
+    fn start(&self, ctx: &mut Context, params: Params) -> Option<Self::State>;
+    fn is_in_progress(&self, state: &Self::State, ctx: &Context, params: Params) -> bool;
 
     /// Runs inline while progress is true, and says what the agent is doing.
     ///
@@ -28,10 +28,10 @@ pub trait BtAction<C, A = (), P = ()> {
     /// a tree that decides nothing the act type is `()` and the body is empty;
     /// external operations that advance on their own also do no work here, they
     /// just restate the act.
-    fn tick(&self, state: &mut Self::State, ctx: &mut C, params: P) -> A;
+    fn tick(&self, state: &mut Self::State, ctx: &mut Context, params: Params) -> Act;
 
     /// Handles completion before state drops. Disarm cancellation handles here.
-    fn complete(&self, _state: &mut Self::State, _ctx: &mut C, _params: P) -> bool {
+    fn complete(&self, _state: &mut Self::State, _ctx: &mut Context, _params: Params) -> bool {
         true
     }
 
@@ -42,32 +42,38 @@ pub trait BtAction<C, A = (), P = ()> {
 }
 
 /// Adapts an action to [`BtNode`].
-pub struct ActionNode<T>(T);
+pub struct ActionNode<Action>(Action);
 
-/// Initializes action state on entry. `T::State` need not implement Default.
-pub fn action<T>(action: T) -> ActionNode<T> {
+/// Initializes action state on entry. `Action::State` need not implement Default.
+pub fn action<Action>(action: Action) -> ActionNode<Action> {
     ActionNode(action)
 }
 
-impl<C, A, P: ParamValue, T, S> BtNode<C, A, P> for ActionNode<T>
+impl<Context, Act, Params: ParamValue, Action, ActionState> BtNode<Context, Act, Params>
+    for ActionNode<Action>
 where
-    T: for<'a> BtAction<C, A, <P::Shape as ParamShape>::Value<'a>, State = S>,
-    S: Send + 'static,
+    Action: for<'a> BtAction<
+            Context,
+            Act,
+            <Params::Shape as ParamShape>::Value<'a>,
+            State = ActionState,
+        >,
+    ActionState: Send + 'static,
 {
-    type State = Option<S>;
+    type State = Option<ActionState>;
     type Memory = ();
 
     fn update(
         &self,
         state: &mut Self::State,
         _: &mut (),
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let mut params = params.into_value();
         if state.is_none() {
-            *state = self.0.start(ctx, P::Shape::reborrow(&mut params));
+            *state = self.0.start(ctx, Params::Shape::reborrow(&mut params));
             let started = state.is_some();
             entry.record("started", || started);
         }
@@ -76,13 +82,16 @@ where
         };
         if self
             .0
-            .is_in_progress(active, ctx, P::Shape::reborrow(&mut params))
+            .is_in_progress(active, ctx, Params::Shape::reborrow(&mut params))
         {
-            NodeResult::Running(self.0.tick(active, ctx, P::Shape::reborrow(&mut params)))
+            NodeResult::Running(
+                self.0
+                    .tick(active, ctx, Params::Shape::reborrow(&mut params)),
+            )
         } else {
             let completed = self
                 .0
-                .complete(active, ctx, P::Shape::reborrow(&mut params));
+                .complete(active, ctx, Params::Shape::reborrow(&mut params));
             entry.record("completed", || completed);
             let result = if completed {
                 NodeResult::Success
@@ -94,11 +103,11 @@ where
         }
     }
 
-    fn inspect(&self, state: Option<&Option<S>>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("action", state.is_some()).with_type_name::<T>();
+    fn inspect(&self, state: Option<&Option<ActionState>>, _: &(), inspector: &mut dyn Inspector) {
+        let node = NodeInfo::new("action", state.is_some()).with_type_name::<Action>();
         inspector.node(node, |inspector| {
             let started = state.and_then(Option::as_ref);
-            BtAction::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+            BtAction::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.0, started, inspector,
             );
         });

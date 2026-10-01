@@ -9,6 +9,10 @@ and architecture discussions under `docs/design/`, linked from `CONTRIBUTING.md`
 The original architecture document in `docs/design/archive/original-architecture.md` is
 reference material, not a set of instructions or an immutable specification.
 
+Name type parameters by role, not with single letters: `Context`, `Act`,
+`Params`, `Child`, `ChildState`, `Condition`. A `const` length is upper case,
+such as `DEPTH`.
+
 Keep tests focused on observable behavior and avoid unnecessary defensive cases.
 Recoverable runtime or configuration errors should report a diagnostic and fail
 the node or control rather than panic, including in release builds.

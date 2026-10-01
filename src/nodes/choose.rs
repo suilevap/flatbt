@@ -2,9 +2,9 @@ use crate::{BtControl, ControlNode, ControlOp};
 
 /// Selects from shared context on Evaluate; forwards the child's result.
 /// Resume follows the saved child.
-pub struct Choose<F>(pub F);
+pub struct Choose<Chooser>(pub Chooser);
 
-impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
+impl<Context, Chooser: Fn(&Context) -> usize> BtControl<Context> for Choose<Chooser> {
     type State = ();
     type Memory = ();
 
@@ -12,21 +12,42 @@ impl<C, F: Fn(&C) -> usize> BtControl<C> for Choose<F> {
         "choose"
     }
 
-    fn begin(&self, _: &mut (), _: &mut (), ctx: &mut C, _: Option<usize>, _: usize) -> ControlOp {
+    fn begin(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut Context,
+        _: Option<usize>,
+        _: usize,
+    ) -> ControlOp {
         ControlOp::RunChild((self.0)(ctx))
     }
 
-    fn child_succeeded(&self, _: &mut (), _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_succeeded(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        _: &mut Context,
+        _: usize,
+        _: usize,
+    ) -> ControlOp {
         ControlOp::Success
     }
 
-    fn child_failed(&self, _: &mut (), _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_failed(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        _: &mut Context,
+        _: usize,
+        _: usize,
+    ) -> ControlOp {
         ControlOp::Failure
     }
 }
 
 /// Static choice node, built by [`crate::choose!`].
-pub type ChooseNode<F, Children> = ControlNode<Choose<F>, Children>;
+pub type ChooseNode<Chooser, Children> = ControlNode<Choose<Chooser>, Children>;
 
 /// Matches shared context to select a statically typed node.
 ///
