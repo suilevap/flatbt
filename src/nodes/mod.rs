@@ -6,6 +6,7 @@ pub mod action;
 pub mod choose;
 pub mod focus;
 pub mod function;
+pub mod goal;
 pub mod if_else;
 pub mod map_act;
 pub mod order;
@@ -19,6 +20,7 @@ pub use action::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
 pub use choose::{Choose, ChooseNode};
 pub use focus::{Focus, focus};
 pub use function::{ActionWhile, CheckWith, LeafWith, action_while, check_with, leaf_with};
+pub use goal::{GoalCall, Goals, Need, goals, need, when_goal, with_goal};
 pub use if_else::{IfElse, if_else};
 pub use map_act::{MapAct, map_act};
 pub use order::{

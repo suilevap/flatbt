@@ -103,6 +103,10 @@ name = "trace"
 required-features = ["extras"]
 
 [[test]]
+name = "goal"
+required-features = ["extras"]
+
+[[test]]
 name = "time"
 required-features = ["extras"]
 

@@ -380,6 +380,38 @@ its branch is not running, and shown by `describe().with_inactive()`. In Bevy,
 copy `Time::elapsed()` into the blackboard in the gather system, and use
 `Duration` for both types.
 
+## Goals
+
+`goals` runs one subtree per kind of goal, and a goal asks for what it needs
+first with `need`, which runs the subtree for the subgoal and returns its
+result. A blocker is just a goal: `select` and `seq` decide what to do about it.
+
+```rust,ignore
+let tree = goals::<8, _, _>(
+    |w: &World| Goal::Reach(w.target),
+    goal_match!(|goal: &Goal| {
+        Goal::Reach(_) => select((
+            seq((need(|w: &World, g: &Goal| w.door_on_the_way(g).then_some(Goal::OpenDoor)), walk)),
+            seq((need(|w: &World, g: &Goal| w.door_on_the_way(g).then_some(Goal::Climb)), walk)),
+        )),
+        Goal::OpenDoor => seq((need(|w: &World, _: &Goal| (!w.has_key).then_some(Goal::GetKey)), open)),
+        Goal::GetKey => seq((need(|w: &World, _: &Goal| Some(Goal::Reach(w.key_at))), pick_up)),
+        Goal::Climb => climb,
+    }),
+);
+```
+
+- `need` returns `Running` with the subgoal's act, `Success` once it is
+  achieved (or nothing was needed), and `Failure` when it cannot be.
+- A subgoal that failed is not asked for again while the goal that asked
+  stays on the stack, so `select` falls through to the next way.
+- `need` fails for a goal already on the stack (a cycle) or a full stack.
+- Every update re-asks from the root: a goal achieved by other means ends the
+  subgoals below it, and a changed root goal starts over.
+- The stack holds at most `N` goals in run state, no heap; preemption drops it.
+- Subtrees receive the goal as a parameter: `with_goal(node)` gives a node
+  `&Goal`, `no_params(node)` adapts a node taking `()`.
+
 ## Bevy
 
 Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns what

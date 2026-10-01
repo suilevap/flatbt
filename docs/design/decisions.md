@@ -560,3 +560,21 @@ fired after its branch ended. See [Tree memory](tree-memory-draft.md).
   included, since the subtree has just reconsidered either way.
 - **Bevy staggering stays in `tick_mode`**: it decides whether the tree runs at
   all, which no node can.
+
+## 2026-10-01 — Goal stack
+
+See [Goal stack](goal-stack-draft.md).
+
+- **`need` calls the subgoal and returns its result** rather than pushing it.
+  A push has no honest `NodeResult`: `Failure` lets a `select` run its next
+  way in the same update, `Success` lets a `seq` act. A call gives
+  `Running` with the subgoal's act, and frames start and end as calls do.
+- **Recursion through a trait object, frames in fixed arrays.** The dispatch
+  subtree cannot contain itself, so `need` reaches the next frame through
+  `&mut dyn Subgoals`, built on the stack each update. No heap.
+- **Failed subgoals are kept per asker**, while the asker is on the stack, so
+  `Evaluate` falls through to another way instead of retrying.
+- **Dispatch memory is per depth**: two frames run at once and cannot share
+  one memory.
+- **The stack is run state.** A goal that must outlive preemption lives in the
+  blackboard and is read by `root`.
