@@ -23,24 +23,24 @@ impl ControlOp {
 
 /// Policy state plus child state, whose variant encodes selection.
 #[derive(Default)]
-pub struct ControlState<S, ChildrenState> {
+pub struct ControlState<PolicyState, ChildrenState> {
     // Drop descendants before policy state.
     children: ChildrenState,
-    inner: S,
+    inner: PolicyState,
 }
 
 /// Policy memory plus every child's memory.
 #[derive(Default)]
-pub struct ControlMemory<M, ChildrenMemory> {
+pub struct ControlMemory<PolicyMemory, ChildrenMemory> {
     children: ChildrenMemory,
-    inner: M,
+    inner: PolicyMemory,
 }
 
 /// Static control-flow policy with per-invocation state, and memory kept for
 /// the agent's lifetime (`()` for most policies; see [`BtNode::Memory`]).
 /// Child indices must be below `child_count`. Policies must terminate;
 /// execution has no iteration budget.
-pub trait BtControl<C> {
+pub trait BtControl<Context> {
     type State: Default + Send + 'static;
     type Memory: Default + Send + 'static;
 
@@ -50,7 +50,7 @@ pub trait BtControl<C> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        ctx: &mut Context,
         active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp;
@@ -60,7 +60,7 @@ pub trait BtControl<C> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        ctx: &mut Context,
         completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp;
@@ -70,7 +70,7 @@ pub trait BtControl<C> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        ctx: &mut Context,
         completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp;
@@ -96,23 +96,26 @@ pub trait BtControl<C> {
 }
 
 /// Policy with statically typed children.
-pub struct ControlNode<P, Children> {
-    policy: P,
+pub struct ControlNode<Policy, Children> {
+    policy: Policy,
     children: Children,
 }
 
 /// Combines a policy and children with static dispatch.
-pub fn control<P, Children>(policy: P, children: Children) -> ControlNode<P, Children> {
+pub fn control<Policy, Children>(
+    policy: Policy,
+    children: Children,
+) -> ControlNode<Policy, Children> {
     ControlNode { policy, children }
 }
 
-impl<C, A, Params: ParamValue, P: BtControl<C>, Children> BtNode<C, A, Params>
-    for ControlNode<P, Children>
+impl<Context, Act, Params: ParamValue, Policy: BtControl<Context>, Children>
+    BtNode<Context, Act, Params> for ControlNode<Policy, Children>
 where
-    Children: BtChildren<C, A, Params::Shape>,
+    Children: BtChildren<Context, Act, Params::Shape>,
 {
-    type State = ControlState<P::State, Children::State>;
-    type Memory = ControlMemory<P::Memory, Children::Memory>;
+    type State = ControlState<Policy::State, Children::State>;
+    type Memory = ControlMemory<Policy::Memory, Children::Memory>;
     const NODES: usize = 1 + Children::NODES;
 
     // A tree is one type. Inlining every level into the root's update lets the
@@ -122,10 +125,10 @@ where
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        ctx: &mut Context,
         params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let mut params = params.into_value();
         let active_child_index = self.children.active_child_index(&state.children);
         let op = match (entry.mode(), active_child_index) {
@@ -158,15 +161,18 @@ where
         memory: &Self::Memory,
         inspector: &mut dyn Inspector,
     ) {
-        let kind = BtControl::<C>::kind(&self.policy);
+        let kind = BtControl::<Context>::kind(&self.policy);
         inspector.node(NodeInfo::new(kind, state.is_some()), |inspector| {
             let children = state.map(|state| &state.children);
             let active = children.and_then(|children| {
-                BtChildren::<C, A, Params::Shape>::active_child_index(&self.children, children)
+                BtChildren::<Context, Act, Params::Shape>::active_child_index(
+                    &self.children,
+                    children,
+                )
             });
             let policy = state.map(|state| &state.inner);
-            BtControl::<C>::inspect(&self.policy, policy, &memory.inner, active, inspector);
-            BtChildren::<C, A, Params::Shape>::inspect_children(
+            BtControl::<Context>::inspect(&self.policy, policy, &memory.inner, active, inspector);
+            BtChildren::<Context, Act, Params::Shape>::inspect_children(
                 &self.children,
                 children,
                 &memory.children,
@@ -176,22 +182,22 @@ where
     }
 }
 
-impl<P, Children> ControlNode<P, Children> {
+impl<Policy, Children> ControlNode<Policy, Children> {
     /// Runs children from `op` while the policy asks for them in order.
     /// `Err` holds a request for any other child.
     #[inline(always)]
-    fn run<C, A, S: ParamShape>(
+    fn run<Context, Act, Shape: ParamShape>(
         &self,
-        state: &mut ControlState<P::State, Children::State>,
-        memory: &mut ControlMemory<P::Memory, Children::Memory>,
+        state: &mut ControlState<Policy::State, Children::State>,
+        memory: &mut ControlMemory<Policy::Memory, Children::Memory>,
         op: ControlOp,
-        ctx: &mut C,
-        params: &mut S::Value<'_>,
+        ctx: &mut Context,
+        params: &mut Shape::Value<'_>,
         entry: Entry<'_>,
-    ) -> Result<NodeResult<A>, ControlOp>
+    ) -> Result<NodeResult<Act>, ControlOp>
     where
-        P: BtControl<C>,
-        Children: BtChildren<C, A, S>,
+        Policy: BtControl<Context>,
+        Children: BtChildren<Context, Act, Shape>,
     {
         let child_index = match op {
             ControlOp::Success => return Ok(NodeResult::Success),
@@ -209,7 +215,7 @@ impl<P, Children> ControlNode<P, Children> {
         // The recorder, not the entry: capturing the entry's mode would change
         // this closure, and the code around it, in release builds.
         let recorder = entry.recorder();
-        let mut next = |ctx: &mut C, completed: usize, succeeded: bool| {
+        let mut next = |ctx: &mut Context, completed: usize, succeeded: bool| {
             let op = if succeeded {
                 self.policy
                     .child_succeeded(inner, inner_memory, ctx, completed, Children::LEN)
@@ -238,18 +244,18 @@ impl<P, Children> ControlNode<P, Children> {
 
     /// Follows a policy that jumps between children out of order.
     #[inline(never)]
-    fn run_rest<C, A, S: ParamShape>(
+    fn run_rest<Context, Act, Shape: ParamShape>(
         &self,
-        state: &mut ControlState<P::State, Children::State>,
-        memory: &mut ControlMemory<P::Memory, Children::Memory>,
+        state: &mut ControlState<Policy::State, Children::State>,
+        memory: &mut ControlMemory<Policy::Memory, Children::Memory>,
         mut op: ControlOp,
-        ctx: &mut C,
-        params: &mut S::Value<'_>,
+        ctx: &mut Context,
+        params: &mut Shape::Value<'_>,
         entry: Entry<'_>,
-    ) -> NodeResult<A>
+    ) -> NodeResult<Act>
     where
-        P: BtControl<C>,
-        Children: BtChildren<C, A, S>,
+        Policy: BtControl<Context>,
+        Children: BtChildren<Context, Act, Shape>,
     {
         loop {
             match self.run(state, memory, op, ctx, params, entry) {
@@ -270,7 +276,7 @@ pub fn seq<Children>(children: Children) -> ControlNode<Sequence, Children> {
     control(Sequence, children)
 }
 
-impl<C> BtControl<C> for Sequence {
+impl<Context> BtControl<Context> for Sequence {
     type State = ();
     type Memory = ();
 
@@ -283,7 +289,7 @@ impl<C> BtControl<C> for Sequence {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
@@ -299,7 +305,7 @@ impl<C> BtControl<C> for Sequence {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp {
@@ -315,7 +321,7 @@ impl<C> BtControl<C> for Sequence {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         _completed_child_index: usize,
         _child_count: usize,
     ) -> ControlOp {
@@ -333,7 +339,7 @@ pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
     control(Selector, children)
 }
 
-impl<C> BtControl<C> for Selector {
+impl<Context> BtControl<Context> for Selector {
     type State = ();
     type Memory = ();
 
@@ -346,7 +352,7 @@ impl<C> BtControl<C> for Selector {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         _active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
@@ -362,7 +368,7 @@ impl<C> BtControl<C> for Selector {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         _completed_child_index: usize,
         _child_count: usize,
     ) -> ControlOp {
@@ -374,7 +380,7 @@ impl<C> BtControl<C> for Selector {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         completed_child_index: usize,
         child_count: usize,
     ) -> ControlOp {

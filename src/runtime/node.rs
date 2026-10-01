@@ -3,19 +3,19 @@ use crate::trace::{Handle, TraceLog};
 
 /// Success/Failure ends an invocation; Running preserves it.
 ///
-/// `A` is what an agent is *doing* while it runs. A node that occupies the
+/// `Act` is what an agent is *doing* while it runs. A node that occupies the
 /// agent has to say with what, so a decision cannot exist without something
 /// running, and something running cannot be silent about what it is. Trees that
-/// decide nothing use the default, `A = ()`, and say [`NodeResult::RUNNING`].
+/// decide nothing use the default, `Act = ()`, and say [`NodeResult::RUNNING`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use]
-pub enum NodeResult<A = ()> {
+pub enum NodeResult<Act = ()> {
     Success,
     Failure,
-    Running(A),
+    Running(Act),
 }
 
-impl<A> NodeResult<A> {
+impl<Act> NodeResult<Act> {
     /// Reports a diagnostic and returns Failure. Use `Failure` directly for normal
     /// outcomes. With `std`, diagnostics go to stderr unless `set_error_handler` says
     /// otherwise; without it they are discarded.
@@ -29,7 +29,7 @@ impl<A> NodeResult<A> {
     }
 
     /// What the agent is doing, if this invocation is still running.
-    pub fn act(self) -> Option<A> {
+    pub fn act(self) -> Option<Act> {
         match self {
             Self::Running(act) => Some(act),
             _ => None,
@@ -163,16 +163,16 @@ impl<'t> Entry<'t> {
     /// position after this node in preorder: 1 for the first child, plus the
     /// [`NODES`](BtNode::NODES) of each child before it. Same mode.
     #[inline(always)]
-    pub fn run<C, A, P, N: BtNode<C, A, P>>(
+    pub fn run<Context, Act, Params, Child: BtNode<Context, Act, Params>>(
         self,
         offset: usize,
-        child: &N,
-        state: &mut N::State,
-        memory: &mut N::Memory,
-        ctx: &mut C,
-        params: P,
-    ) -> NodeResult<A> {
-        let entry = self.child(offset, N::NODES);
+        child: &Child,
+        state: &mut Child::State,
+        memory: &mut Child::Memory,
+        ctx: &mut Context,
+        params: Params,
+    ) -> NodeResult<Act> {
+        let entry = self.child(offset, Child::NODES);
         let result = child.update(state, memory, ctx, params, entry);
         entry.finish(&result);
         result
@@ -181,16 +181,16 @@ impl<'t> Entry<'t> {
     /// [`run`](Self::run) for a fresh invocation of `child`: mode Evaluate,
     /// recorded as new.
     #[inline(always)]
-    pub fn run_candidate<C, A, P, N: BtNode<C, A, P>>(
+    pub fn run_candidate<Context, Act, Params, Child: BtNode<Context, Act, Params>>(
         self,
         offset: usize,
-        child: &N,
-        state: &mut N::State,
-        memory: &mut N::Memory,
-        ctx: &mut C,
-        params: P,
-    ) -> NodeResult<A> {
-        let entry = self.candidate(offset, N::NODES);
+        child: &Child,
+        state: &mut Child::State,
+        memory: &mut Child::Memory,
+        ctx: &mut Context,
+        params: Params,
+    ) -> NodeResult<Act> {
+        let entry = self.candidate(offset, Child::NODES);
         let result = child.update(state, memory, ctx, params, entry);
         entry.finish(&result);
         result
@@ -220,7 +220,7 @@ impl<'t> Entry<'t> {
 
     /// Records that the node this entry was made for returned `result`.
     #[inline(always)]
-    pub fn finish<A>(self, result: &NodeResult<A>) {
+    pub fn finish<Act>(self, result: &NodeResult<Act>) {
         self.trace.finish(self, result);
     }
 
@@ -234,10 +234,10 @@ impl<'t> Entry<'t> {
     /// entry.record("if", || holds);
     /// ```
     #[inline(always)]
-    pub fn record<R: core::fmt::Debug + 'static>(
+    pub fn record<Recorded: core::fmt::Debug + 'static>(
         self,
         name: &'static str,
-        value: impl FnOnce() -> R,
+        value: impl FnOnce() -> Recorded,
     ) {
         self.trace.value(name, value);
     }
@@ -260,7 +260,7 @@ impl<'t> Entry<'t> {
     /// [`NodeResult::error`], also recorded with this node's call when traced.
     /// Outside debug builds with `std` it is `NodeResult::error` alone.
     #[inline(always)]
-    pub fn error<A>(self, message: impl core::fmt::Display) -> NodeResult<A> {
+    pub fn error<Act>(self, message: impl core::fmt::Display) -> NodeResult<Act> {
         self.trace.error(&message);
         NodeResult::error(message)
     }
@@ -274,8 +274,8 @@ impl From<EntryMode> for Entry<'_> {
 
 /// Immutable definition with owned invocation state and memory.
 ///
-/// `C` is application context; `A` is what a running invocation is doing, and
-/// defaults to `()`; `P` carries parameters, including update-local borrows.
+/// `Context` is application context; `Act` is what a running invocation is doing, and
+/// defaults to `()`; `Params` carries parameters, including update-local borrows.
 ///
 /// A node keeps two kinds of per-agent state:
 ///
@@ -290,7 +290,7 @@ impl From<EntryMode> for Entry<'_> {
 ///   writes. Most nodes have none: `type Memory = ();`.
 ///
 /// Nodes that never occupy the agent -- predicates, instant effects -- stay
-/// generic over `A` and never name it, so the act type unifies from the nodes
+/// generic over `Act` and never name it, so the act type unifies from the nodes
 /// that do decide and is never written out.
 ///
 /// `entry` carries the [`EntryMode`]. Fresh entry receives Evaluate. Existing
@@ -303,7 +303,7 @@ impl From<EntryMode> for Entry<'_> {
 /// errors with [`NodeResult::error`]. User panics propagate.
 ///
 /// [`BtState::forget`]: crate::BtState::forget
-pub trait BtNode<C, A = (), P = ()> {
+pub trait BtNode<Context, Act = (), Params = ()> {
     type State: Default + Send + 'static;
 
     /// Per-agent state that outlives an invocation. `()` for most nodes.
@@ -318,10 +318,10 @@ pub trait BtNode<C, A = (), P = ()> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A>;
+    ) -> NodeResult<Act>;
 
     /// Reports this node, and its descendants, for debugging. `state` is its
     /// invocation state when the node is on the running path; `memory` is

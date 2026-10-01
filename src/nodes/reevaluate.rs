@@ -5,10 +5,10 @@ use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, EntryMode, NodeResult, ReadFn};
 
 /// A child resumed as Evaluate while a condition holds.
-pub struct ReevaluateWhen<F, N, M> {
-    condition: F,
-    child: N,
-    reads: PhantomData<fn() -> M>,
+pub struct ReevaluateWhen<Condition, Child, Reads> {
+    condition: Condition,
+    child: Child,
+    reads: PhantomData<fn() -> Reads>,
 }
 
 /// Passes `Resume` down to `child` as `Evaluate` on updates where
@@ -17,10 +17,13 @@ pub struct ReevaluateWhen<F, N, M> {
 ///
 /// For something that should make the agent reconsider, such as an alarm
 /// changing: `reevaluate_when(|bb: &Guard| bb.alarm_changed, combat)`. The
-/// condition is `Fn(&C) -> bool` or `Fn(&C, P) -> bool`, see [`ReadFn`].
+/// condition is `Fn(&Context) -> bool` or `Fn(&Context, Params) -> bool`, see [`ReadFn`].
 /// Never converts unconditionally: a subtree evaluated on every update is what
 /// `Evaluate` at the root already gives.
-pub fn reevaluate_when<F, N, M>(condition: F, child: N) -> ReevaluateWhen<F, N, M> {
+pub fn reevaluate_when<Condition, Child, Reads>(
+    condition: Condition,
+    child: Child,
+) -> ReevaluateWhen<Condition, Child, Reads> {
     ReevaluateWhen {
         condition,
         child,
@@ -28,29 +31,39 @@ pub fn reevaluate_when<F, N, M>(condition: F, child: N) -> ReevaluateWhen<F, N, 
     }
 }
 
-impl<C, A, P: ParamValue, F, N, S, Mem, M> BtNode<C, A, P> for ReevaluateWhen<F, N, M>
+impl<Context, Act, Params: ParamValue, Condition, Child, ChildState, ChildMemory, Reads>
+    BtNode<Context, Act, Params> for ReevaluateWhen<Condition, Child, Reads>
 where
-    F: ReadFn<C, P, bool, M>,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
-    S: Default + Send + 'static,
-    Mem: Default + Send + 'static,
+    Condition: ReadFn<Context, Params, bool, Reads>,
+    Child: for<'a> BtNode<
+            Context,
+            Act,
+            <Params::Shape as ParamShape>::Value<'a>,
+            State = ChildState,
+            Memory = ChildMemory,
+        >,
+    ChildState: Default + Send + 'static,
+    ChildMemory: Default + Send + 'static,
 {
-    type State = S;
-    type Memory = Mem;
-    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
+    type State = ChildState;
+    type Memory = ChildMemory;
+    const NODES: usize =
+        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
     fn update(
         &self,
-        state: &mut S,
-        memory: &mut Mem,
-        ctx: &mut C,
-        params: P,
+        state: &mut ChildState,
+        memory: &mut ChildMemory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let mut params = params.into_value();
         let entry = if entry.mode() == EntryMode::Resume {
-            let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+            let holds = self
+                .condition
+                .call(ctx, Params::Shape::reborrow(&mut params));
             entry.record("if", || holds);
             if holds {
                 entry.with_mode(EntryMode::Evaluate)
@@ -63,10 +76,15 @@ where
         entry.run(1, &self.child, state, memory, ctx, params)
     }
 
-    fn inspect(&self, state: Option<&S>, memory: &Mem, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("reevaluate_when", state.is_some()).with_fn_name::<F>();
+    fn inspect(
+        &self,
+        state: Option<&ChildState>,
+        memory: &ChildMemory,
+        inspector: &mut dyn Inspector,
+    ) {
+        let node = NodeInfo::new("reevaluate_when", state.is_some()).with_fn_name::<Condition>();
         inspector.node(node, |inspector| {
-            BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+            BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state,
                 memory,

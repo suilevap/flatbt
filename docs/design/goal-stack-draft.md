@@ -60,7 +60,7 @@ stack. What a subtree can see is how its own subgoals ended,
 The request returns `Running` so that a `select` or `seq` stops at the `need`, as
 it would at any running child: nothing after it runs. The act inside is a
 placeholder: `goals` sees the push and runs `g` in the same update, so it never
-leaves the stack. `need` therefore needs `A: Default`.
+leaves the stack. `need` therefore needs `Act: Default`.
 
 A goal runs again from its start when its subgoal returns, rather than
 resuming: only the top goal keeps run state. Its `need`s answer from the
@@ -110,7 +110,7 @@ nodes pass it through. `with_goal(node)` gives a node `&Goal`;
 
 - A `need` inside a `scope!` does not see the goal: a scope gives its children
   its locals, not its own parameters.
-- The placeholder act needs `A: Default`; an act type without one cannot use
+- The placeholder act needs `Act: Default`; an act type without one cannot use
   `need`.
 - `goal_match!` patterns cannot bind into the subtree; closures read the goal.
 - `need` as the name; `require`, `achieve` and `subgoal` are candidates.

@@ -5,7 +5,7 @@ use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult, ReadFn};
 
 /// Stateless callable that also receives parameters.
-pub struct LeafWith<F>(F);
+pub struct LeafWith<Function>(Function);
 
 /// [`leaf`](crate::leaf) whose callable also receives the node's parameters,
 /// so inside `scope!` it reads and writes locals through `.with(..)`.
@@ -30,11 +30,13 @@ pub struct LeafWith<F>(F);
 /// assert_eq!(update(&tree, &mut state, &mut log, EntryMode::Evaluate), NodeResult::Success);
 /// assert_eq!(log, [7]);
 /// ```
-pub fn leaf_with<F>(f: F) -> LeafWith<F> {
+pub fn leaf_with<Function>(f: Function) -> LeafWith<Function> {
     LeafWith(f)
 }
 
-impl<C, A, P, F: Fn(&mut C, P) -> NodeResult<A>> BtNode<C, A, P> for LeafWith<F> {
+impl<Context, Act, Params, Function: Fn(&mut Context, Params) -> NodeResult<Act>>
+    BtNode<Context, Act, Params> for LeafWith<Function>
+{
     type State = ();
     type Memory = ();
 
@@ -43,29 +45,31 @@ impl<C, A, P, F: Fn(&mut C, P) -> NodeResult<A>> BtNode<C, A, P> for LeafWith<F>
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         _: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         (self.0)(ctx, params)
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("leaf_with", state.is_some()).with_fn_name::<F>();
+        let node = NodeInfo::new("leaf_with", state.is_some()).with_fn_name::<Function>();
         inspector.node(node, |_| {});
     }
 }
 
 /// Predicate over shared context and parameters.
-pub struct CheckWith<F>(F);
+pub struct CheckWith<Predicate>(Predicate);
 
 /// [`check`](crate::check) whose predicate also receives the node's
 /// parameters. Asked once, on entry, like `check`.
-pub fn check_with<F>(predicate: F) -> CheckWith<F> {
+pub fn check_with<Predicate>(predicate: Predicate) -> CheckWith<Predicate> {
     CheckWith(predicate)
 }
 
-impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
+impl<Context, Act, Params, Predicate: Fn(&Context, Params) -> bool> BtNode<Context, Act, Params>
+    for CheckWith<Predicate>
+{
     type State = ();
     type Memory = ();
 
@@ -74,10 +78,10 @@ impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         _: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         if (self.0)(ctx, params) {
             NodeResult::Success
         } else {
@@ -86,16 +90,16 @@ impl<C, A, P, F: Fn(&C, P) -> bool> BtNode<C, A, P> for CheckWith<F> {
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("check_with", state.is_some()).with_fn_name::<F>();
+        let node = NodeInfo::new("check_with", state.is_some()).with_fn_name::<Predicate>();
         inspector.node(node, |_| {});
     }
 }
 
 /// An act reported while a condition holds.
-pub struct ActionWhile<F, G, M> {
-    condition: F,
-    act: G,
-    reads: PhantomData<fn() -> M>,
+pub struct ActionWhile<Condition, MakeAct, Reads> {
+    condition: Condition,
+    act: MakeAct,
+    reads: PhantomData<fn() -> Reads>,
 }
 
 /// Reports `act` while `condition` holds, then succeeds.
@@ -119,7 +123,7 @@ pub struct ActionWhile<F, G, M> {
 /// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
 /// ```
 ///
-/// Each closure is `Fn(&C)`, or `Fn(&C, P)` to also read the node's
+/// Each closure is `Fn(&Context)`, or `Fn(&Context, Params)` to also read the node's
 /// parameters, such as a target held in a `scope!` local; see [`ReadFn`]:
 ///
 /// ```
@@ -144,7 +148,10 @@ pub struct ActionWhile<F, G, M> {
 /// world.at = 5;
 /// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
 /// ```
-pub fn action_while<F, G, M>(condition: F, act: G) -> ActionWhile<F, G, M> {
+pub fn action_while<Condition, MakeAct, Reads>(
+    condition: Condition,
+    act: MakeAct,
+) -> ActionWhile<Condition, MakeAct, Reads> {
     ActionWhile {
         condition,
         act,
@@ -152,10 +159,11 @@ pub fn action_while<F, G, M>(condition: F, act: G) -> ActionWhile<F, G, M> {
     }
 }
 
-impl<C, A, P: ParamValue, F, G, MF, MG> BtNode<C, A, P> for ActionWhile<F, G, (MF, MG)>
+impl<Context, Act, Params: ParamValue, Condition, MakeAct, ConditionReads, ActReads>
+    BtNode<Context, Act, Params> for ActionWhile<Condition, MakeAct, (ConditionReads, ActReads)>
 where
-    F: ReadFn<C, P, bool, MF>,
-    G: ReadFn<C, P, A, MG>,
+    Condition: ReadFn<Context, Params, bool, ConditionReads>,
+    MakeAct: ReadFn<Context, Params, Act, ActReads>,
 {
     type State = ();
     type Memory = ();
@@ -165,12 +173,14 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let mut params = params.into_value();
-        let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+        let holds = self
+            .condition
+            .call(ctx, Params::Shape::reborrow(&mut params));
         entry.record("while", || holds);
         if holds {
             NodeResult::Running(self.act.call(ctx, params))
@@ -180,7 +190,7 @@ where
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("action_while", state.is_some()).with_fn_name::<F>();
+        let node = NodeInfo::new("action_while", state.is_some()).with_fn_name::<Condition>();
         inspector.node(node, |_| {});
     }
 }

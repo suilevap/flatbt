@@ -575,7 +575,7 @@ See [Goal stack](goal-stack-draft.md).
   act would need a variant in the user's act type or a separate act type for
   goal subtrees.
 - **The request stops the run with `Running` and a placeholder act**
-  (`A: Default`), replaced by the subgoal's act in the same update. Failing
+  (`Act: Default`), replaced by the subgoal's act in the same update. Failing
   instead let a `select` run the nodes after the `need`.
 - **`need` as a call was tried first and dropped**: it re-walked every goal
   from the root on each update, needed a memory per depth, and hid subgoals

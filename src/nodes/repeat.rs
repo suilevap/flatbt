@@ -9,11 +9,11 @@ pub struct Repeat(usize);
 ///
 /// A completed run restarts in the same update, so `times` bounds the work of
 /// one update when the child completes at once.
-pub fn repeat<N>(times: usize, child: N) -> ControlNode<Repeat, (N,)> {
+pub fn repeat<Child>(times: usize, child: Child) -> ControlNode<Repeat, (Child,)> {
     control(Repeat(times), (child,))
 }
 
-impl<C> BtControl<C> for Repeat {
+impl<Context> BtControl<Context> for Repeat {
     /// Successes so far in this invocation.
     type State = usize;
     type Memory = ();
@@ -40,7 +40,7 @@ impl<C> BtControl<C> for Repeat {
         &self,
         done: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         active: Option<usize>,
         _: usize,
     ) -> ControlOp {
@@ -59,7 +59,7 @@ impl<C> BtControl<C> for Repeat {
         &self,
         done: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -72,7 +72,14 @@ impl<C> BtControl<C> for Repeat {
     }
 
     #[inline]
-    fn child_failed(&self, _: &mut usize, _: &mut (), _: &mut C, _: usize, _: usize) -> ControlOp {
+    fn child_failed(
+        &self,
+        _: &mut usize,
+        _: &mut (),
+        _: &mut Context,
+        _: usize,
+        _: usize,
+    ) -> ControlOp {
         ControlOp::Failure
     }
 }
@@ -85,11 +92,11 @@ pub struct Retry(usize);
 ///
 /// A failed attempt restarts in the same update, so `attempts` bounds the work
 /// of one update.
-pub fn retry<N>(attempts: usize, child: N) -> ControlNode<Retry, (N,)> {
+pub fn retry<Child>(attempts: usize, child: Child) -> ControlNode<Retry, (Child,)> {
     control(Retry(attempts), (child,))
 }
 
-impl<C> BtControl<C> for Retry {
+impl<Context> BtControl<Context> for Retry {
     /// Failures so far in this invocation.
     type State = usize;
     type Memory = ();
@@ -116,7 +123,7 @@ impl<C> BtControl<C> for Retry {
         &self,
         failed: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         active: Option<usize>,
         _: usize,
     ) -> ControlOp {
@@ -135,7 +142,7 @@ impl<C> BtControl<C> for Retry {
         &self,
         _: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -147,7 +154,7 @@ impl<C> BtControl<C> for Retry {
         &self,
         failed: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Context,
         _: usize,
         _: usize,
     ) -> ControlOp {

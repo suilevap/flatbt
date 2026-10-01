@@ -5,10 +5,10 @@ use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult, ReadFn};
 
 /// A child restarted while a condition holds.
-pub struct RepeatWhile<F, N, M> {
-    condition: F,
-    child: N,
-    reads: PhantomData<fn() -> M>,
+pub struct RepeatWhile<Condition, Child, Reads> {
+    condition: Condition,
+    child: Child,
+    reads: PhantomData<fn() -> Reads>,
 }
 
 /// Keeps the agent busy with `child` while `condition` holds; succeeds once it
@@ -29,8 +29,8 @@ pub struct RepeatWhile<F, N, M> {
 ///   A loop around an instant child would spin with no act to report; a restart
 ///   that does so also reports a diagnostic.
 ///
-/// Parameters are forwarded to the child. The condition is `Fn(&C) -> bool`,
-/// or `Fn(&C, P) -> bool` to read them too, such as a target bound with
+/// Parameters are forwarded to the child. The condition is `Fn(&Context) -> bool`,
+/// or `Fn(&Context, Params) -> bool` to read them too, such as a target bound with
 /// `.with(target)`; see [`ReadFn`].
 ///
 /// ```
@@ -70,7 +70,10 @@ pub struct RepeatWhile<F, N, M> {
 /// world.at = 3;
 /// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
 /// ```
-pub fn repeat_while<F, N, M>(condition: F, child: N) -> RepeatWhile<F, N, M> {
+pub fn repeat_while<Condition, Child, Reads>(
+    condition: Condition,
+    child: Child,
+) -> RepeatWhile<Condition, Child, Reads> {
     RepeatWhile {
         condition,
         child,
@@ -80,40 +83,50 @@ pub fn repeat_while<F, N, M>(condition: F, child: N) -> RepeatWhile<F, N, M> {
 
 /// Child state, and whether it has returned `Running` since it started.
 #[derive(Default)]
-pub struct RepeatWhileState<S> {
-    child: S,
+pub struct RepeatWhileState<ChildState> {
+    child: ChildState,
     ran: bool,
 }
 
-impl<C, A, P: ParamValue, F, N, S, Mem, M> BtNode<C, A, P> for RepeatWhile<F, N, M>
+impl<Context, Act, Params: ParamValue, Condition, Child, ChildState, ChildMemory, Reads>
+    BtNode<Context, Act, Params> for RepeatWhile<Condition, Child, Reads>
 where
-    F: ReadFn<C, P, bool, M>,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
-    S: Default + Send + 'static,
-    Mem: Default + Send + 'static,
+    Condition: ReadFn<Context, Params, bool, Reads>,
+    Child: for<'a> BtNode<
+            Context,
+            Act,
+            <Params::Shape as ParamShape>::Value<'a>,
+            State = ChildState,
+            Memory = ChildMemory,
+        >,
+    ChildState: Default + Send + 'static,
+    ChildMemory: Default + Send + 'static,
 {
-    type State = RepeatWhileState<S>;
-    type Memory = Mem;
-    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
+    type State = RepeatWhileState<ChildState>;
+    type Memory = ChildMemory;
+    const NODES: usize =
+        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
-        memory: &mut Mem,
-        ctx: &mut C,
-        params: P,
+        memory: &mut ChildMemory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let mut params = params.into_value();
-        let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+        let holds = self
+            .condition
+            .call(ctx, Params::Shape::reborrow(&mut params));
         entry.record("while", || holds);
         if !holds {
             return NodeResult::Success;
         }
         let mut restarted = false;
         loop {
-            let child_params = P::Shape::reborrow(&mut params);
+            let child_params = Params::Shape::reborrow(&mut params);
             // A restart is a fresh invocation of the child.
             let result = if restarted {
                 entry.run_candidate(1, &self.child, &mut state.child, memory, ctx, child_params)
@@ -125,8 +138,10 @@ where
                 return result;
             }
             let ran = core::mem::take(&mut state.ran);
-            state.child = S::default();
-            let holds = self.condition.call(ctx, P::Shape::reborrow(&mut params));
+            state.child = ChildState::default();
+            let holds = self
+                .condition
+                .call(ctx, Params::Shape::reborrow(&mut params));
             entry.record("while", || holds);
             if !holds {
                 return NodeResult::Success;
@@ -142,10 +157,15 @@ where
         }
     }
 
-    fn inspect(&self, state: Option<&Self::State>, memory: &Mem, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("repeat_while", state.is_some()).with_fn_name::<F>();
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &ChildMemory,
+        inspector: &mut dyn Inspector,
+    ) {
+        let node = NodeInfo::new("repeat_while", state.is_some()).with_fn_name::<Condition>();
         inspector.node(node, |inspector| {
-            BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+            BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state.map(|state| &state.child),
                 memory,

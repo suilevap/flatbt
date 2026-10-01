@@ -75,10 +75,10 @@ impl<'a> NodeInfo<'a> {
         }
     }
 
-    /// A node whose kind is `T`'s type label; see [`type_label`].
-    pub fn of_type<T: ?Sized>(active: bool) -> Self {
+    /// A node whose kind is `Type`'s type label; see [`type_label`].
+    pub fn of_type<Type: ?Sized>(active: bool) -> Self {
         Self {
-            kind: Kind::TypeOf(type_label::<T>),
+            kind: Kind::TypeOf(type_label::<Type>),
             ..Self::new("", active)
         }
     }
@@ -91,19 +91,19 @@ impl<'a> NodeInfo<'a> {
         }
     }
 
-    /// Names the node after the function item `F`, if it is one; see
+    /// Names the node after the function item `Function`, if it is one; see
     /// [`fn_name`].
-    pub fn with_fn_name<F>(self) -> Self {
+    pub fn with_fn_name<Function>(self) -> Self {
         Self {
-            name: Name::FnOf(fn_name::<F>),
+            name: Name::FnOf(fn_name::<Function>),
             ..self
         }
     }
 
-    /// Names the node after the type `T`; see [`type_label`].
-    pub fn with_type_name<T: ?Sized>(self) -> Self {
+    /// Names the node after the type `Type`; see [`type_label`].
+    pub fn with_type_name<Type: ?Sized>(self) -> Self {
         Self {
-            name: Name::TypeOf(type_label::<T>),
+            name: Name::TypeOf(type_label::<Type>),
             ..self
         }
     }
@@ -187,15 +187,15 @@ impl dyn Inspector + '_ {
 }
 
 /// A node with a name for [`Inspector`]s. It runs exactly as `node` does.
-pub struct Named<N> {
-    node: N,
+pub struct Named<Node> {
+    node: Node,
     name: &'static str,
     label: bool,
 }
 
 /// Names `node` in debug views, replacing any name taken from code. The same
 /// as `node.named(name)`, with the name before a long node rather than after.
-pub fn named<N>(name: &'static str, node: N) -> Named<N> {
+pub fn named<Node>(name: &'static str, node: Node) -> Named<Node> {
     node.named(name)
 }
 
@@ -211,12 +211,12 @@ pub trait WithName: Sized {
     }
 }
 
-impl<N> WithName for N {}
+impl<Node> WithName for Node {}
 
 /// Marks `node` with what its parent calls it, such as the pattern that selects
 /// it; `choose!` and `per_child!` do this for each arm. It runs exactly as
 /// `node` does.
-pub fn label<N>(label: &'static str, node: N) -> Named<N> {
+pub fn label<Node>(label: &'static str, node: Node) -> Named<Node> {
     Named {
         node,
         name: label,
@@ -224,24 +224,31 @@ pub fn label<N>(label: &'static str, node: N) -> Named<N> {
     }
 }
 
-impl<C, A, P, N: BtNode<C, A, P>> BtNode<C, A, P> for Named<N> {
-    type State = N::State;
-    type Memory = N::Memory;
-    const NODES: usize = N::NODES;
+impl<Context, Act, Params, Node: BtNode<Context, Act, Params>> BtNode<Context, Act, Params>
+    for Named<Node>
+{
+    type State = Node::State;
+    type Memory = Node::Memory;
+    const NODES: usize = Node::NODES;
 
     #[inline(always)]
     fn update(
         &self,
-        state: &mut N::State,
-        memory: &mut N::Memory,
-        ctx: &mut C,
-        params: P,
+        state: &mut Node::State,
+        memory: &mut Node::Memory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         self.node.update(state, memory, ctx, params, entry)
     }
 
-    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Node::State>,
+        memory: &Node::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         self.node.inspect(
             state,
             memory,
@@ -282,16 +289,16 @@ impl Inspector for Rename<'_, '_> {
     }
 }
 
-/// The last path segment of `T`'s name, without generic arguments:
+/// The last path segment of `Type`'s name, without generic arguments:
 /// `ActionNode` for `flatbt::nodes::action::ActionNode<game::Walk>`.
-pub fn type_label<T: ?Sized>() -> &'static str {
-    last_segment(core::any::type_name::<T>())
+pub fn type_label<Type: ?Sized>() -> &'static str {
+    last_segment(core::any::type_name::<Type>())
 }
 
 /// The name of a function item, such as `has_ammo` in `check(has_ammo)`.
 /// `None` for closures, function pointers, and other types.
-pub fn fn_name<F>() -> Option<&'static str> {
-    let full = core::any::type_name::<F>();
+pub fn fn_name<Function>() -> Option<&'static str> {
+    let full = core::any::type_name::<Function>();
     let identifier = |text: &str| {
         text.starts_with(|c: char| c.is_alphabetic() || c == '_')
             && text.chars().all(|c| c.is_alphanumeric() || c == '_')
@@ -334,12 +341,12 @@ fn last_segment(full: &str) -> &str {
 /// indented by depth. Each node is `name (kind)`, or its kind when it has no
 /// name; a label comes first, as `pattern => `, and fields follow in braces,
 /// as `scope {target: 3}`. A tree that is not running writes `not running`.
-pub struct Describe<'a, N: BtNode<C, A>, C, A = ()> {
-    node: &'a N,
-    state: Option<&'a N::State>,
-    memory: &'a N::Memory,
+pub struct Describe<'a, Node: BtNode<Context, Act>, Context, Act = ()> {
+    node: &'a Node,
+    state: Option<&'a Node::State>,
+    memory: &'a Node::Memory,
     inactive: bool,
-    context: PhantomData<fn(&mut C) -> A>,
+    context: PhantomData<fn(&mut Context) -> Act>,
 }
 
 /// A fingerprint of the running path: equal while the same nodes run, and in
@@ -369,10 +376,10 @@ pub struct Describe<'a, N: BtNode<C, A>, C, A = ()> {
 /// }
 /// assert_eq!(logged, ["select > guard > leaf", "select > leaf"]);
 /// ```
-pub fn path_id<C, A, N: BtNode<C, A>>(
-    node: &N,
-    state: Option<&N::State>,
-    memory: &N::Memory,
+pub fn path_id<Context, Act, Node: BtNode<Context, Act>>(
+    node: &Node,
+    state: Option<&Node::State>,
+    memory: &Node::Memory,
 ) -> u64 {
     let mut hash = PathHash(0xcbf2_9ce4_8422_2325);
     node.inspect(state, memory, &mut hash);
@@ -405,11 +412,11 @@ impl Inspector for PathHash {
 /// Describes `node` over `state` and `memory`, for a driver holding them
 /// without a [`BtState`](crate::BtState), such as the slots
 /// [`update_slot`](crate::update_slot) takes.
-pub fn describe<'a, C, A, N: BtNode<C, A>>(
-    node: &'a N,
-    state: Option<&'a N::State>,
-    memory: &'a N::Memory,
-) -> Describe<'a, N, C, A> {
+pub fn describe<'a, Context, Act, Node: BtNode<Context, Act>>(
+    node: &'a Node,
+    state: Option<&'a Node::State>,
+    memory: &'a Node::Memory,
+) -> Describe<'a, Node, Context, Act> {
     Describe {
         node,
         state,
@@ -419,7 +426,7 @@ pub fn describe<'a, C, A, N: BtNode<C, A>>(
     }
 }
 
-impl<N: BtNode<C, A>, C, A> Describe<'_, N, C, A> {
+impl<Node: BtNode<Context, Act>, Context, Act> Describe<'_, Node, Context, Act> {
     /// Also writes nodes off the running path, in `{:#}`. Each line then starts
     /// with `*` for a node on the path, or `-` for one off it.
     pub fn with_inactive(self) -> Self {
@@ -430,7 +437,7 @@ impl<N: BtNode<C, A>, C, A> Describe<'_, N, C, A> {
     }
 }
 
-impl<N: BtNode<C, A>, C, A> fmt::Display for Describe<'_, N, C, A> {
+impl<Node: BtNode<Context, Act>, Context, Act> fmt::Display for Describe<'_, Node, Context, Act> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lines = f.alternate();
         let mut text = Text {
@@ -451,7 +458,7 @@ impl<N: BtNode<C, A>, C, A> fmt::Display for Describe<'_, N, C, A> {
     }
 }
 
-impl<N: BtNode<C, A>, C, A> fmt::Debug for Describe<'_, N, C, A> {
+impl<Node: BtNode<Context, Act>, Context, Act> fmt::Debug for Describe<'_, Node, Context, Act> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
@@ -533,13 +540,13 @@ pub mod __private {
 
     use super::Inspector;
 
-    pub struct Probe<'a, T>(pub &'a T);
+    pub struct Probe<'a, Value>(pub &'a Value);
 
     pub trait ViaDebug<'a> {
         fn probe(&self) -> &'a dyn fmt::Debug;
     }
 
-    impl<'a, T: fmt::Debug> ViaDebug<'a> for Probe<'a, T> {
+    impl<'a, Value: fmt::Debug> ViaDebug<'a> for Probe<'a, Value> {
         fn probe(&self) -> &'a dyn fmt::Debug {
             self.0
         }
@@ -549,7 +556,7 @@ pub mod __private {
         fn probe(&self) -> &'a dyn fmt::Debug;
     }
 
-    impl<'a, T> ViaOpaque<'a> for &Probe<'a, T> {
+    impl<'a, Value> ViaOpaque<'a> for &Probe<'a, Value> {
         fn probe(&self) -> &'a dyn fmt::Debug {
             &Opaque
         }

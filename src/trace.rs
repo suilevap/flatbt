@@ -75,7 +75,7 @@ pub enum Outcome {
 
 impl Outcome {
     #[cfg(all(debug_assertions, feature = "std"))]
-    fn of<A>(result: &NodeResult<A>) -> Self {
+    fn of<Act>(result: &NodeResult<Act>) -> Self {
         match result {
             NodeResult::Success => Self::Success,
             NodeResult::Failure => Self::Failure,
@@ -233,7 +233,7 @@ impl<'t> Handle<'t> {
 
     #[inline(always)]
     #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
-    pub(crate) fn finish<A>(self, entry: Entry<'_>, result: &NodeResult<A>) {
+    pub(crate) fn finish<Act>(self, entry: Entry<'_>, result: &NodeResult<Act>) {
         #[cfg(all(debug_assertions, feature = "std"))]
         if let Some(to) = self.to {
             to.record(entry.mode(), Outcome::of(result));
@@ -250,10 +250,10 @@ impl<'t> Handle<'t> {
 
     #[inline(always)]
     #[cfg_attr(not(all(debug_assertions, feature = "std")), allow(unused_variables))]
-    pub(crate) fn value<R: fmt::Debug + 'static>(
+    pub(crate) fn value<Recorded: fmt::Debug + 'static>(
         self,
         name: &'static str,
-        value: impl FnOnce() -> R,
+        value: impl FnOnce() -> Recorded,
     ) {
         #[cfg(all(debug_assertions, feature = "std"))]
         if let Some(to) = self.to {
@@ -343,9 +343,9 @@ mod imp {
         fn each<'a>(&'a self, out: &mut dyn FnMut(u32, u32, &'a dyn fmt::Debug));
     }
 
-    struct Typed<R>(Vec<(u32, u32, R)>);
+    struct Typed<Recorded>(Vec<(u32, u32, Recorded)>);
 
-    impl<R: fmt::Debug + 'static> Values for Typed<R> {
+    impl<Recorded: fmt::Debug + 'static> Values for Typed<Recorded> {
         fn clear(&mut self) {
             self.0.clear();
         }
@@ -444,7 +444,11 @@ mod imp {
         }
 
         #[cold]
-        pub(super) fn value<R: fmt::Debug + 'static>(self, name: &'static str, value: R) {
+        pub(super) fn value<Recorded: fmt::Debug + 'static>(
+            self,
+            name: &'static str,
+            value: Recorded,
+        ) {
             let mut log = self.log.log.borrow_mut();
             if log.full() {
                 return;
@@ -453,7 +457,7 @@ mod imp {
             let sequence = log.sequence;
             log.sequence += 1;
             log.values += 1;
-            let key = (self.node, name, TypeId::of::<R>());
+            let key = (self.node, name, TypeId::of::<Recorded>());
             let slot = match log.index.get(&key) {
                 Some(&slot) => slot,
                 None => {
@@ -461,13 +465,16 @@ mod imp {
                     log.slots.push(Slot {
                         node: self.node,
                         name,
-                        values: Box::new(Typed::<R>(Vec::new())),
+                        values: Box::new(Typed::<Recorded>(Vec::new())),
                     });
                     log.index.insert(key, slot);
                     slot
                 }
             };
-            if let Some(Typed(values)) = log.slots[slot].values.as_any().downcast_mut::<Typed<R>>()
+            if let Some(Typed(values)) = log.slots[slot]
+                .values
+                .as_any()
+                .downcast_mut::<Typed<Recorded>>()
             {
                 values.push((call, sequence, value));
             }
@@ -485,23 +492,23 @@ mod imp {
 /// marks a node that failed while none of the children it entered did.
 ///
 /// `{}` writes the nodes still running on one line, root first.
-pub struct Trace<'a, N: BtNode<C, A>, C, A = ()> {
-    node: &'a N,
-    state: Option<&'a N::State>,
-    memory: &'a N::Memory,
+pub struct Trace<'a, Node: BtNode<Context, Act>, Context, Act = ()> {
+    node: &'a Node,
+    state: Option<&'a Node::State>,
+    memory: &'a Node::Memory,
     log: &'a TraceLog,
-    context: PhantomData<fn(&mut C) -> A>,
+    context: PhantomData<fn(&mut Context) -> Act>,
 }
 
 /// A trace of `node` from `log`, with `state` and `memory` for the fields,
 /// for a driver without a [`BtState`](crate::BtState), such as one using
 /// [`update_slot`](crate::update_slot).
-pub fn trace<'a, C, A, N: BtNode<C, A>>(
-    node: &'a N,
-    state: Option<&'a N::State>,
-    memory: &'a N::Memory,
+pub fn trace<'a, Context, Act, Node: BtNode<Context, Act>>(
+    node: &'a Node,
+    state: Option<&'a Node::State>,
+    memory: &'a Node::Memory,
     log: &'a TraceLog,
-) -> Trace<'a, N, C, A> {
+) -> Trace<'a, Node, Context, Act> {
     Trace {
         node,
         state,
@@ -511,14 +518,14 @@ pub fn trace<'a, C, A, N: BtNode<C, A>>(
     }
 }
 
-impl<N: BtNode<C, A>, C, A> fmt::Display for Trace<'_, N, C, A> {
+impl<Node: BtNode<Context, Act>, Context, Act> fmt::Display for Trace<'_, Node, Context, Act> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(all(debug_assertions, feature = "std"))]
         return text::write(
             f,
             self.log,
             |inspector| self.node.inspect(self.state, self.memory, inspector),
-            N::NODES,
+            Node::NODES,
         );
         #[cfg(not(all(debug_assertions, feature = "std")))]
         {
@@ -528,7 +535,7 @@ impl<N: BtNode<C, A>, C, A> fmt::Display for Trace<'_, N, C, A> {
     }
 }
 
-impl<N: BtNode<C, A>, C, A> fmt::Debug for Trace<'_, N, C, A> {
+impl<Node: BtNode<Context, Act>, Context, Act> fmt::Debug for Trace<'_, Node, Context, Act> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }

@@ -38,18 +38,18 @@ pub trait ParamValue {
 ///     }
 /// }
 /// ```
-pub struct Read<T>(PhantomData<fn() -> T>);
-impl<T: 'static> ParamShape for Read<T> {
-    type Value<'a> = &'a T;
+pub struct Read<Target>(PhantomData<fn() -> Target>);
+impl<Target: 'static> ParamShape for Read<Target> {
+    type Value<'a> = &'a Target;
 
-    fn reborrow<'a, 'b: 'a>(value: &'a mut &'b T) -> &'a T {
+    fn reborrow<'a, 'b: 'a>(value: &'a mut &'b Target) -> &'a Target {
         value
     }
 }
 
-impl<T: 'static> ParamValue for &T {
-    type Shape = Read<T>;
-    fn into_value<'a>(self) -> &'a T
+impl<Target: 'static> ParamValue for &Target {
+    type Shape = Read<Target>;
+    fn into_value<'a>(self) -> &'a Target
     where
         Self: 'a,
     {
@@ -57,19 +57,19 @@ impl<T: 'static> ParamValue for &T {
     }
 }
 
-/// Exclusive parameter shape; often an `Option<T>` output slot.
-pub struct Write<T>(PhantomData<fn() -> T>);
-impl<T: 'static> ParamShape for Write<T> {
-    type Value<'a> = &'a mut T;
+/// Exclusive parameter shape; often an `Option<Target>` output slot.
+pub struct Write<Target>(PhantomData<fn() -> Target>);
+impl<Target: 'static> ParamShape for Write<Target> {
+    type Value<'a> = &'a mut Target;
 
-    fn reborrow<'a, 'b: 'a>(value: &'a mut &'b mut T) -> &'a mut T {
+    fn reborrow<'a, 'b: 'a>(value: &'a mut &'b mut Target) -> &'a mut Target {
         value
     }
 }
 
-impl<T: 'static> ParamValue for &mut T {
-    type Shape = Write<T>;
-    fn into_value<'a>(self) -> &'a mut T
+impl<Target: 'static> ParamValue for &mut Target {
+    type Shape = Write<Target>;
+    fn into_value<'a>(self) -> &'a mut Target
     where
         Self: 'a,
     {

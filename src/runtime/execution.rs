@@ -6,26 +6,26 @@ use crate::{BtNode, Entry, NodeResult};
 
 /// Per-agent state bound to a borrowed root: the invocation state of the
 /// running path, and every node's memory. See [`BtNode::Memory`].
-pub struct BtState<'root, N: BtNode<C, A>, C, A = ()> {
-    root_node: &'root N,
-    root_state: Option<N::State>,
-    memory: N::Memory,
-    context: PhantomData<fn(&mut C) -> A>,
+pub struct BtState<'root, Node: BtNode<Context, Act>, Context, Act = ()> {
+    root_node: &'root Node,
+    root_state: Option<Node::State>,
+    memory: Node::Memory,
+    context: PhantomData<fn(&mut Context) -> Act>,
 }
 
-impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
-    pub fn new(root_node: &'root N) -> Self {
+impl<'root, Node: BtNode<Context, Act>, Context, Act> BtState<'root, Node, Context, Act> {
+    pub fn new(root_node: &'root Node) -> Self {
         Self {
             root_node,
             root_state: None,
-            memory: N::Memory::default(),
+            memory: Node::Memory::default(),
             context: PhantomData,
         }
     }
 
     /// A text view of the last update recorded in `log`: every node it
     /// entered, how, and what each returned. See [`Trace`].
-    pub fn trace<'a>(&'a self, log: &'a TraceLog) -> Trace<'a, N, C, A> {
+    pub fn trace<'a>(&'a self, log: &'a TraceLog) -> Trace<'a, Node, Context, Act> {
         trace(self.root_node, self.root_state.as_ref(), &self.memory, log)
     }
 
@@ -43,17 +43,17 @@ impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
     /// same root would start. Keeps the root binding.
     pub fn forget(&mut self) {
         self.root_state = None;
-        self.memory = N::Memory::default();
+        self.memory = Node::Memory::default();
     }
 
     /// Every node's memory, for a driver that saves or inspects it.
-    pub fn memory(&self) -> &N::Memory {
+    pub fn memory(&self) -> &Node::Memory {
         &self.memory
     }
 
     /// A text view of the running path, for logs and debugging. See
     /// [`Describe`].
-    pub fn describe(&self) -> Describe<'_, N, C, A> {
+    pub fn describe(&self) -> Describe<'_, Node, Context, Act> {
         describe(self.root_node, self.root_state.as_ref(), &self.memory)
     }
 
@@ -83,12 +83,12 @@ impl<'root, N: BtNode<C, A>, C, A> BtState<'root, N, C, A> {
 /// `entry` is an [`EntryMode`](crate::EntryMode), or
 /// [`log.entry(mode)`](TraceLog::entry) to record the update into a
 /// [`TraceLog`] the caller keeps.
-pub fn update<'t, C, A, N: BtNode<C, A>>(
-    root_node: &N,
-    state: &mut BtState<'_, N, C, A>,
-    ctx: &mut C,
+pub fn update<'t, Context, Act, Node: BtNode<Context, Act>>(
+    root_node: &Node,
+    state: &mut BtState<'_, Node, Context, Act>,
+    ctx: &mut Context,
     entry: impl Into<Entry<'t>>,
-) -> NodeResult<A> {
+) -> NodeResult<Act> {
     if !core::ptr::eq(root_node, state.root_node) {
         return NodeResult::error("state belongs to a different root definition");
     }
@@ -130,26 +130,26 @@ pub fn update<'t, C, A, N: BtNode<C, A>>(
 /// );
 /// assert!(slot.is_none());
 /// ```
-pub fn update_slot<'t, C, A, N: BtNode<C, A>>(
-    node: &N,
-    slot: &mut Option<N::State>,
-    memory: &mut N::Memory,
-    ctx: &mut C,
+pub fn update_slot<'t, Context, Act, Node: BtNode<Context, Act>>(
+    node: &Node,
+    slot: &mut Option<Node::State>,
+    memory: &mut Node::Memory,
+    ctx: &mut Context,
     entry: impl Into<Entry<'t>>,
-) -> NodeResult<A> {
+) -> NodeResult<Act> {
     run_root(node, slot, memory, ctx, entry.into())
 }
 
 /// The drivers' body, over a plain `Entry`: converting at the edge keeps
 /// release code the same as before entries could carry a trace.
-fn run_root<C, A, N: BtNode<C, A>>(
-    node: &N,
-    slot: &mut Option<N::State>,
-    memory: &mut N::Memory,
-    ctx: &mut C,
+fn run_root<Context, Act, Node: BtNode<Context, Act>>(
+    node: &Node,
+    slot: &mut Option<Node::State>,
+    memory: &mut Node::Memory,
+    ctx: &mut Context,
     entry: Entry<'_>,
-) -> NodeResult<A> {
-    let entry = entry.start(slot.is_none(), N::NODES);
+) -> NodeResult<Act> {
+    let entry = entry.start(slot.is_none(), Node::NODES);
     let result = node.update(
         slot.get_or_insert_with(Default::default),
         memory,

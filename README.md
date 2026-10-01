@@ -191,9 +191,9 @@ them in that order until one succeeds, `seq` runs them all in that order.
 
 | Order | Visits children |
 | --- | --- |
-| `by_score(\|bb: &C, index\| score)` | Highest score first. `.inertia(x)` favours the running child. |
+| `by_score(\|bb: &Context, index\| score)` | Highest score first. `.inertia(x)` favours the running child. |
 | `shuffled(rng)` | In a random order. |
-| `weighted(rng, \|bb: &C, index\| weight)` | In a random order drawn by weight. |
+| `weighted(rng, \|bb: &Context, index\| weight)` | In a random order drawn by weight. |
 
 | Composition | Shorthand |
 | --- | --- |
@@ -331,7 +331,7 @@ drop a running child when they stop, which cancels it. So
 `seq((repeat_while(far, approach), interact))` approaches only while needed and
 succeeds at once for an agent already close.
 
-A condition or act is `Fn(&C)`, or `Fn(&C, P)` to also read the node's
+A condition or act is `Fn(&Context)`, or `Fn(&Context, Params)` to also read the node's
 parameters -- for `guard`, `repeat_while` and `action_while` alike. The same
 constructor takes either; annotate the closure's arguments.
 
@@ -407,7 +407,7 @@ let tree = goals::<8, _, _>(
 - Only the top goal runs. Pushing and popping happen in the same update, so the
   update returns the act of whichever goal ends up working.
 - `need(f)`: `None` succeeds. A new subgoal is requested, and the goal's run
-  stops there with `Running`, a placeholder act (`A: Default`) that never
+  stops there with `Running`, a placeholder act (`Act: Default`) that never
   leaves the stack. When the goal runs again, `need` returns the subgoal's
   result.
 - Subtrees do not see the stack: `goals` pushes a requested subgoal, or
@@ -490,7 +490,7 @@ good place to decide who gets it.
 | `Behavior::for_tree(builder)` | Component holding one agent's invocation state |
 | `stop_behavior(builder)`, `restart_behavior(builder)` | Stop an agent or send it back to the root, on `Commands` or `EntityWorldMut` |
 | `Behavior::tick` | The tick itself, for a game that registers its own system |
-| `BehaviorNode<C, A>` | What a tree over blackboard `C` deciding `A` is; also names a subtree |
+| `BehaviorNode<Blackboard, Act>` | What a tree over a blackboard deciding `Act` is; also names a subtree |
 | `Tick` | What a tick does with one agent: `Evaluate`, `Resume` or `Skip` |
 | `evaluate_every`, `act_every` | Periodic revalidation, staggered across agents |
 | `BehaviorSystems` | Set containing every tick, for ordering game systems |
@@ -519,7 +519,7 @@ good place to decide who gets it.
   its last act.
 - **The blackboard is input.** The game fills it before `BehaviorSystems`, in as
   many systems and at as many rates as it likes. Node writes to it bypass change
-  detection, so `Changed<C>` never sees them.
+  detection, so `Changed<Blackboard>` never sees them.
 - **The builder names the tree.** It is called once, at registration, into a
   resource; `Behavior::for_tree` only takes its type, so a closure's captures
   configure nothing at the agent. Vary a tree with a second builder function.
@@ -720,11 +720,11 @@ release code is unchanged.
 
 ## Custom nodes
 
-Implement `BtNode<C, A = (), P = ()>`. Keep configuration in the definition and
-mutable invocation data in `State: Default + Send + 'static`.
-`A` is what the node reports the agent is doing while it runs; a node that never
-runs stays generic over it and never names it.
-`P` carries parameters separately from context; the root supplies `()`.
+Implement `BtNode<Context, Act = (), Params = ()>`. Keep configuration in the
+definition and mutable invocation data in `State: Default + Send + 'static`.
+`Act` is what the node reports the agent is doing while it runs; a node that
+never runs stays generic over it and never names it.
+`Params` carries parameters separately from context; the root supplies `()`.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
 `update` receives an `Entry`: `entry.mode()` is Resume or Evaluate. A composing

@@ -5,8 +5,8 @@ use crate::{BtNode, ControlOp, Entry, NodeResult};
 /// Static tuple dispatch with at most one active child.
 /// Generated through `FLATBT_MAX_CHILDREN` (default 32).
 ///
-/// `S` is the shape of the parameters every child receives; see `ParamShape`.
-pub trait BtChildren<C, A = (), S: ParamShape = ()> {
+/// `Shape` is the shape of the parameters every child receives; see `ParamShape`.
+pub trait BtChildren<Context, Act = (), Shape: ParamShape = ()> {
     type State: Default + Send + 'static;
     /// Every child's memory: a tuple, all of them at once.
     type Memory: Default + Send + 'static;
@@ -30,11 +30,11 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
         state: &mut Self::State,
         memory: &mut Self::Memory,
         first: usize,
-        ctx: &mut C,
-        params: &mut S::Value<'_>,
+        ctx: &mut Context,
+        params: &mut Shape::Value<'_>,
         entry: Entry<'_>,
-        next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
-    ) -> Result<NodeResult<A>, ControlOp>;
+        next: &mut impl FnMut(&mut Context, usize, bool) -> ControlOp,
+    ) -> Result<NodeResult<Act>, ControlOp>;
 
     /// Reports each child in order, with its state when it is the saved one
     /// and its memory. See [`BtNode::inspect`].
@@ -51,7 +51,7 @@ pub trait BtChildren<C, A = (), S: ParamShape = ()> {
     const NODES: usize;
 }
 
-impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
+impl<Context, Act, Shape: ParamShape> BtChildren<Context, Act, Shape> for () {
     type State = ();
     type Memory = ();
     const LEN: usize = 0;
@@ -66,11 +66,11 @@ impl<C, A, S: ParamShape> BtChildren<C, A, S> for () {
         _: &mut (),
         _: &mut (),
         first: usize,
-        _: &mut C,
-        _: &mut S::Value<'_>,
+        _: &mut Context,
+        _: &mut Shape::Value<'_>,
         _: Entry<'_>,
-        _: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
-    ) -> Result<NodeResult<A>, ControlOp> {
+        _: &mut impl FnMut(&mut Context, usize, bool) -> ControlOp,
+    ) -> Result<NodeResult<Act>, ControlOp> {
         Err(ControlOp::RunChild(first))
     }
 
@@ -92,16 +92,16 @@ macro_rules! tuple_children {
         #[derive(Default)]
         pub struct $memory<$($child_memory),+>($(pub $child_memory),+);
 
-        impl<C, A, S: ParamShape, $($node, $child_state, $child_memory),+> BtChildren<C, A, S> for ($($node,)+)
+        impl<Context, Act, Shape: ParamShape, $($node, $child_state, $child_memory),+> BtChildren<Context, Act, Shape> for ($($node,)+)
         where
-            $($node: for<'a> BtNode<C, A, S::Value<'a>, State = $child_state, Memory = $child_memory>,
+            $($node: for<'a> BtNode<Context, Act, Shape::Value<'a>, State = $child_state, Memory = $child_memory>,
             $child_state: Default + Send + 'static,
             $child_memory: Default + Send + 'static,)+
         {
             type State = $state<$($child_state),+>;
             type Memory = $memory<$($child_memory),+>;
             const LEN: usize = [$(stringify!($node)),+].len();
-            const NODES: usize = 0 $(+ <$node as BtNode<C, A, S::Value<'static>>>::NODES)+;
+            const NODES: usize = 0 $(+ <$node as BtNode<Context, Act, Shape::Value<'static>>>::NODES)+;
 
             #[inline(always)]
             fn active_child_index(&self, state: &Self::State) -> Option<usize> {
@@ -117,11 +117,11 @@ macro_rules! tuple_children {
                 state: &mut Self::State,
                 memory: &mut Self::Memory,
                 first: usize,
-                ctx: &mut C,
-                params: &mut S::Value<'_>,
+                ctx: &mut Context,
+                params: &mut Shape::Value<'_>,
                 entry: Entry<'_>,
-                next: &mut impl FnMut(&mut C, usize, bool) -> ControlOp,
-            ) -> Result<NodeResult<A>, ControlOp> {
+                next: &mut impl FnMut(&mut Context, usize, bool) -> ControlOp,
+            ) -> Result<NodeResult<Act>, ControlOp> {
                 // One block per child, in order. When the policy asks for the
                 // following child, control falls into the next block; for a
                 // policy the compiler can see through, such as `Sequence`, the
@@ -129,7 +129,7 @@ macro_rules! tuple_children {
                 let mut index = first;
                 // Each child's preorder offset from the control, for traces.
                 let offsets = const {
-                    let nodes = [$(<$node as BtNode<C, A, S::Value<'static>>>::NODES),+];
+                    let nodes = [$(<$node as BtNode<Context, Act, Shape::Value<'static>>>::NODES),+];
                     let mut offsets = [$($index * 0),+];
                     let mut at = 1;
                     let mut child = 0;
@@ -144,8 +144,8 @@ macro_rules! tuple_children {
                     if index == $index {
                         let offset = offsets[$index];
                         let result = if let $state::$variant(active) = state {
-                            let entry = entry.child(offset, <$node as BtNode<C, A, S::Value<'static>>>::NODES);
-                            let result = self.$index.update(active, &mut memory.$index, ctx, S::reborrow(params), entry);
+                            let entry = entry.child(offset, <$node as BtNode<Context, Act, Shape::Value<'static>>>::NODES);
+                            let result = self.$index.update(active, &mut memory.$index, ctx, Shape::reborrow(params), entry);
                             entry.finish(&result);
                             if !result.is_running() {
                                 *state = $state::Empty;
@@ -154,8 +154,8 @@ macro_rules! tuple_children {
                         } else {
                             // Preserve the old variant until this candidate is selected.
                             let mut candidate = $child_state::default();
-                            let entry = entry.candidate(offset, <$node as BtNode<C, A, S::Value<'static>>>::NODES);
-                            let result = self.$index.update(&mut candidate, &mut memory.$index, ctx, S::reborrow(params), entry);
+                            let entry = entry.candidate(offset, <$node as BtNode<Context, Act, Shape::Value<'static>>>::NODES);
+                            let result = self.$index.update(&mut candidate, &mut memory.$index, ctx, Shape::reborrow(params), entry);
                             entry.finish(&result);
                             if result.is_running() {
                                 *state = $state::$variant(candidate);
@@ -188,7 +188,7 @@ macro_rules! tuple_children {
                         Some($state::$variant(active)) => Some(active),
                         _ => None,
                     };
-                    BtNode::<C, A, S::Value<'_>>::inspect(&self.$index, active, &memory.$index, inspector);
+                    BtNode::<Context, Act, Shape::Value<'_>>::inspect(&self.$index, active, &memory.$index, inspector);
                 )+
             }
         }

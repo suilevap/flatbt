@@ -4,14 +4,14 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, Entry, NodeResult};
 
 /// A subtree run over part of the context.
-pub struct Focus<F, N, D> {
-    lens: F,
-    child: N,
-    part: PhantomData<fn() -> D>,
+pub struct Focus<Lens, Child, Focused> {
+    lens: Lens,
+    child: Child,
+    part: PhantomData<fn() -> Focused>,
 }
 
-/// Runs `child`, a tree over `D`, on the part of the context `lens` selects,
-/// so one subtree serves several blackboards that contain a `D`.
+/// Runs `child`, a tree over `Focused`, on the part of the context `lens` selects,
+/// so one subtree serves several blackboards that contain a `Focused`.
 ///
 /// ```
 /// use flatbt::prelude::*;
@@ -29,9 +29,9 @@ pub struct Focus<F, N, D> {
 /// assert_eq!(update(&tree, &mut state, &mut agent, EntryMode::Evaluate), NodeResult::Success);
 /// assert_eq!(agent.legs.steps, 1);
 /// ```
-pub fn focus<C, D, F, N>(lens: F, child: N) -> Focus<F, N, D>
+pub fn focus<Context, Focused, Lens, Child>(lens: Lens, child: Child) -> Focus<Lens, Child, Focused>
 where
-    F: Fn(&mut C) -> &mut D,
+    Lens: Fn(&mut Context) -> &mut Focused,
 {
     Focus {
         lens,
@@ -40,28 +40,34 @@ where
     }
 }
 
-impl<C, D, A, P, F, N> BtNode<C, A, P> for Focus<F, N, D>
+impl<Context, Focused, Act, Params, Lens, Child> BtNode<Context, Act, Params>
+    for Focus<Lens, Child, Focused>
 where
-    F: Fn(&mut C) -> &mut D,
-    N: BtNode<D, A, P>,
+    Lens: Fn(&mut Context) -> &mut Focused,
+    Child: BtNode<Focused, Act, Params>,
 {
-    type State = N::State;
-    type Memory = N::Memory;
-    const NODES: usize = 1 + N::NODES;
+    type State = Child::State;
+    type Memory = Child::Memory;
+    const NODES: usize = 1 + Child::NODES;
 
     #[inline]
     fn update(
         &self,
-        state: &mut N::State,
-        memory: &mut N::Memory,
-        ctx: &mut C,
-        params: P,
+        state: &mut Child::State,
+        memory: &mut Child::Memory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         entry.run(1, &self.child, state, memory, (self.lens)(ctx), params)
     }
 
-    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Child::State>,
+        memory: &Child::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
         inspector.node(NodeInfo::new("focus", state.is_some()), |inspector| {
             self.child.inspect(state, memory, inspector);
         });

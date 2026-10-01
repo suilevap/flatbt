@@ -10,7 +10,7 @@ use super::{BtOrder, Pass};
 use crate::Entry;
 
 /// Children in a uniformly random order.
-pub struct Shuffled<R>(R);
+pub struct Shuffled<Rng>(Rng);
 
 /// Orders children uniformly at random, one draw from `rng` per position.
 ///
@@ -32,11 +32,11 @@ pub struct Shuffled<R>(R);
 /// let mut state: BtState<_, _> = BtState::new(&tree);
 /// assert_eq!(update(&tree, &mut state, &mut 0, EntryMode::Evaluate), NodeResult::Success);
 /// ```
-pub fn shuffled<R>(rng: R) -> Shuffled<R> {
+pub fn shuffled<Rng>(rng: Rng) -> Shuffled<Rng> {
     Shuffled(rng)
 }
 
-impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
+impl<Context, Rng: Fn(&mut Context) -> u32> BtOrder<Context> for Shuffled<Rng> {
     type State = ();
     type Memory = ();
 
@@ -45,7 +45,14 @@ impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
     }
 
     #[inline]
-    fn next(&self, _: &mut (), _: &mut (), ctx: &mut C, pass: Pass, _: Entry<'_>) -> Option<usize> {
+    fn next(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut Context,
+        pass: Pass,
+        _: Entry<'_>,
+    ) -> Option<usize> {
         if pass.is_start() && pass.running().is_some() {
             return pass.running();
         }
@@ -60,9 +67,9 @@ impl<C, R: Fn(&mut C) -> u32> BtOrder<C> for Shuffled<R> {
 }
 
 /// Children in a random order, drawn by weight.
-pub struct Weighted<R, W> {
-    rng: R,
-    weight: W,
+pub struct Weighted<Rng, Weight> {
+    rng: Rng,
+    weight: Weight,
 }
 
 /// Orders children at random, drawing each position with probability
@@ -71,14 +78,14 @@ pub struct Weighted<R, W> {
 ///
 /// One draw from `rng` per position, like [`shuffled`]; the weights are read
 /// as each position is drawn.
-pub fn weighted<R, W>(rng: R, weight: W) -> Weighted<R, W> {
+pub fn weighted<Rng, Weight>(rng: Rng, weight: Weight) -> Weighted<Rng, Weight> {
     Weighted { rng, weight }
 }
 
-impl<C, R, W> BtOrder<C> for Weighted<R, W>
+impl<Context, Rng, Weight> BtOrder<Context> for Weighted<Rng, Weight>
 where
-    R: Fn(&mut C) -> u32,
-    W: Fn(&C, usize) -> f32,
+    Rng: Fn(&mut Context) -> u32,
+    Weight: Fn(&Context, usize) -> f32,
 {
     type State = ();
     type Memory = ();
@@ -92,14 +99,14 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
+        ctx: &mut Context,
         pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize> {
         if pass.is_start() && pass.running().is_some() {
             return pass.running();
         }
-        let weight = |ctx: &C, index: usize| {
+        let weight = |ctx: &Context, index: usize| {
             let weight = (self.weight)(ctx, index);
             // `> 0.0` is false for NaN too.
             if weight > 0.0 { weight } else { 0.0 }

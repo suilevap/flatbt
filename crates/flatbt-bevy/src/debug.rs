@@ -39,14 +39,14 @@ impl DebugBehavior {
     }
 }
 
-/// Refreshes [`DebugBehavior`] on agents running the tree named by `F`.
-pub(crate) fn describe_behaviors<C, A, F>(
-    tree: Res<BehaviorTree<C, A, F>>,
-    mut agents: Query<(&Behavior<C, A, F>, &mut DebugBehavior)>,
+/// Refreshes [`DebugBehavior`] on agents running the tree named by `Builder`.
+pub(crate) fn describe_behaviors<Blackboard, Act, Builder>(
+    tree: Res<BehaviorTree<Blackboard, Act, Builder>>,
+    mut agents: Query<(&Behavior<Blackboard, Act, Builder>, &mut DebugBehavior)>,
 ) where
-    C: Send + Sync + 'static,
-    A: Send + Sync + 'static,
-    F: TreeBuilder<C, A>,
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
 {
     for (behavior, mut debug) in agents.iter_mut() {
         let id = behavior.path_id(tree.get());

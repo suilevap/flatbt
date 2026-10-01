@@ -6,16 +6,16 @@ use crate::params::ParamValue;
 use crate::{BtNode, Entry, NodeResult, ReadFn};
 
 /// An act reported for a span of time.
-pub struct ActionWait<D, G, M> {
-    span: D,
-    act: G,
-    reads: PhantomData<fn() -> M>,
+pub struct ActionWait<Span, MakeAct, Reads> {
+    span: Span,
+    act: MakeAct,
+    reads: PhantomData<fn() -> Reads>,
 }
 
 /// Reports `act` until `span` has passed since this node started, then
 /// succeeds. A zero span succeeds at once.
 ///
-/// `act` is `Fn(&C)` or `Fn(&C, P)`, as for
+/// `act` is `Fn(&Context)` or `Fn(&Context, Params)`, as for
 /// [`action_while`](crate::action_while), and is asked on every update.
 ///
 /// ```
@@ -35,7 +35,10 @@ pub struct ActionWait<D, G, M> {
 /// game.turn = 7;
 /// assert_eq!(update(&tree, &mut state, &mut game, EntryMode::Resume), NodeResult::Success);
 /// ```
-pub fn action_wait<D, G, M>(span: D, act: G) -> ActionWait<D, G, M> {
+pub fn action_wait<Span, MakeAct, Reads>(
+    span: Span,
+    act: MakeAct,
+) -> ActionWait<Span, MakeAct, Reads> {
     ActionWait {
         span,
         act,
@@ -43,25 +46,26 @@ pub fn action_wait<D, G, M>(span: D, act: G) -> ActionWait<D, G, M> {
     }
 }
 
-impl<C, A, P, G, M> BtNode<C, A, P> for ActionWait<C::Duration, G, M>
+impl<Context, Act, Params, MakeAct, Reads> BtNode<Context, Act, Params>
+    for ActionWait<Context::Duration, MakeAct, Reads>
 where
-    C: BtClock,
-    P: ParamValue,
-    G: ReadFn<C, P, A, M>,
+    Context: BtClock,
+    Params: ParamValue,
+    MakeAct: ReadFn<Context, Params, Act, Reads>,
 {
     /// When this node started.
-    type State = Option<C::Instant>;
+    type State = Option<Context::Instant>;
     type Memory = ();
 
     #[inline]
     fn update(
         &self,
-        started: &mut Option<C::Instant>,
+        started: &mut Option<Context::Instant>,
         _: &mut (),
-        ctx: &mut C,
-        params: P,
+        ctx: &mut Context,
+        params: Params,
         _: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let started = *started.get_or_insert_with(|| ctx.now());
         if elapsed(ctx, started, self.span) {
             NodeResult::Success
@@ -70,8 +74,13 @@ where
         }
     }
 
-    fn inspect(&self, started: Option<&Option<C::Instant>>, _: &(), inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("action_wait", started.is_some()).with_fn_name::<G>();
+    fn inspect(
+        &self,
+        started: Option<&Option<Context::Instant>>,
+        _: &(),
+        inspector: &mut dyn Inspector,
+    ) {
+        let node = NodeInfo::new("action_wait", started.is_some()).with_fn_name::<MakeAct>();
         inspector.node(node, |inspector| {
             inspector.field("span", &self.span);
             if let Some(Some(started)) = started {

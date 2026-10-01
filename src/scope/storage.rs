@@ -3,15 +3,15 @@ use crate::params::Write;
 use crate::{BtChildren, BtNode, ControlOp, Entry, NodeResult};
 
 /// Owns invocation-local data outside application context.
-pub struct Scope<L, N, I = NoInit> {
-    child: N,
-    init: I,
-    inspect_locals: fn(&L, &mut dyn Inspector),
+pub struct Scope<Locals, Child, Initializers = NoInit> {
+    child: Child,
+    init: Initializers,
+    inspect_locals: fn(&Locals, &mut dyn Inspector),
 }
 
 /// Initializes locals with Default on entry. Bindings select fields explicitly.
 /// Producers may fill slots for later consumers. Nested scopes inherit no parameters.
-pub fn scope<L, N>(child: N) -> Scope<L, N> {
+pub fn scope<Locals, Child>(child: Child) -> Scope<Locals, Child> {
     Scope {
         child,
         init: NoInit,
@@ -19,13 +19,13 @@ pub fn scope<L, N>(child: N) -> Scope<L, N> {
     }
 }
 
-impl<L, N> Scope<L, N> {
+impl<Locals, Child> Scope<Locals, Child> {
     /// Runs `init`, a tuple of nodes over the locals, in order when an
     /// invocation starts, before the child; Resume and Evaluate skip them.
     /// Each must succeed on entry: one that fails fails the scope, and one
     /// still running reports a diagnostic and fails it. `scope!` puts its
     /// `let` initializers here.
-    pub fn init<T>(self, init: T) -> Scope<L, N, Init<T>> {
+    pub fn init<Nodes>(self, init: Nodes) -> Scope<Locals, Child, Init<Nodes>> {
         Scope {
             child: self.child,
             init: Init(init),
@@ -34,10 +34,10 @@ impl<L, N> Scope<L, N> {
     }
 }
 
-impl<L, N, I> Scope<L, N, I> {
+impl<Locals, Child, Initializers> Scope<Locals, Child, Initializers> {
     /// Sets how debug views report the locals while the scope runs, as
     /// [`Inspector::field`]s. `scope!` reports each local by name.
-    pub fn inspect_locals(self, inspect: fn(&L, &mut dyn Inspector)) -> Self {
+    pub fn inspect_locals(self, inspect: fn(&Locals, &mut dyn Inspector)) -> Self {
         Self {
             inspect_locals: inspect,
             ..self
@@ -47,7 +47,7 @@ impl<L, N, I> Scope<L, N, I> {
 
 /// What a [`Scope`] runs when an invocation starts: [`NoInit`], or the
 /// initializers given to [`Scope::init`].
-pub trait ScopeInit<C, A, L> {
+pub trait ScopeInit<Context, Act, Locals> {
     /// Invocation state; for initializers, whether they ran.
     type State: Default + Send + 'static;
     /// The initializers' memory.
@@ -61,10 +61,10 @@ pub trait ScopeInit<C, A, L> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
-        locals: &mut L,
+        ctx: &mut Context,
+        locals: &mut Locals,
         entry: Entry<'_>,
-    ) -> Option<NodeResult<A>>;
+    ) -> Option<NodeResult<Act>>;
 
     fn inspect(
         &self,
@@ -77,7 +77,7 @@ pub trait ScopeInit<C, A, L> {
 /// No initializers: a scope that only owns its locals.
 pub struct NoInit;
 
-impl<C, A, L> ScopeInit<C, A, L> for NoInit {
+impl<Context, Act, Locals> ScopeInit<Context, Act, Locals> for NoInit {
     type State = ();
     type Memory = ();
     const NODES: usize = 0;
@@ -87,10 +87,10 @@ impl<C, A, L> ScopeInit<C, A, L> for NoInit {
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut C,
-        _: &mut L,
+        _: &mut Context,
+        _: &mut Locals,
         _: Entry<'_>,
-    ) -> Option<NodeResult<A>> {
+    ) -> Option<NodeResult<Act>> {
         None
     }
 
@@ -98,33 +98,35 @@ impl<C, A, L> ScopeInit<C, A, L> for NoInit {
 }
 
 /// Initializers, from [`Scope::init`]: a tuple of nodes over the locals.
-pub struct Init<T>(T);
+pub struct Init<Nodes>(Nodes);
 
 /// Initializer state, and whether they ran for this invocation.
 #[derive(Default)]
-pub struct InitState<S> {
-    init: S,
+pub struct InitState<NodesState> {
+    init: NodesState,
     done: bool,
 }
 
-impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Init<T> {
-    type State = InitState<T::State>;
-    type Memory = T::Memory;
-    const NODES: usize = T::NODES;
+impl<Context, Act, Locals: 'static, Nodes: BtChildren<Context, Act, Write<Locals>>>
+    ScopeInit<Context, Act, Locals> for Init<Nodes>
+{
+    type State = InitState<Nodes::State>;
+    type Memory = Nodes::Memory;
+    const NODES: usize = Nodes::NODES;
 
     #[inline]
     fn run(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
-        mut locals: &mut L,
+        ctx: &mut Context,
+        mut locals: &mut Locals,
         entry: Entry<'_>,
-    ) -> Option<NodeResult<A>> {
+    ) -> Option<NodeResult<Act>> {
         if state.done {
             return None;
         }
-        let mut next = |_: &mut C, index: usize, succeeded: bool| {
+        let mut next = |_: &mut Context, index: usize, succeeded: bool| {
             if succeeded {
                 ControlOp::RunChild(index + 1)
             } else {
@@ -141,7 +143,7 @@ impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Ini
             entry,
             &mut next,
         ) {
-            Err(ControlOp::RunChild(done)) if done == T::LEN => {
+            Err(ControlOp::RunChild(done)) if done == Nodes::LEN => {
                 state.done = true;
                 None
             }
@@ -163,39 +165,41 @@ impl<C, A, L: 'static, T: BtChildren<C, A, Write<L>>> ScopeInit<C, A, L> for Ini
 
 /// Memory of a scope's child and initializers.
 #[derive(Default)]
-pub struct ScopeMemory<M, I = ()> {
-    child: M,
-    init: I,
+pub struct ScopeMemory<ChildMemory, InitializersMemory = ()> {
+    child: ChildMemory,
+    init: InitializersMemory,
 }
 
 /// Inline state; descendants drop before locals.
 #[derive(Default)]
-pub struct ScopeState<L, S, I = ()> {
-    child: S,
-    init: I,
-    locals: L,
+pub struct ScopeState<Locals, ChildState, InitializersState = ()> {
+    child: ChildState,
+    init: InitializersState,
+    locals: Locals,
 }
 
-impl<C, A, P, L, N, S, M, I> BtNode<C, A, P> for Scope<L, N, I>
+impl<Context, Act, Params, Locals, Child, ChildState, ChildMemory, Initializers>
+    BtNode<Context, Act, Params> for Scope<Locals, Child, Initializers>
 where
-    L: Default + Send + 'static,
-    N: for<'a> BtNode<C, A, &'a mut L, State = S, Memory = M>,
-    S: Default + Send + 'static,
-    M: Default + Send + 'static,
-    I: ScopeInit<C, A, L>,
+    Locals: Default + Send + 'static,
+    Child: for<'a> BtNode<Context, Act, &'a mut Locals, State = ChildState, Memory = ChildMemory>,
+    ChildState: Default + Send + 'static,
+    ChildMemory: Default + Send + 'static,
+    Initializers: ScopeInit<Context, Act, Locals>,
 {
-    type State = ScopeState<L, S, I::State>;
-    type Memory = ScopeMemory<M, I::Memory>;
-    const NODES: usize = 1 + I::NODES + <N as BtNode<C, A, &'static mut L>>::NODES;
+    type State = ScopeState<Locals, ChildState, Initializers::State>;
+    type Memory = ScopeMemory<ChildMemory, Initializers::Memory>;
+    const NODES: usize =
+        1 + Initializers::NODES + <Child as BtNode<Context, Act, &'static mut Locals>>::NODES;
 
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
-        _: P,
+        ctx: &mut Context,
+        _: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         if let Some(result) = self.init.run(
             &mut state.init,
             &mut memory.init,
@@ -206,7 +210,7 @@ where
             return result;
         }
         entry.run(
-            1 + I::NODES,
+            1 + Initializers::NODES,
             &self.child,
             &mut state.child,
             &mut memory.child,
@@ -228,23 +232,30 @@ where
             self.init
                 .inspect(state.map(|state| &state.init), &memory.init, inspector);
             let child = state.map(|state| &state.child);
-            BtNode::<C, A, &mut L>::inspect(&self.child, child, &memory.child, inspector);
+            BtNode::<Context, Act, &mut Locals>::inspect(
+                &self.child,
+                child,
+                &memory.child,
+                inspector,
+            );
         });
     }
 }
 
 /// Synchronous output node, called on entry. `scope!` makes each `let`
 /// initializer one, run by [`Scope::init`].
-pub struct Compute<F>(F);
+pub struct Compute<Function>(Function);
 
 /// Computes from context and fills the output slot.
 /// The callable is checked where the tree runs, like [`crate::leaf`], so
 /// an initializer closure stays open to inference. Annotate its argument.
-pub fn compute<F>(init: F) -> Compute<F> {
+pub fn compute<Function>(init: Function) -> Compute<Function> {
     Compute(init)
 }
 
-impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
+impl<Context, Act, Value, Function: Fn(&mut Context) -> Value>
+    BtNode<Context, Act, &mut Option<Value>> for Compute<Function>
+{
     type State = ();
     type Memory = ();
 
@@ -252,10 +263,10 @@ impl<C, A, T, F: Fn(&mut C) -> T> BtNode<C, A, &mut Option<T>> for Compute<F> {
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut C,
-        output: &mut Option<T>,
+        ctx: &mut Context,
+        output: &mut Option<Value>,
         _: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         *output = Some((self.0)(ctx));
         NodeResult::Success
     }

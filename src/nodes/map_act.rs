@@ -4,13 +4,13 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, Entry, NodeResult};
 
 /// A child whose act is converted.
-pub struct MapAct<F, N, B> {
-    map: F,
-    child: N,
-    act: PhantomData<fn() -> B>,
+pub struct MapAct<Map, Child, ChildAct> {
+    map: Map,
+    child: Child,
+    act: PhantomData<fn() -> ChildAct>,
 }
 
-/// Runs `child`, deciding `B`, in a tree deciding `A`: its act passes through
+/// Runs `child`, deciding `ChildAct`, in a tree deciding `Act`: its act passes through
 /// `map`, and its results are otherwise unchanged.
 ///
 /// Lets a subtree keep its own act type and be reused under a larger one; an
@@ -29,7 +29,7 @@ pub struct MapAct<F, N, B> {
 /// let doing = update(&tree, &mut state, &mut (), EntryMode::Evaluate).act();
 /// assert_eq!(doing, Some(Act::Walk(Walk::To(3))));
 /// ```
-pub fn map_act<F, N, B>(map: F, child: N) -> MapAct<F, N, B> {
+pub fn map_act<Map, Child, ChildAct>(map: Map, child: Child) -> MapAct<Map, Child, ChildAct> {
     MapAct {
         map,
         child,
@@ -37,20 +37,28 @@ pub fn map_act<F, N, B>(map: F, child: N) -> MapAct<F, N, B> {
     }
 }
 
-impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F, N, B> {
-    type State = N::State;
-    type Memory = N::Memory;
-    const NODES: usize = 1 + N::NODES;
+impl<
+    Context,
+    Act,
+    ChildAct,
+    Params,
+    Map: Fn(ChildAct) -> Act,
+    Child: BtNode<Context, ChildAct, Params>,
+> BtNode<Context, Act, Params> for MapAct<Map, Child, ChildAct>
+{
+    type State = Child::State;
+    type Memory = Child::Memory;
+    const NODES: usize = 1 + Child::NODES;
 
     #[inline]
     fn update(
         &self,
-        state: &mut N::State,
-        memory: &mut N::Memory,
-        ctx: &mut C,
-        params: P,
+        state: &mut Child::State,
+        memory: &mut Child::Memory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         match entry.run(1, &self.child, state, memory, ctx, params) {
             NodeResult::Running(act) => NodeResult::Running((self.map)(act)),
             NodeResult::Success => NodeResult::Success,
@@ -58,8 +66,13 @@ impl<C, A, B, P, F: Fn(B) -> A, N: BtNode<C, B, P>> BtNode<C, A, P> for MapAct<F
         }
     }
 
-    fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {
-        let node = NodeInfo::new("map_act", state.is_some()).with_fn_name::<F>();
+    fn inspect(
+        &self,
+        state: Option<&Child::State>,
+        memory: &Child::Memory,
+        inspector: &mut dyn Inspector,
+    ) {
+        let node = NodeInfo::new("map_act", state.is_some()).with_fn_name::<Map>();
         inspector.node(node, |inspector| {
             self.child.inspect(state, memory, inspector)
         });

@@ -4,9 +4,9 @@ use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, EntryMode, NodeResult};
 
 /// A child resumed as Evaluate once per span of time.
-pub struct ReevaluateEvery<D, N> {
-    span: D,
-    child: N,
+pub struct ReevaluateEvery<Span, Child> {
+    span: Span,
+    child: Child,
 }
 
 /// Passes `Resume` down to `child` as `Evaluate` once `span` has passed since
@@ -16,47 +16,55 @@ pub struct ReevaluateEvery<D, N> {
 ///
 /// The time runs from when this node started, or was last evaluated by
 /// either its parent or itself.
-pub fn reevaluate_every<D, N>(span: D, child: N) -> ReevaluateEvery<D, N> {
+pub fn reevaluate_every<Span, Child>(span: Span, child: Child) -> ReevaluateEvery<Span, Child> {
     ReevaluateEvery { span, child }
 }
 
 /// When the child was last evaluated, and its state.
-pub struct ReevaluateEveryState<I, S> {
-    child: S,
-    evaluated: Option<I>,
+pub struct ReevaluateEveryState<Instant, ChildState> {
+    child: ChildState,
+    evaluated: Option<Instant>,
 }
 
-// Derived `Default` would require `I: Default`.
-impl<I, S: Default> Default for ReevaluateEveryState<I, S> {
+// Derived `Default` would require `Instant: Default`.
+impl<Instant, ChildState: Default> Default for ReevaluateEveryState<Instant, ChildState> {
     fn default() -> Self {
         Self {
-            child: S::default(),
+            child: ChildState::default(),
             evaluated: None,
         }
     }
 }
 
-impl<C, A, P, N, S, Mem> BtNode<C, A, P> for ReevaluateEvery<C::Duration, N>
+impl<Context, Act, Params, Child, ChildState, ChildMemory> BtNode<Context, Act, Params>
+    for ReevaluateEvery<Context::Duration, Child>
 where
-    C: BtClock,
-    P: ParamValue,
-    N: for<'a> BtNode<C, A, <P::Shape as ParamShape>::Value<'a>, State = S, Memory = Mem>,
-    S: Default + Send + 'static,
-    Mem: Default + Send + 'static,
+    Context: BtClock,
+    Params: ParamValue,
+    Child: for<'a> BtNode<
+            Context,
+            Act,
+            <Params::Shape as ParamShape>::Value<'a>,
+            State = ChildState,
+            Memory = ChildMemory,
+        >,
+    ChildState: Default + Send + 'static,
+    ChildMemory: Default + Send + 'static,
 {
-    type State = ReevaluateEveryState<C::Instant, S>;
-    type Memory = Mem;
-    const NODES: usize = 1 + <N as BtNode<C, A, <P::Shape as ParamShape>::Value<'static>>>::NODES;
+    type State = ReevaluateEveryState<Context::Instant, ChildState>;
+    type Memory = ChildMemory;
+    const NODES: usize =
+        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
-        memory: &mut Mem,
-        ctx: &mut C,
-        params: P,
+        memory: &mut ChildMemory,
+        ctx: &mut Context,
+        params: Params,
         entry: Entry<'_>,
-    ) -> NodeResult<A> {
+    ) -> NodeResult<Act> {
         let due = match (entry.mode(), state.evaluated) {
             (EntryMode::Resume, Some(evaluated)) => elapsed(ctx, evaluated, self.span),
             _ => true,
@@ -80,7 +88,12 @@ where
         )
     }
 
-    fn inspect(&self, state: Option<&Self::State>, memory: &Mem, inspector: &mut dyn Inspector) {
+    fn inspect(
+        &self,
+        state: Option<&Self::State>,
+        memory: &ChildMemory,
+        inspector: &mut dyn Inspector,
+    ) {
         inspector.node(
             NodeInfo::new("reevaluate_every", state.is_some()),
             |inspector| {
@@ -88,7 +101,7 @@ where
                 if let Some(evaluated) = state.and_then(|state| state.evaluated.as_ref()) {
                     inspector.field("evaluated", evaluated);
                 }
-                BtNode::<C, A, <P::Shape as ParamShape>::Value<'_>>::inspect(
+                BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                     &self.child,
                     state.map(|state| &state.child),
                     memory,

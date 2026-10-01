@@ -8,10 +8,10 @@ use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
 use flatbt::inspect::{Describe, describe, path_id};
 use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 
-/// A tree that can drive agents whose blackboard is `C` and whose decisions are
-/// `A`, with one state type.
+/// A tree that can drive agents whose blackboard is `Blackboard` and whose decisions are
+/// `Act`, with one state type.
 ///
-/// What this adds over `BtNode<C, A>` is `State = Self::Data` and
+/// What this adds over `BtNode<Blackboard, Act>` is `State = Self::Data` and
 /// `Memory = Self::MemoryData`, which pin the invocation state and memory to
 /// named types so [`Behavior`] has a size to reserve. A bound would leave it a projection; an equality to a written-out
 /// type cannot be spelled, because a composed tree's state is nested control
@@ -21,8 +21,8 @@ use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 ///
 /// Bevy components must be `Send + Sync`, so a tree and its inline state carry
 /// that on top of FlatBT's own bounds.
-pub trait BehaviorNode<C, A = ()>:
-    BtNode<C, A, State = Self::Data, Memory = Self::MemoryData> + Send + Sync + 'static
+pub trait BehaviorNode<Blackboard, Act = ()>:
+    BtNode<Blackboard, Act, State = Self::Data, Memory = Self::MemoryData> + Send + Sync + 'static
 {
     /// Inline invocation state for the whole tree.
     type Data: Default + Send + Sync + 'static;
@@ -30,19 +30,19 @@ pub trait BehaviorNode<C, A = ()>:
     type MemoryData: Default + Send + Sync + 'static;
 }
 
-impl<C, A, N, S, M> BehaviorNode<C, A> for N
+impl<Blackboard, Act, Node, NodeState, NodeMemory> BehaviorNode<Blackboard, Act> for Node
 where
-    N: BtNode<C, A, State = S, Memory = M> + Send + Sync + 'static,
-    S: Default + Send + Sync + 'static,
-    M: Default + Send + Sync + 'static,
+    Node: BtNode<Blackboard, Act, State = NodeState, Memory = NodeMemory> + Send + Sync + 'static,
+    NodeState: Default + Send + Sync + 'static,
+    NodeMemory: Default + Send + Sync + 'static,
 {
-    type Data = S;
-    type MemoryData = M;
+    type Data = NodeState;
+    type MemoryData = NodeMemory;
 }
 
 /// Names one tree, and builds it once.
 ///
-/// Implemented for every `Fn() -> impl BehaviorNode<C, A>`, so a plain function
+/// Implemented for every `Fn() -> impl BehaviorNode<Blackboard, Act>`, so a plain function
 /// is a tree's name. The builder is the identity: the tree type cannot be,
 /// because two builders can return the same one with different node
 /// configuration, and a closure's return type cannot be projected on stable in
@@ -80,21 +80,21 @@ where
 ///     shoot(1)
 /// }
 /// ```
-pub trait TreeBuilder<C, A = ()>: Send + Sync + 'static {
+pub trait TreeBuilder<Blackboard, Act = ()>: Send + Sync + 'static {
     /// The tree this builder produces.
-    type Tree: BehaviorNode<C, A>;
+    type Tree: BehaviorNode<Blackboard, Act>;
 
     fn build(&self) -> Self::Tree;
 }
 
-impl<C, A, N, F> TreeBuilder<C, A> for F
+impl<Blackboard, Act, Node, Builder> TreeBuilder<Blackboard, Act> for Builder
 where
-    N: BehaviorNode<C, A>,
-    F: Fn() -> N + Send + Sync + 'static,
+    Node: BehaviorNode<Blackboard, Act>,
+    Builder: Fn() -> Node + Send + Sync + 'static,
 {
-    type Tree = N;
+    type Tree = Node;
 
-    fn build(&self) -> N {
+    fn build(&self) -> Node {
         self()
     }
 }
@@ -152,30 +152,37 @@ pub struct TickAt {
 }
 
 /// What a tick does with one agent, given its blackboard and when it falls.
-pub type TickFn<C> = fn(&C, TickAt) -> Tick;
+pub type TickFn<Blackboard> = fn(&Blackboard, TickAt) -> Tick;
 
-/// The one tree named by `F`, built once and shared by every agent running it.
+/// The one tree named by `Builder`, built once and shared by every agent running it.
 ///
 /// Inserted by [`BehaviorPlugin`](crate::BehaviorPlugin). Trees are immutable
 /// definitions, so they belong in a resource rather than copied into each agent.
 /// Public so a game ticking its agents itself reads the tree the same way the
 /// generated system does; see [`Behavior::tick`].
 #[derive(Resource)]
-pub struct BehaviorTree<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> {
-    tree: F::Tree,
-    tick_mode: TickFn<C>,
-    // Load-bearing: it keeps `C` and `A` direct field uses. Reached only through
-    // the `F::Tree` projection, they send the monomorphization collector through
+pub struct BehaviorTree<
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
+> {
+    tree: Builder::Tree,
+    tick_mode: TickFn<Blackboard>,
+    // Load-bearing: it keeps `Blackboard` and `Act` direct field uses. Reached only through
+    // the `Builder::Tree` projection, they send the monomorphization collector through
     // every blanket impl behind them and over the recursion limit.
-    context: PhantomData<fn() -> (C, A)>,
+    context: PhantomData<fn() -> (Blackboard, Act)>,
 }
 
-impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
-    BehaviorTree<C, A, F>
+impl<
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
+> BehaviorTree<Blackboard, Act, Builder>
 {
     /// Builds the tree once. [`BehaviorPlugin`](crate::BehaviorPlugin) does
     /// this; a game registering its own tick does it itself.
-    pub fn new(builder: &F, tick_mode: TickFn<C>) -> Self {
+    pub fn new(builder: &Builder, tick_mode: TickFn<Blackboard>) -> Self {
         Self {
             tree: builder.build(),
             tick_mode,
@@ -184,17 +191,17 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
     }
 
     /// The definition, to hand to [`Behavior::tick`].
-    pub fn get(&self) -> &F::Tree {
+    pub fn get(&self) -> &Builder::Tree {
         &self.tree
     }
 
     /// What this tree's tick does with one agent.
-    pub fn tick_mode(&self) -> TickFn<C> {
+    pub fn tick_mode(&self) -> TickFn<Blackboard> {
         self.tick_mode
     }
 }
 
-/// One agent's invocation state for the tree named by `F`.
+/// One agent's invocation state for the tree named by `Builder`.
 ///
 /// Holds only what is per-agent: the state of a suspended invocation, sized
 /// exactly for that tree. The tree itself lives once in a resource, and the
@@ -256,21 +263,30 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>>
 /// [`stop_behavior`](BehaviorCommands::stop_behavior), not taking its
 /// blackboard away.
 #[derive(Component)]
-#[component(on_remove = release_act::<A>)]
-pub struct Behavior<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> {
-    state: Option<<F::Tree as BehaviorNode<C, A>>::Data>,
+#[component(on_remove = release_act::<Act>)]
+pub struct Behavior<
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
+> {
+    state: Option<<Builder::Tree as BehaviorNode<Blackboard, Act>>::Data>,
     /// Every node's memory: kept across restarts, dropped with the component.
-    memory: <F::Tree as BehaviorNode<C, A>>::MemoryData,
+    memory: <Builder::Tree as BehaviorNode<Blackboard, Act>>::MemoryData,
     // Only the builder's type is needed; the value it was named by is not kept,
     // so it cannot be mistaken for per-agent configuration. Load-bearing beyond
-    // that: it keeps `C`, `A` and `F` direct field uses, as above.
-    builder: Names<C, A, F>,
+    // that: it keeps `Blackboard`, `Act` and `Builder` direct field uses, as above.
+    builder: Names<Blackboard, Act, Builder>,
 }
 
 /// The type parameters an agent carries without storing anything for them.
-type Names<C, A, F> = PhantomData<fn() -> (C, A, F)>;
+type Names<Blackboard, Act, Builder> = PhantomData<fn() -> (Blackboard, Act, Builder)>;
 
-impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> Behavior<C, A, F> {
+impl<
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
+> Behavior<Blackboard, Act, Builder>
+{
     /// Runs the tree named by `builder`, restarted after every terminal result.
     ///
     /// `builder` is not called here: it names the tree, which
@@ -282,7 +298,7 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     /// configuration therefore configures nothing here. Vary a tree by writing a
     /// second builder function, not by capturing different values in one
     /// closure.
-    pub fn for_tree(_builder: F) -> Self {
+    pub fn for_tree(_builder: Builder) -> Self {
         Self {
             state: None,
             memory: Default::default(),
@@ -311,13 +327,16 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
 
     /// A text view of this agent's running path, for logs and debugging. See
     /// [`Describe`]. `tree` is the definition from [`BehaviorTree::get`].
-    pub fn describe<'a>(&'a self, tree: &'a F::Tree) -> Describe<'a, F::Tree, C, A> {
+    pub fn describe<'a>(
+        &'a self,
+        tree: &'a Builder::Tree,
+    ) -> Describe<'a, Builder::Tree, Blackboard, Act> {
         describe(tree, self.state.as_ref(), &self.memory)
     }
 
     /// A fingerprint of this agent's running path, to act only when it
     /// changes. See [`path_id`].
-    pub fn path_id(&self, tree: &F::Tree) -> u64 {
+    pub fn path_id(&self, tree: &Builder::Tree) -> u64 {
         path_id(tree, self.state.as_ref(), &self.memory)
     }
 
@@ -330,7 +349,12 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     /// plugin writes and a game can write instead. This part it cannot: a
     /// composed tree's state type cannot be named, so only a generic over the
     /// builder can hold it.
-    pub fn tick(&mut self, tree: &F::Tree, bb: &mut C, mode: EntryMode) -> Option<A> {
+    pub fn tick(
+        &mut self,
+        tree: &Builder::Tree,
+        bb: &mut Blackboard,
+        mode: EntryMode,
+    ) -> Option<Act> {
         // A fresh invocation enters as Evaluate whatever the caller asks for.
         let resumed = self.state.is_some() && mode == EntryMode::Resume;
         match update_slot(tree, &mut self.state, &mut self.memory, bb, mode) {
@@ -352,8 +376,11 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> B
     }
 }
 
-impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> core::fmt::Debug
-    for Behavior<C, A, F>
+impl<
+    Blackboard: Send + Sync + 'static,
+    Act: Send + Sync + 'static,
+    Builder: TreeBuilder<Blackboard, Act>,
+> core::fmt::Debug for Behavior<Blackboard, Act, Builder>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Behavior")
@@ -373,10 +400,10 @@ impl<C: Send + Sync + 'static, A: Send + Sync + 'static, F: TreeBuilder<C, A>> c
 /// Without this, removing a `Behavior` would leave the last order standing and
 /// the world would go on obeying it.
 ///
-/// `A` need not be a component at all -- a tree that decides nothing has no act
+/// `Act` need not be a component at all -- a tree that decides nothing has no act
 /// to release -- so the act type is looked up rather than named.
-fn release_act<A: Send + Sync + 'static>(mut world: DeferredWorld, ctx: HookContext) {
-    let Some(act) = world.components().get_id(TypeId::of::<A>()) else {
+fn release_act<Act: Send + Sync + 'static>(mut world: DeferredWorld, ctx: HookContext) {
+    let Some(act) = world.components().get_id(TypeId::of::<Act>()) else {
         return;
     };
     let entity = ctx.entity;
@@ -426,60 +453,60 @@ pub trait BehaviorCommands {
     /// Removing the component is all this does -- the release is
     /// [`Behavior`]'s own removal hook, so it happens however the component
     /// goes.
-    fn stop_behavior<C, A, F>(&mut self, tree: F) -> &mut Self
+    fn stop_behavior<Blackboard, Act, Builder>(&mut self, tree: Builder) -> &mut Self
     where
-        C: Send + Sync + 'static,
-        A: Send + Sync + 'static,
-        F: TreeBuilder<C, A>;
+        Blackboard: Send + Sync + 'static,
+        Act: Send + Sync + 'static,
+        Builder: TreeBuilder<Blackboard, Act>;
 
     /// Drops this agent's suspended invocation, so its next tick enters the
     /// tree named by `tree` from the root. See [`Behavior::restart`].
-    fn restart_behavior<C, A, F>(&mut self, tree: F) -> &mut Self
+    fn restart_behavior<Blackboard, Act, Builder>(&mut self, tree: Builder) -> &mut Self
     where
-        C: Send + Sync + 'static,
-        A: Send + Sync + 'static,
-        F: TreeBuilder<C, A>;
+        Blackboard: Send + Sync + 'static,
+        Act: Send + Sync + 'static,
+        Builder: TreeBuilder<Blackboard, Act>;
 }
 
 impl BehaviorCommands for EntityCommands<'_> {
-    fn stop_behavior<C, A, F>(&mut self, _tree: F) -> &mut Self
+    fn stop_behavior<Blackboard, Act, Builder>(&mut self, _tree: Builder) -> &mut Self
     where
-        C: Send + Sync + 'static,
-        A: Send + Sync + 'static,
-        F: TreeBuilder<C, A>,
+        Blackboard: Send + Sync + 'static,
+        Act: Send + Sync + 'static,
+        Builder: TreeBuilder<Blackboard, Act>,
     {
-        self.try_remove::<Behavior<C, A, F>>()
+        self.try_remove::<Behavior<Blackboard, Act, Builder>>()
     }
 
-    fn restart_behavior<C, A, F>(&mut self, tree: F) -> &mut Self
+    fn restart_behavior<Blackboard, Act, Builder>(&mut self, tree: Builder) -> &mut Self
     where
-        C: Send + Sync + 'static,
-        A: Send + Sync + 'static,
-        F: TreeBuilder<C, A>,
+        Blackboard: Send + Sync + 'static,
+        Act: Send + Sync + 'static,
+        Builder: TreeBuilder<Blackboard, Act>,
     {
         self.queue(move |mut agent: EntityWorldMut| {
-            agent.restart_behavior::<C, A, F>(tree);
+            agent.restart_behavior::<Blackboard, Act, Builder>(tree);
         })
     }
 }
 
 impl BehaviorCommands for EntityWorldMut<'_> {
-    fn stop_behavior<C, A, F>(&mut self, _tree: F) -> &mut Self
+    fn stop_behavior<Blackboard, Act, Builder>(&mut self, _tree: Builder) -> &mut Self
     where
-        C: Send + Sync + 'static,
-        A: Send + Sync + 'static,
-        F: TreeBuilder<C, A>,
+        Blackboard: Send + Sync + 'static,
+        Act: Send + Sync + 'static,
+        Builder: TreeBuilder<Blackboard, Act>,
     {
-        self.remove::<Behavior<C, A, F>>()
+        self.remove::<Behavior<Blackboard, Act, Builder>>()
     }
 
-    fn restart_behavior<C, A, F>(&mut self, _tree: F) -> &mut Self
+    fn restart_behavior<Blackboard, Act, Builder>(&mut self, _tree: Builder) -> &mut Self
     where
-        C: Send + Sync + 'static,
-        A: Send + Sync + 'static,
-        F: TreeBuilder<C, A>,
+        Blackboard: Send + Sync + 'static,
+        Act: Send + Sync + 'static,
+        Builder: TreeBuilder<Blackboard, Act>,
     {
-        if let Some(mut behavior) = self.get_mut::<Behavior<C, A, F>>() {
+        if let Some(mut behavior) = self.get_mut::<Behavior<Blackboard, Act, Builder>>() {
             behavior.restart();
         }
         self
