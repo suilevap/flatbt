@@ -221,7 +221,8 @@ impl<P, Children> ControlNode<P, Children> {
             op
         };
         match self.children.run_from(
-            (&mut state.children, &mut memory.children),
+            &mut state.children,
+            &mut memory.children,
             child_index,
             ctx,
             params,

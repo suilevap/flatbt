@@ -205,7 +205,8 @@ where
     #[inline]
     fn run_from(
         &self,
-        (state, memory): (&mut Self::State, &mut Self::Memory),
+        state: &mut Self::State,
+        memory: &mut Self::Memory,
         first: usize,
         ctx: &mut C,
         params: &mut S::Value<'_>,
@@ -232,7 +233,8 @@ where
                         ControlOp::Failure
                     };
                     match self.children.run_from(
-                        (&mut state.children, &mut memory.children),
+                        &mut state.children,
+                        &mut memory.children,
                         child as usize,
                         ctx,
                         params,
