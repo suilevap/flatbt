@@ -565,16 +565,15 @@ fired after its branch ended. See [Tree memory](tree-memory-draft.md).
 
 See [Goal stack](goal-stack-draft.md).
 
-- **`need` calls the subgoal and returns its result** rather than pushing it.
-  A push has no honest `NodeResult`: `Failure` lets a `select` run its next
-  way in the same update, `Success` lets a `seq` act. A call gives
-  `Running` with the subgoal's act, and frames start and end as calls do.
-- **Recursion through a trait object, frames in fixed arrays.** The dispatch
-  subtree cannot contain itself, so `need` reaches the next frame through
-  `&mut dyn Subgoals`, built on the stack each update. No heap.
-- **Failed subgoals are kept per asker**, while the asker is on the stack, so
-  `Evaluate` falls through to another way instead of retrying.
-- **Dispatch memory is per depth**: two frames run at once and cannot share
-  one memory.
+- **One goal runs at a time.** `goals` runs the top goal's subtree; `need`
+  pushes a subgoal and ends the turn; a finished goal is popped and the goal
+  below re-runs, where `need` returns the result. A loop, not recursion.
+- **`need` as a call was tried first and dropped**: it re-walked every goal
+  from the root on each update, needed a dispatch run state and memory per
+  depth, and hid subgoals from traces.
+- **Each goal asks for a subgoal at most once** while it is on the stack; the
+  result is kept, so a failed way falls through to the next and the loop ends.
+- **Reactivity through `done`**, asked for every goal on the stack, since goals
+  below the top do not run.
 - **The stack is run state.** A goal that must outlive preemption lives in the
   blackboard and is read by `root`.

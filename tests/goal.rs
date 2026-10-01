@@ -127,6 +127,12 @@ fn tree<const N: usize>() -> impl BtNode<World, Act> {
             }),
         }),
     )
+    .done(|world: &World, goal: &Goal| match goal {
+        Goal::Reach(to) => world.at == *to,
+        Goal::OpenDoor => world.door_open,
+        Goal::GetKey => world.has_key,
+        Goal::Climb => world.climbed,
+    })
 }
 
 fn run<N: BtNode<World, Act>>(
@@ -201,7 +207,8 @@ fn a_failed_subgoal_is_not_asked_for_again_while_its_asker_stands() {
         Some("goals {stack: [Reach(7), Climb], failed: [OpenDoor]}")
     );
     assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(7)));
-    assert_eq!(world.door_tries, 1);
+    // Once to ask for the key, once to hear it cannot be had.
+    assert_eq!(world.door_tries, 2);
 }
 
 #[test]
@@ -248,15 +255,18 @@ fn a_new_root_goal_starts_over() {
 }
 
 #[test]
-fn a_failure_deep_in_the_stack_returns_through_every_goal_above_it() {
+fn a_failure_returns_down_the_stack_goal_by_goal() {
     let tree = tree::<8>();
     let mut state = BtState::new(&tree);
     let mut world = World::new(7);
     world.can_climb = true;
     // Reach(7) -> OpenDoor -> GetKey -> Reach(2): walking to the key.
     assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(2)));
-    // The key is taken. GetKey fails, so OpenDoor fails, so Reach(7) climbs.
     world.key_at = None;
+    // Only the top goal runs: Reach(2) finishes its walk.
+    assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(2)));
+    // Then GetKey finds no key and fails, so OpenDoor fails, so Reach(7)
+    // climbs, all in one update.
     assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(7)));
     assert!(world.climbed && !world.door_open);
     assert_eq!(

@@ -12,8 +12,10 @@ solves it, at the cost of a planner, a world model and allocation.
 
 ## Design
 
-A goal is a value. One dispatch subtree has an arm per kind of goal, and a goal
-asks for what it needs first by calling that dispatch again for a subgoal.
+A goal is a value. One dispatch subtree has an arm per kind of goal. `goals`
+keeps a stack of goals and runs the dispatch for the one on top: a sequence
+whose next step is chosen by the current goal, and which returns to the
+previous goal with a result.
 
 ```rust
 goals::<8, _, _>(
@@ -28,80 +30,71 @@ goals::<8, _, _>(
         Goal::Climb => action(Climb),
     }),
 )
+.done(|w: &World, goal: &Goal| /* already achieved? */)
 ```
 
-### `need` is a call, not a push
+### One goal runs at a time
 
-The first sketch had `need` push a subgoal and a driver pop it on success. A
-push has no honest result: the subtree has to stop, but `Failure` would let a
-`select` run its next way in the same update and `Success` would let a `seq`
-act. So `need(g)` runs the dispatch for `g` one frame deeper and returns its
-result, as a function call does:
+Each update runs only the top goal's subtree. No recursion: one loop in
+`goals`, bounded by the stack.
 
-| Subgoal result | `need` returns | So |
-| --- | --- | --- |
-| `Running(act)` | `Running(act)` | The agent works on the subgoal; the act is the subgoal's. |
-| `Success` | `Success` | `seq((need(..), act))` acts once the blocker is gone. |
-| `Failure` | `Failure` | `select((need(a), need(b)))` tries the next way. |
-| no subgoal (`None`) | `Success` | Nothing is in the way. |
+| Top goal's subtree | Then |
+| --- | --- |
+| `Running(act)` | The update returns it. |
+| A `need` pushed `g` | The subtree's turn ends and its run state is dropped; `g` goes on top and runs, in the same update. |
+| `Success` / `Failure` | The goal is popped and its result kept for the goal below, which runs again from its start in the same update. Popping the root ends the node with that result. |
 
-Push and pop fall out: a frame starts when `need` asks for a new goal and ends
-when the goal completes, or when an update no longer reaches the `need` that
-asked for it, which is how a preempted branch ends. No node pushes or pops.
+`need(f)` asks `f(ctx, goal)` for a subgoal:
 
-### The stack extends the running path
+| Answer | `need` |
+| --- | --- |
+| `None` | Succeeds: nothing in the way. |
+| `Some(g)`, already ended for this goal | Returns that result: the goal came back from `g`. |
+| `Some(g)`, on the stack | Fails: a cycle (the key is behind the door it opens). |
+| `Some(g)`, new | Pushes `g` and fails, ending the turn. |
 
-Parents are not frozen while a subgoal runs. Every update walks from the root
-goal down through each `need` to the deepest frame, as any tree re-walks its
-running path, so a failure deep in the stack returns through every goal above
-it in the same update, each deciding with its own `select` or `seq`. The
-alternative, a loop that runs only the top frame, would not notice a parent's
-goal achieved by other means, and a parent waiting on its subgoal would need a
-"waiting" result that `NodeResult` does not have. The recursion is bounded by
-`N`, over frames laid out in advance.
+Each goal asks for a given subgoal at most once while it is on the stack, so a
+failed way is not retried and `select` falls through to the next. The results
+go when their asker is popped. This also bounds the work per update; a
+backstop logs a diagnostic and fails the node if it does not settle.
 
-### Failed subgoals
-
-A subgoal that fails is recorded against the goal that asked for it, for as
-long as that goal stays on the stack. `need` fails at once for a recorded goal,
-so `Evaluate` rescanning a `select` falls through to the next way instead of
-retrying the one that failed. The record goes with its asker. The list is
-fixed-size; when full, a failure is not recorded and a diagnostic is logged,
-and the stack depth still bounds the search.
-
-`need` also fails without running when its goal is already on the stack (a
-cycle: the key is behind the door it opens) and when the stack is full.
+A goal re-runs from its start when its subgoal returns, rather than resuming
+where it asked: its subtree could only have stopped there with `Failure`, and
+the world has changed since. Its `need`s answer from the results, so the
+re-run is cheap and reaches the same point.
 
 ### Reactivity
 
-Every update runs from the root down, `Resume` included, so each `need`
-re-asks for its subgoal. A goal achieved by other means makes its `need`
-return `None`, and the frames below it end that update. A changed root goal
-starts over.
+Goals below the top do not run while it works. `goals(..).done(|ctx, goal|
+..)` is asked for every goal on the stack on every update, from the root up;
+the first one already achieved is popped with everything above it, as if it
+had succeeded. A changed root goal starts over. The stack is run state, so
+preemption drops it; a goal that must survive belongs in the blackboard, where
+`root` reads it.
 
 ### Storage
 
-Run state: the goals, one dispatch run state per frame, and the failure list,
-`N` of each, so the run state is `N` times the dispatch subtree's. No heap.
-Memory: one dispatch memory per stack depth, since memory cannot be shared by
-two frames running at once. A cooldown in a goal's subtree is therefore per
-depth, not per goal. The stack is run state, so preemption drops it; a goal
-that must survive belongs in the blackboard, where `root` reads it.
+Run state: `N` goals, their results, and one run state of the dispatch
+subtree, for the top goal. Memory: the dispatch subtree's, shared by every
+goal, as it is one subtree. No heap.
 
 ### Parameters
 
-The dispatch subtree receives `GoalCall`: the goal and the way to subgoals.
-Catalog nodes pass it through. `with_goal(node)` gives a node `&Goal`;
+The dispatch subtree receives `GoalCall`: the goal and the stack. Catalog
+nodes pass it through. `with_goal(node)` gives a node `&Goal`;
 `no_params(node)` a node taking `()`, such as an `action` of a
 `BtAction<C, A>`.
 
+### Rejected: `need` as a call
+
+A first version ran the subgoal from inside `need` and returned its result,
+every update walking from the root goal down. It was reactive without `done`,
+but recursive, with one dispatch run state and memory per stack depth, and
+traces stopped at `need`.
+
 ## Open
 
-- Traces stop at `need`: it records the subgoal and its result, but the
-  subgoal's nodes would reuse the dispatch's ids. Numbering frames separately
-  would make them traceable.
+- A `need` that pushed fails, so in a `select` the nodes after it still run in
+  that turn. Put `need` last in its branch.
 - `goal_match!` patterns cannot bind into the subtree; closures read the goal.
-  Binding them as `scope!` locals would remove the `let Goal::Reach(to) = goal`
-  boilerplate.
 - `need` as the name; `require`, `achieve` and `subgoal` are candidates.
-- Per-goal cooldowns and backoff (memory keyed by goal rather than node).

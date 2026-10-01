@@ -382,9 +382,10 @@ copy `Time::elapsed()` into the blackboard in the gather system, and use
 
 ## Goals
 
-`goals` runs one subtree per kind of goal, and a goal asks for what it needs
-first with `need`, which runs the subtree for the subgoal and returns its
-result. A blocker is just a goal: `select` and `seq` decide what to do about it.
+`goals` keeps a stack of goals and runs one subtree per kind of goal for the
+goal on top. A goal asks for what it needs first with `need`: the subgoal goes
+on top, and when it ends, the goal runs again and `need` returns how it went.
+A blocker is just a goal: `select` and `seq` decide what to do about it.
 
 ```rust,ignore
 let tree = goals::<8, _, _>(
@@ -398,17 +399,24 @@ let tree = goals::<8, _, _>(
         Goal::GetKey => seq((need(|w: &World, _: &Goal| Some(Goal::Reach(w.key_at))), pick_up)),
         Goal::Climb => climb,
     }),
-);
+)
+.done(|w: &World, goal: &Goal| w.achieved(goal));
 ```
 
-- `need` returns `Running` with the subgoal's act, `Success` once it is
-  achieved (or nothing was needed), and `Failure` when it cannot be.
-- A subgoal that failed is not asked for again while the goal that asked
-  stays on the stack, so `select` falls through to the next way.
-- `need` fails for a goal already on the stack (a cycle) or a full stack.
-- Every update re-asks from the root: a goal achieved by other means ends the
-  subgoals below it, and a changed root goal starts over.
-- The stack holds at most `N` goals in run state, no heap; preemption drops it.
+- Only the top goal runs. Pushing and popping happen in the same update, so the
+  update returns the act of whichever goal ends up working.
+- `need(f)`: `None` succeeds. A new subgoal is pushed and the goal's turn ends.
+  Once the subgoal has ended, the same `need` returns its result.
+- A goal asks for each subgoal at most once while it is on the stack, so a
+  failed way falls through to the next. A goal already on the stack (a cycle)
+  or a full stack fails `need`.
+- `.done(..)` is asked for every goal on the stack each update: one achieved by
+  other means is popped with the goals above it. A changed root goal starts
+  over.
+- Put `need` last in its branch: in a `select`, nodes after a `need` that
+  pushed still run in that turn.
+- Run state: `N` goals and one run state of the goal subtree, for the top goal.
+  No heap. Preemption drops the stack.
 - Subtrees receive the goal as a parameter: `with_goal(node)` gives a node
   `&Goal`, `no_params(node)` adapts a node taking `()`.
 

@@ -14,19 +14,19 @@ pub fn when_goal<F, N>(accepts: F, child: N) -> WhenGoal<F, N> {
     WhenGoal { accepts, child }
 }
 
-impl<'p, C, A, G, F, N, S, M> BtNode<C, A, GoalCall<'p, C, A, G>> for WhenGoal<F, N>
+impl<'p, C, A, G, F, N, S, M> BtNode<C, A, GoalCall<'p, G>> for WhenGoal<F, N>
 where
     C: 'static,
     A: 'static,
     G: 'static,
     F: Fn(&G) -> bool,
-    N: for<'a> BtNode<C, A, GoalCall<'a, C, A, G>, State = S, Memory = M>,
+    N: for<'a> BtNode<C, A, GoalCall<'a, G>, State = S, Memory = M>,
     S: Default + Send + 'static,
     M: Default + Send + 'static,
 {
     type State = S;
     type Memory = M;
-    const NODES: usize = <N as BtNode<C, A, GoalCall<'static, C, A, G>>>::NODES;
+    const NODES: usize = <N as BtNode<C, A, GoalCall<'static, G>>>::NODES;
 
     #[inline]
     fn update(
@@ -34,7 +34,7 @@ where
         state: &mut Self::State,
         memory: &mut Self::Memory,
         ctx: &mut C,
-        call: GoalCall<'p, C, A, G>,
+        call: GoalCall<'p, G>,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
         if (self.accepts)(call.goal) {
@@ -50,7 +50,7 @@ where
         memory: &Self::Memory,
         inspector: &mut dyn Inspector,
     ) {
-        BtNode::<C, A, GoalCall<'_, C, A, G>>::inspect(&self.child, state, memory, inspector);
+        BtNode::<C, A, GoalCall<'_, G>>::inspect(&self.child, state, memory, inspector);
     }
 }
 
@@ -63,7 +63,7 @@ pub fn with_goal<N>(node: N) -> WithGoal<N> {
     WithGoal(node)
 }
 
-impl<'p, C, A, G, N, S, M> BtNode<C, A, GoalCall<'p, C, A, G>> for WithGoal<N>
+impl<'p, C, A, G, N, S, M> BtNode<C, A, GoalCall<'p, G>> for WithGoal<N>
 where
     G: 'static,
     N: for<'a> BtNode<C, A, &'a G, State = S, Memory = M>,
@@ -80,7 +80,7 @@ where
         state: &mut S,
         memory: &mut M,
         ctx: &mut C,
-        call: GoalCall<'p, C, A, G>,
+        call: GoalCall<'p, G>,
         entry: Entry<'_>,
     ) -> NodeResult<A> {
         self.0.update(state, memory, ctx, call.goal, entry)
