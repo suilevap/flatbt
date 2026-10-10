@@ -76,14 +76,14 @@ pub use composition::{
 };
 #[cfg(feature = "extras")]
 pub use nodes::{
-    ActionNode, ActionWait, ActionWhile, BtAction, BtCancel, BtClock, BtOrder, ByScore,
-    CancelOnDrop, CheckWith, Choose, ChooseNode, Cooldown, Focus, GoalCall, Goals, IfElse,
-    LeafWith, MapAct, Need, Ordered, ReevaluateEvery, ReevaluateWhen, Remap, Repeat, RepeatWhile,
-    Retry, Shuffled, Timeout, Weighted, action, action_wait, action_while, by_score, check_with,
-    cooldown, focus, force_failure, force_success, goals, if_else, invert, leaf_with, map_act,
-    need, order_by, random_select, reevaluate_every, reevaluate_when, repeat, repeat_while, retry,
-    shuffle_seq, shuffled, success_cooldown, timeout, utility, weighted, weighted_select,
-    when_goal, with_goal,
+    ActionNode, ActionWait, ActionWhile, AwaitFuture, Awaiting, BtAction, BtCancel, BtClock,
+    BtOrder, ByScore, CancelOnDrop, CheckWith, Choose, ChooseNode, Cooldown, Focus, GoalCall,
+    Goals, IfElse, LeafWith, MapAct, Need, Ordered, ReevaluateEvery, ReevaluateWhen, Remap, Repeat,
+    RepeatWhile, Retry, Shuffled, Timeout, Weighted, action, action_wait, action_while,
+    await_future, by_score, check_with, cooldown, focus, force_failure, force_success, goals,
+    if_else, invert, leaf_with, map_act, need, order_by, random_select, reevaluate_every,
+    reevaluate_when, repeat, repeat_while, retry, shuffle_seq, shuffled, success_cooldown, timeout,
+    utility, weighted, weighted_select, when_goal, with_goal,
 };
 pub(crate) use runtime::log_error;
 pub use runtime::{BtNode, BtState, Entry, EntryMode, NodeResult, update, update_slot};
