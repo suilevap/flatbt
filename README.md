@@ -309,6 +309,28 @@ State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
 the outcome. Drop has no context argument; the handle must own cancellation access.
 See the [external action example](examples/external_action.rs).
 
+When the external work answers with a future, `await_future` is that action
+already written. It starts the work from a scope input, keeps the future in its
+state (leaving the branch drops it, which cancels the work), reports a waiting
+act until the future answers, and writes the answer to a scope output:
+
+```rust,ignore
+let tree = scope! {
+    let target: Cell = pick_target;
+    let path: Path;
+    sequence {
+        await_future(|bb: &mut World, target: &Cell| Some(bb.paths.plan(*target)), |_| Act::Thinking)
+            .with(target, out path);
+        action(Walk).with(path);
+    }
+};
+```
+
+The future is any `Future<Output = Option<T>> + Unpin`; `None` fails the node. It
+is polled once per update with a no-op waker, so keep updating the tree while it
+waits. An answer ready at once is taken in the update that asked. No runtime,
+allocation or `std` is involved.
+
 ## Decorators and helpers
 
 Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
@@ -568,6 +590,11 @@ slots, for a tree whose every action is carried out by systems.
 BehaviorPlugin::for_tree(guard_tree)
     .tick_mode(|_, at| evaluate_every(Duration::from_millis(250), at))
 ```
+
+A Bevy task is a future: `await_future` can wait on work spawned on
+`AsyncComputeTaskPool` (a `Task<Option<T>>`), and dropping the task when the
+branch is left cancels it. The task is polled only when the agent is ticked, so
+tick a waiting agent (`Resume` or `Evaluate`, not `Skip`) to see its answer.
 
 ### Turn based, and stopping
 
@@ -866,7 +893,7 @@ Both on by default.
 
 | Feature | Adds |
 | --- | --- |
-| `extras` | `flatbt::nodes` (`BtAction`, `action`, cancellation, `choose!`, `order_by` and `per_child!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
+| `extras` | `flatbt::nodes` (`BtAction`, `action`, `await_future`, cancellation, `choose!`, `order_by` and `per_child!`, decorators and helpers) and `flatbt::scope` (`scope!`, bindings) |
 | `std` | Diagnostics on stderr, and `set_error_handler` to route them elsewhere |
 
 Without `std` the crate is `no_std`; diagnostics are discarded, and the node

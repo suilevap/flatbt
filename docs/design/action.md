@@ -57,6 +57,10 @@ complete reads the outcome. The scheduler runs between BT updates. Use periodic
 Evaluate for reactivity and Resume on completion. Core requires no async runtime,
 futures, wakeup queue, threads, or boxing.
 
+`await_future` is this pattern for work that answers with a future: the future
+is the handle, polled once per update with a no-op waker, so it still needs no
+runtime, wakeup queue, threads or boxing. A Bevy task or any `Unpin` future fits.
+
 The [external action example](../../examples/external_action.rs) advances movement
 for ten external frames with BT updates at start, preemption on frame 4, and
 completion on frame 7. It installs the component immediately and keeps terminal

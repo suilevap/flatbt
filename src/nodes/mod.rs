@@ -16,7 +16,9 @@ pub mod repeat;
 pub mod repeat_while;
 pub mod time;
 
-pub use action::{ActionNode, BtAction, BtCancel, CancelOnDrop, action};
+pub use action::{
+    ActionNode, AwaitFuture, Awaiting, BtAction, BtCancel, CancelOnDrop, action, await_future,
+};
 pub use choose::{Choose, ChooseNode};
 pub use focus::{Focus, focus};
 pub use function::{ActionWhile, CheckWith, LeafWith, action_while, check_with, leaf_with};
