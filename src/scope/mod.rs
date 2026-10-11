@@ -14,5 +14,6 @@ pub use binding::{
     no_params, params, read, write,
 };
 pub use storage::{
-    Compute, Init, InitState, NoInit, Scope, ScopeInit, ScopeMemory, ScopeState, compute, scope,
+    Compute, Init, InitFn, InitLocal, InitState, NoInit, Scope, ScopeInit, ScopeMemory, ScopeState,
+    compute, init_local, scope,
 };

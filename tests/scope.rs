@@ -800,3 +800,69 @@ fn a_failing_initializer_fails_the_scope_without_entering_it() {
     );
     assert!(!entered);
 }
+
+#[test]
+fn a_scope_hands_what_it_is_given_to_its_initializers() {
+    let tree = scope! {
+        let target: u32 = |trace: &mut Vec<u32>| trace.len() as u32 + 5;
+        sequence {
+            scope! {
+                // Reads what the scope was given; the other reads the context.
+                let doubled: u32 = |_: &mut Vec<u32>, target: &u32| target * 2;
+                let seen: u32 = |trace: &mut Vec<u32>| trace.len() as u32;
+                sequence {
+                    leaf_with(|trace: &mut Vec<u32>, (doubled, seen): (&u32, &u32)| {
+                        trace.push(*doubled);
+                        trace.push(*seen);
+                        NodeResult::Success
+                    })
+                    .with(doubled, seen);
+                }
+            }
+            .with(target);
+        }
+    };
+    let mut state: BtState<_, _> = BtState::new(&tree);
+    let mut trace = Vec::new();
+    assert_eq!(
+        update(&tree, &mut state, &mut trace, EntryMode::Evaluate),
+        Success
+    );
+    assert_eq!(trace, [10, 0]);
+}
+
+#[test]
+fn a_scope_copies_its_parameters_once_per_invocation() {
+    struct Walker {
+        goal: u32,
+        walked_to: Vec<u32>,
+    }
+    let tree = scope! {
+        let goal: u32 = |walker: &mut Walker| walker.goal;
+        sequence {
+            scope! {
+                let to: u32 = |_: &mut Walker, goal: &u32| *goal;
+                sequence {
+                    leaf_with(|walker: &mut Walker, to: &u32| {
+                        walker.walked_to.push(*to);
+                        NodeResult::RUNNING
+                    })
+                    .with(to);
+                }
+            }
+            .with(goal);
+        }
+    };
+    let mut state: BtState<_, _> = BtState::new(&tree);
+    let mut walker = Walker {
+        goal: 3,
+        walked_to: Vec::new(),
+    };
+    let _ = update(&tree, &mut state, &mut walker, EntryMode::Evaluate);
+    walker.goal = 9;
+    let _ = update(&tree, &mut state, &mut walker, EntryMode::Evaluate);
+    assert_eq!(walker.walked_to, [3, 3], "kept while running");
+    state.reset();
+    let _ = update(&tree, &mut state, &mut walker, EntryMode::Evaluate);
+    assert_eq!(walker.walked_to, [3, 3, 9], "a new invocation copies again");
+}

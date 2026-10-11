@@ -1,6 +1,8 @@
 /// Owns named locals with explicit sequence/select control flow.
 ///
-/// - `let name: Type = callback;`: initialize with `Fn(&mut Context) -> Type`.
+/// - `let name: Type = callback;`: initialize with `Fn(&mut Context) -> Type`,
+///   or `Fn(&mut Context, Params) -> Type` to read what the scope itself was
+///   given: `scope! { .. }.with(target)` passes `&Target`.
 /// - `let name: Type;`: reserve an output slot for a producer.
 /// - `Node.with(name);`: shared input. `out name`: exclusive output slot.
 /// - `with(name, out other) Node;`: the same binding written first, for a long
@@ -68,8 +70,8 @@ macro_rules! __flatbt_scope {
         let $field:ident: $ty:ty = $callback:expr; $($rest:tt)*) => {
         $crate::__flatbt_scope!(@locals [$locals $value]
             [$($fields)* $field: ::core::option::Option<$ty>,]
-            [$($init)* $crate::inspect::WithName::named($crate::scope::bind($crate::scope::compute($callback),
-                $crate::scope::write(|$value: &mut $locals| &mut $value.$field)), stringify!($field)),]; $($rest)*)
+            [$($init)* $crate::inspect::WithName::named($crate::scope::init_local($callback,
+                |$value: &mut $locals| &mut $value.$field), stringify!($field)),]; $($rest)*)
     };
     (@locals [$locals:ident $value:ident] [$($fields:tt)*] [$($init:tt)*];
         let $field:ident: $ty:ty; $($rest:tt)*) => {

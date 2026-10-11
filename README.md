@@ -269,6 +269,18 @@ receives `&Vector2`; `Walk`
 implements `BtAction<World, &Vector2>`. Use `select { ... }`
 for fallback. Nested controls share locals; nested scopes own separate locals.
 
+A scope can be given parameters like any node, and its initializers can read
+them: an initializer `Fn(&mut World, Params) -> T` receives a reborrow of what
+the scope was given. Values from outside become locals on entry:
+
+```rust,ignore
+scope! {
+    let to: Vector2 = |_: &mut World, target: &Vector2| *target;
+    sequence { action(Walk).with(to); }
+}
+.with(target) // in an enclosing scope; or a goal, through `with_goal`
+```
+
 For a suspending producer, declare `let cover: Vector2;` and bind
 `ChooseCover.with(enemy, out cover);`. It receives `(&Enemy, &mut Option<Vector2>)`.
 Missing inputs log a diagnostic and fail the consumer. Shared-local writes survive
