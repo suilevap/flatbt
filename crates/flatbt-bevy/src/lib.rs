@@ -116,11 +116,18 @@
 //! is entered at all and how -- [`Tick::Skip`] leaves a suspended invocation and
 //! its standing act untouched -- and [`evaluate_every`] and [`act_every`] are
 //! policies for staggering that across a population.
+//!
+//! Work that takes longer than a frame -- a path query, a plan -- runs through
+//! a [`Runner`], which promises its answer as a [`Promise`]: a plain future
+//! that [`await_future`](flatbt::await_future) waits on from the tree, inline,
+//! on the async compute pool, or deferred for tests, without the tree caring
+//! which.
 
 #![forbid(unsafe_code)]
 
 mod debug;
 mod plugin;
+mod promise;
 mod stagger;
 mod tree;
 
@@ -128,6 +135,7 @@ pub mod prelude;
 
 pub use debug::DebugBehavior;
 pub use plugin::{BehaviorPlugin, BehaviorSystems};
+pub use promise::{Promise, Runner};
 pub use stagger::{act_every, evaluate_every};
 pub use tree::{
     Behavior, BehaviorCommands, BehaviorNode, BehaviorTree, Tick, TickAt, TickFn, TreeBuilder,
