@@ -23,14 +23,6 @@ fn inline_answers_at_once() {
     assert_eq!(poll(&mut Promise::ready(7)), Some(7));
 }
 
-#[test]
-fn deferred_answers_after_its_polls() {
-    let mut promise = Runner::Deferred(2).run(|| 7);
-    assert_eq!(poll(&mut promise), None);
-    assert_eq!(poll(&mut promise), None);
-    assert_eq!(poll(&mut promise), Some(7));
-}
-
 /// Work in the background that takes its time leaves the caller free to go on
 /// polling, frame after frame, and answers once it is done.
 #[test]
@@ -80,7 +72,7 @@ fn a_tree_waits_the_same_on_every_runner() {
                 .with(doubled);
         }
     };
-    for runner in [Runner::Inline, Runner::Deferred(3), Runner::Background] {
+    for runner in [Runner::Inline, Runner::Background] {
         let mut state = BtState::new(&tree);
         let mut mind = Mind { runner };
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -98,7 +90,6 @@ fn a_tree_waits_the_same_on_every_runner() {
         }
         match runner {
             Runner::Inline => assert_eq!(waited, 0),
-            Runner::Deferred(polls) => assert_eq!(waited, polls),
             Runner::Background => {}
         }
     }

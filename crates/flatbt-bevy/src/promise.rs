@@ -2,10 +2,9 @@
 //!
 //! [`Runner::run`] starts work and hands back a [`Promise`] of its answer.
 //! How the work runs is the runner's business, not the asker's: at once
-//! ([`Runner::Inline`]), on Bevy's async compute pool
-//! ([`Runner::Background`]), or at once but handed over a few polls later
-//! ([`Runner::Deferred`], for tests and tuning). A tree waits on any of them
-//! the same way, with [`await_future`](flatbt::await_future):
+//! ([`Runner::Inline`]) or on Bevy's async compute pool
+//! ([`Runner::Background`]). A tree waits on either the same way, with
+//! [`await_future`](flatbt::await_future):
 //!
 //! ```
 //! use flatbt_bevy::prelude::*;
@@ -33,8 +32,9 @@
 //!     }
 //! };
 //! let mut state = BtState::new(&tree);
-//! let mut mind = Mind { runner: Runner::Deferred(1), from: 2 };
-//! assert_eq!(update(&tree, &mut state, &mut mind, EntryMode::Resume), NodeResult::Running("thinking"));
+//! // Inline: answered at once and passed on in the same update. With
+//! // `Runner::Background` the tree reports "thinking" until the plan lands.
+//! let mut mind = Mind { runner: Runner::Inline, from: 2 };
 //! assert_eq!(update(&tree, &mut state, &mut mind, EntryMode::Resume), NodeResult::Running("walking"));
 //! ```
 //!
@@ -58,23 +58,13 @@ pub enum Runner {
     /// the work finishes, and nothing waits for it. The pool must be set up,
     /// as Bevy's `TaskPoolPlugin` does.
     Background,
-    /// At once, but handed over only after this many more polls.
-    /// Deterministic slow work, for tests and tuning.
-    Deferred(u32),
 }
 
 impl Runner {
     /// Runs `work`, promising its answer.
     pub fn run<T: Send + 'static>(self, work: impl FnOnce() -> T + Send + 'static) -> Promise<T> {
         Promise(match self {
-            Runner::Inline => State::Ready {
-                value: Some(work()),
-                polls_left: 0,
-            },
-            Runner::Deferred(polls) => State::Ready {
-                value: Some(work()),
-                polls_left: polls,
-            },
+            Runner::Inline => State::Ready(Some(work())),
             Runner::Background => {
                 State::Running(AsyncComputeTaskPool::get().spawn(async move { work() }))
             }
@@ -82,22 +72,20 @@ impl Runner {
     }
 }
 
-/// An answer [`Runner::run`] promised: a [`Future`] that is ready at once,
-/// after a few polls, or when background work finishes.
+/// An answer [`Runner::run`] promised: a [`Future`] that is ready at once, or
+/// when background work finishes.
 pub struct Promise<T>(State<T>);
 
 enum State<T> {
-    Ready { value: Option<T>, polls_left: u32 },
+    /// The answer, until it is taken.
+    Ready(Option<T>),
     Running(Task<T>),
 }
 
 impl<T> Promise<T> {
     /// An answer known without any work.
     pub fn ready(value: T) -> Self {
-        Self(State::Ready {
-            value: Some(value),
-            polls_left: 0,
-        })
+        Self(State::Ready(Some(value)))
     }
 }
 
@@ -106,17 +94,10 @@ impl<T: Unpin> Future for Promise<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
         match &mut self.get_mut().0 {
-            State::Ready { value, polls_left } => {
-                if *polls_left > 0 {
-                    *polls_left -= 1;
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-                match value.take() {
-                    Some(value) => Poll::Ready(value),
-                    None => Poll::Pending,
-                }
-            }
+            State::Ready(value) => match value.take() {
+                Some(value) => Poll::Ready(value),
+                None => Poll::Pending,
+            },
             State::Running(task) => Pin::new(task).poll(cx),
         }
     }
@@ -125,9 +106,8 @@ impl<T: Unpin> Future for Promise<T> {
 impl<T> core::fmt::Debug for Promise<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let state = match &self.0 {
-            State::Ready { value: None, .. } => "taken",
-            State::Ready { polls_left: 0, .. } => "ready",
-            State::Ready { .. } => "deferred",
+            State::Ready(None) => "taken",
+            State::Ready(Some(_)) => "ready",
             State::Running(_) => "running",
         };
         f.debug_tuple("Promise").field(&state).finish()

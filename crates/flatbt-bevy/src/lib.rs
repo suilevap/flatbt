@@ -119,9 +119,8 @@
 //!
 //! Work that takes longer than a frame -- a path query, a plan -- runs through
 //! a [`Runner`], which promises its answer as a [`Promise`]: a plain future
-//! that [`await_future`](flatbt::await_future) waits on from the tree, inline,
-//! on the async compute pool, or deferred for tests, without the tree caring
-//! which.
+//! that [`await_future`](flatbt::await_future) waits on from the tree, inline
+//! or on the async compute pool, without the tree caring which.
 
 #![forbid(unsafe_code)]
 
