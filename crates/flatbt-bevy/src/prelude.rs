@@ -7,5 +7,5 @@ pub use flatbt::prelude::*;
 
 pub use crate::{
     Behavior, BehaviorCommands, BehaviorNode, BehaviorPlugin, BehaviorSystems, BehaviorTree,
-    DebugBehavior, Tick, TickAt, TreeBuilder, act_every, evaluate_every,
+    DebugBehavior, Promise, Runner, Tick, TickAt, TreeBuilder, act_every, evaluate_every,
 };
