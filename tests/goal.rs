@@ -276,3 +276,32 @@ fn a_failure_returns_down_the_stack_goal_by_goal() {
         Some("goals {stack: [Reach(7)], failed: [OpenDoor]}")
     );
 }
+
+#[test]
+fn a_goal_reaches_a_scope_through_its_initializers() {
+    let tree = goals::<4, _, _>(
+        |world: &World| Goal::Reach(world.target),
+        goal_match!(|goal: &Goal| {
+            // The goal's position becomes a local the body binds as usual.
+            Goal::Reach(_) => with_goal(scope! {
+                let to: u32 = |_: &mut World, goal: &Goal| reach_target(goal);
+                sequence {
+                    leaf_with(|world: &mut World, to: &u32| {
+                        walk(world, &Goal::Reach(*to))
+                    })
+                    .with(to);
+                }
+            }),
+            Goal::OpenDoor => leaf(|_: &mut World| Failure),
+            Goal::GetKey => leaf(|_: &mut World| Failure),
+            Goal::Climb => leaf(|_: &mut World| Failure),
+        }),
+    )
+    .done(|world: &World, goal: &Goal| matches!(goal, Goal::Reach(to) if world.at == *to));
+    let mut state = BtState::new(&tree);
+    let mut world = World::new(3);
+    for _ in 0..3 {
+        assert_eq!(run(&tree, &mut state, &mut world), Running(Act::Walk(3)));
+    }
+    assert_eq!(run(&tree, &mut state, &mut world), Success);
+}

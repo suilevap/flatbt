@@ -156,6 +156,41 @@ where
     }
 }
 
+/// In a scope's initializers, which receive the locals and the scope's
+/// parameters: binds over the locals and ignores the parameters.
+impl<'p, Context, Act, Locals: 'static, Params, Node, Binding, NodeState, NodeMemory>
+    BtNode<Context, Act, (&'p mut Locals, Params)> for Bound<Node, Binding>
+where
+    Binding: ParamBinding<Locals>,
+    Node: for<'a> BtNode<Context, Act, Binding::Params<'a>, State = NodeState, Memory = NodeMemory>,
+    NodeState: Default + Send + 'static,
+    NodeMemory: Default + Send + 'static,
+{
+    type State = NodeState;
+    type Memory = NodeMemory;
+    const NODES: usize = <Node as BtNode<Context, Act, Binding::Params<'static>>>::NODES;
+
+    fn update(
+        &self,
+        state: &mut NodeState,
+        memory: &mut NodeMemory,
+        ctx: &mut Context,
+        (locals, _): (&'p mut Locals, Params),
+        entry: Entry<'_>,
+    ) -> NodeResult<Act> {
+        BtNode::<Context, Act, &mut Locals>::update(self, state, memory, ctx, locals, entry)
+    }
+
+    fn inspect(
+        &self,
+        state: Option<&NodeState>,
+        memory: &NodeMemory,
+        inspector: &mut dyn Inspector,
+    ) {
+        BtNode::<Context, Act, Binding::Params<'_>>::inspect(&self.node, state, memory, inspector);
+    }
+}
+
 pub struct WithoutParams<Node>(Node);
 
 /// Adapts a unit-parameter node to any parameter contract.

@@ -1,6 +1,8 @@
+use core::marker::PhantomData;
+
 use crate::inspect::{Inspector, NodeInfo};
-use crate::params::Write;
-use crate::{BtChildren, BtNode, ControlOp, Entry, NodeResult};
+use crate::params::{ParamValue, Write};
+use crate::{BtChildren, BtNode, ControlOp, Entry, NodeResult, ReadsContext, ReadsParams};
 
 /// Owns invocation-local data outside application context.
 pub struct Scope<Locals, Child, Initializers = NoInit> {
@@ -10,7 +12,9 @@ pub struct Scope<Locals, Child, Initializers = NoInit> {
 }
 
 /// Initializes locals with Default on entry. Bindings select fields explicitly.
-/// Producers may fill slots for later consumers. Nested scopes inherit no parameters.
+/// Producers may fill slots for later consumers. Nested scopes inherit no
+/// locals; what a scope is given (`.with(..)` on it, a goal) reaches its
+/// initializers, which copy what the body needs into locals.
 pub fn scope<Locals, Child>(child: Child) -> Scope<Locals, Child> {
     Scope {
         child,
@@ -20,11 +24,14 @@ pub fn scope<Locals, Child>(child: Child) -> Scope<Locals, Child> {
 }
 
 impl<Locals, Child> Scope<Locals, Child> {
-    /// Runs `init`, a tuple of nodes over the locals, in order when an
-    /// invocation starts, before the child; Resume and Evaluate skip them.
-    /// Each must succeed on entry: one that fails fails the scope, and one
-    /// still running reports a diagnostic and fails it. `scope!` puts its
-    /// `let` initializers here.
+    /// Runs `init`, a tuple of nodes, in order when an invocation starts,
+    /// before the child; Resume and Evaluate skip them. Each must succeed on
+    /// entry: one that fails fails the scope, and one still running reports a
+    /// diagnostic and fails it. `scope!` puts its `let` initializers here.
+    ///
+    /// The nodes receive `(&mut Locals, Params)`: the locals and a reborrow of
+    /// the parameters the scope was given. [`bind`](crate::scope::bind)ings
+    /// over the locals alone also work here; they ignore the parameters.
     pub fn init<Nodes>(self, init: Nodes) -> Scope<Locals, Child, Init<Nodes>> {
         Scope {
             child: self.child,
@@ -47,7 +54,7 @@ impl<Locals, Child, Initializers> Scope<Locals, Child, Initializers> {
 
 /// What a [`Scope`] runs when an invocation starts: [`NoInit`], or the
 /// initializers given to [`Scope::init`].
-pub trait ScopeInit<Context, Act, Locals> {
+pub trait ScopeInit<Context, Act, Locals, Params> {
     /// Invocation state; for initializers, whether they ran.
     type State: Default + Send + 'static;
     /// The initializers' memory.
@@ -63,6 +70,7 @@ pub trait ScopeInit<Context, Act, Locals> {
         memory: &mut Self::Memory,
         ctx: &mut Context,
         locals: &mut Locals,
+        params: Params,
         entry: Entry<'_>,
     ) -> Option<NodeResult<Act>>;
 
@@ -77,7 +85,7 @@ pub trait ScopeInit<Context, Act, Locals> {
 /// No initializers: a scope that only owns its locals.
 pub struct NoInit;
 
-impl<Context, Act, Locals> ScopeInit<Context, Act, Locals> for NoInit {
+impl<Context, Act, Locals, Params> ScopeInit<Context, Act, Locals, Params> for NoInit {
     type State = ();
     type Memory = ();
     const NODES: usize = 0;
@@ -89,6 +97,7 @@ impl<Context, Act, Locals> ScopeInit<Context, Act, Locals> for NoInit {
         _: &mut (),
         _: &mut Context,
         _: &mut Locals,
+        _: Params,
         _: Entry<'_>,
     ) -> Option<NodeResult<Act>> {
         None
@@ -107,8 +116,11 @@ pub struct InitState<NodesState> {
     done: bool,
 }
 
-impl<Context, Act, Locals: 'static, Nodes: BtChildren<Context, Act, Write<Locals>>>
-    ScopeInit<Context, Act, Locals> for Init<Nodes>
+impl<Context, Act, Locals, Params, Nodes> ScopeInit<Context, Act, Locals, Params> for Init<Nodes>
+where
+    Locals: 'static,
+    Params: ParamValue,
+    Nodes: BtChildren<Context, Act, (Write<Locals>, Params::Shape)>,
 {
     type State = InitState<Nodes::State>;
     type Memory = Nodes::Memory;
@@ -120,7 +132,8 @@ impl<Context, Act, Locals: 'static, Nodes: BtChildren<Context, Act, Write<Locals
         state: &mut Self::State,
         memory: &mut Self::Memory,
         ctx: &mut Context,
-        mut locals: &mut Locals,
+        locals: &mut Locals,
+        params: Params,
         entry: Entry<'_>,
     ) -> Option<NodeResult<Act>> {
         if state.done {
@@ -139,7 +152,7 @@ impl<Context, Act, Locals: 'static, Nodes: BtChildren<Context, Act, Write<Locals
             memory,
             0,
             ctx,
-            &mut locals,
+            &mut (locals, params.into_value()),
             entry,
             &mut next,
         ) {
@@ -185,7 +198,7 @@ where
     Child: for<'a> BtNode<Context, Act, &'a mut Locals, State = ChildState, Memory = ChildMemory>,
     ChildState: Default + Send + 'static,
     ChildMemory: Default + Send + 'static,
-    Initializers: ScopeInit<Context, Act, Locals>,
+    Initializers: ScopeInit<Context, Act, Locals, Params>,
 {
     type State = ScopeState<Locals, ChildState, Initializers::State>;
     type Memory = ScopeMemory<ChildMemory, Initializers::Memory>;
@@ -197,7 +210,7 @@ where
         state: &mut Self::State,
         memory: &mut Self::Memory,
         ctx: &mut Context,
-        _: Params,
+        params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         if let Some(result) = self.init.run(
@@ -205,6 +218,7 @@ where
             &mut memory.init,
             ctx,
             &mut state.locals,
+            params,
             entry,
         ) {
             return result;
@@ -268,6 +282,83 @@ impl<Context, Act, Value, Function: Fn(&mut Context) -> Value>
         _: Entry<'_>,
     ) -> NodeResult<Act> {
         *output = Some((self.0)(ctx));
+        NodeResult::Success
+    }
+
+    fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
+        inspector.node(NodeInfo::new("compute", state.is_some()), |_| {});
+    }
+}
+
+/// A `scope!` initializer: computes a local's value on entry, from the context
+/// or from the context and the scope's parameters.
+pub struct InitLocal<Function, Project, Reads> {
+    init: Function,
+    project: Project,
+    reads: PhantomData<fn() -> Reads>,
+}
+
+/// Fills the local `project` picks with `init`'s answer, on entry.
+///
+/// `init` is `Fn(&mut Context) -> Value`, or `Fn(&mut Context, Params) ->
+/// Value` where `Params` is a reborrow of what the scope was given (`&Target`
+/// for `.with(target)` on the scope). Annotate the closure's arguments.
+pub fn init_local<Locals, Value, Function, Project, Reads>(
+    init: Function,
+    project: Project,
+) -> InitLocal<Function, Project, Reads>
+where
+    Project: Fn(&mut Locals) -> &mut Option<Value>,
+{
+    InitLocal {
+        init,
+        project,
+        reads: PhantomData,
+    }
+}
+
+/// An initializer's callable: over the context, or over the context and the
+/// scope's parameters. The marker is inferred from the callable's arity.
+pub trait InitFn<Context, Params, Value, Reads> {
+    fn call(&self, ctx: &mut Context, params: Params) -> Value;
+}
+
+impl<Context, Params, Value, Function: Fn(&mut Context) -> Value>
+    InitFn<Context, Params, Value, ReadsContext> for Function
+{
+    #[inline(always)]
+    fn call(&self, ctx: &mut Context, _: Params) -> Value {
+        self(ctx)
+    }
+}
+
+impl<Context, Params, Value, Function: Fn(&mut Context, Params) -> Value>
+    InitFn<Context, Params, Value, ReadsParams> for Function
+{
+    #[inline(always)]
+    fn call(&self, ctx: &mut Context, params: Params) -> Value {
+        self(ctx, params)
+    }
+}
+
+impl<'a, Context, Act, Locals, Params, Value, Function, Project, Reads>
+    BtNode<Context, Act, (&'a mut Locals, Params)> for InitLocal<Function, Project, Reads>
+where
+    Function: InitFn<Context, Params, Value, Reads>,
+    Project: Fn(&mut Locals) -> &mut Option<Value>,
+{
+    type State = ();
+    type Memory = ();
+
+    fn update(
+        &self,
+        _: &mut (),
+        _: &mut (),
+        ctx: &mut Context,
+        (locals, params): (&'a mut Locals, Params),
+        _: Entry<'_>,
+    ) -> NodeResult<Act> {
+        *(self.project)(locals) = Some(self.init.call(ctx, params));
         NodeResult::Success
     }
 

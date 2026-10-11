@@ -57,10 +57,14 @@ scope! {
   in declaration order, before any body child.
 - Values survive Running, Resume, and Evaluate. Completion/reset permits fresh
   initialization on the next entry.
-- Initializers receive context only. Option/Result returns are values, not BT
-  control flow. Use a producer node for failure or suspension.
+- Initializers receive the context, and optionally a reborrow of the
+  parameters the scope itself was given (`Fn(&mut Context, Params) -> T`).
+  That is how values reach a nested scope: `.with(..)` on the scope, or a goal
+  through `with_goal`, copied into locals on entry. Option/Result returns are
+  values, not BT control flow. Use a producer node for failure or suspension.
 - Body control is explicit: `sequence` or `select`. Nested controls share locals.
-- Nested scopes own independent locals and inherit no slots. Put a scope inside
+- Nested scopes own independent locals and inherit no slots; pass what they
+  need as parameters. Put a scope inside
   a branch for lazy initialization; enclosing initializers run before selection.
 
 A selector body rescans on Evaluate without replaying initializers:
@@ -134,8 +138,10 @@ bind(ChooseCover, params::<(Read<Enemy>, Write<Option<Vector2>>), _, _>(
 policy. Import `WithParams` for `node.with(binding)`, equivalent to `bind(node, binding)`.
 The function API accepts custom controls and projections.
 
-The macro generates Option fields and bound `compute(callback)` initializers,
-passed to `Scope::init`. The scope runs them in order when an invocation starts,
+The macro generates Option fields and `init_local(callback, field)`
+initializers, passed to `Scope::init`. Initializers receive `(&mut Locals,
+Params)`, the scope's own parameters reborrowed for each; a `bind` over the
+locals also works there and ignores the parameters. The scope runs them in order when an invocation starts,
 before its body, and skips them on Resume and Evaluate. An initializer that fails
 fails the scope; one still running is a diagnostic and a failure.
 
