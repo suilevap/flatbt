@@ -8,8 +8,9 @@ use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
 use flatbt::inspect::{Describe, describe, path_id};
 use flatbt::{BtNode, EntryMode, NodeResult, update_slot};
 
-/// A tree that can drive agents whose blackboard is `Blackboard` and whose decisions are
-/// `Act`, with one state type.
+/// A tree that thinks with an agent's `Blackboard` and proposes `Act`, with one state type.
+/// `Blackboard` holds perception and mutable working memory; visited alternatives keep
+/// their writes under [`BtNode`]'s thinking and acting contract.
 ///
 /// What this adds over `BtNode<Blackboard, Act>` is `State = Self::Data` and
 /// `Memory = Self::MemoryData`, which pin the invocation state and memory to
@@ -41,6 +42,8 @@ where
 }
 
 /// Names one tree, and builds it once.
+/// The built definition thinks with each agent's mutable `Blackboard`; it does not
+/// own gameplay state. The tick publishes only its final returned `Act`.
 ///
 /// Implemented for every `Fn() -> impl BehaviorNode<Blackboard, Act>`, so a plain function
 /// is a tree's name. The builder is the identity: the tree type cannot be,
@@ -101,11 +104,11 @@ where
 
 /// What a tick does with one agent, decided from its blackboard.
 ///
-/// **[`Evaluate`](Tick::Evaluate) every tick is always correct.** The other two
-/// are optimisations, and a tree that breaks under one of them is a tree with a
-/// bug: `Resume` costs an agent the chance to change its mind, and `Skip` costs
-/// it the tick entirely, so both make an agent less responsive and neither
-/// makes it behave differently once it does run.
+/// [`Evaluate`](Tick::Evaluate), the default, reconsiders choices from the root.
+/// [`Resume`](Tick::Resume) follows the saved choice; [`Skip`](Tick::Skip) leaves
+/// the invocation untouched. Choose the cadence the agent needs: the modes can
+/// visit different branches and therefore retain different thoughts. Every
+/// visited branch follows [`BtNode`]'s thinking and acting contract.
 ///
 /// [`Resume`](Tick::Resume) continues down the path a suspended invocation
 /// chose, so a `select` does not rescan and a `choose!` does not re-pick. It is
@@ -171,7 +174,7 @@ pub struct BehaviorTree<
     // Load-bearing: it keeps `Blackboard` and `Act` direct field uses. Reached only through
     // the `Builder::Tree` projection, they send the monomorphization collector through
     // every blanket impl behind them and over the recursion limit.
-    context: PhantomData<fn() -> (Blackboard, Act)>,
+    blackboard: PhantomData<fn() -> (Blackboard, Act)>,
 }
 
 impl<
@@ -186,7 +189,7 @@ impl<
         Self {
             tree: builder.build(),
             tick_mode,
-            context: PhantomData,
+            blackboard: PhantomData,
         }
     }
 
@@ -340,7 +343,12 @@ impl<
         path_id(tree, self.state.as_ref(), &self.memory)
     }
 
-    /// Runs one update and hands back what the agent is now doing.
+    /// Considers the tree and returns the final act for the driver to publish.
+    ///
+    /// When a resumed invocation fails, this runs a fresh Evaluate in the same
+    /// tick. Both passes retain blackboard and memory writes; the second sees what
+    /// the first thought. Only the final act is published. Thus one tick can
+    /// contain two tree passes, following [`BtNode`]'s thinking and acting contract.
     ///
     /// `None` means the invocation ended, so the agent is doing nothing: the
     /// tick system removes its act component. This is the seam under
@@ -402,11 +410,11 @@ impl<
 ///
 /// `Act` need not be a component at all -- a tree that decides nothing has no act
 /// to release -- so the act type is looked up rather than named.
-fn release_act<Act: Send + Sync + 'static>(mut world: DeferredWorld, ctx: HookContext) {
+fn release_act<Act: Send + Sync + 'static>(mut world: DeferredWorld, hook: HookContext) {
     let Some(act) = world.components().get_id(TypeId::of::<Act>()) else {
         return;
     };
-    let entity = ctx.entity;
+    let entity = hook.entity;
     if !world
         .get_entity(entity)
         .is_ok_and(|agent| agent.contains_id(act))

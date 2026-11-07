@@ -60,13 +60,13 @@ impl<Instant, ChildMemory: Default> Default for CooldownMemory<Instant, ChildMem
     }
 }
 
-impl<Context, Act, Params, Child, ChildState, ChildMemory> BtNode<Context, Act, Params>
-    for Cooldown<Context::Duration, Child>
+impl<Blackboard, Act, Params, Child, ChildState, ChildMemory> BtNode<Blackboard, Act, Params>
+    for Cooldown<Blackboard::Duration, Child>
 where
-    Context: BtClock,
+    Blackboard: BtClock,
     Params: ParamValue,
     Child: for<'a> BtNode<
-            Context,
+            Blackboard,
             Act,
             <Params::Shape as ParamShape>::Value<'a>,
             State = ChildState,
@@ -76,29 +76,32 @@ where
     ChildMemory: Default + Send + 'static,
 {
     type State = CooldownState<ChildState>;
-    type Memory = CooldownMemory<Context::Instant, ChildMemory>;
-    const NODES: usize =
-        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
+    type Memory = CooldownMemory<Blackboard::Instant, ChildMemory>;
+    const NODES: usize = 1 + <Child as BtNode<
+        Blackboard,
+        Act,
+        <Params::Shape as ParamShape>::Value<'static>,
+    >>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         if !state.started {
             if let Some(last) = memory.last
-                && !elapsed(ctx, last, self.span)
+                && !elapsed(bb, last, self.span)
             {
                 entry.record("cooling", || true);
                 return NodeResult::Failure;
             }
             state.started = true;
             if !self.after_success {
-                memory.last = Some(ctx.now());
+                memory.last = Some(bb.now());
             }
         }
         let result = entry.run(
@@ -106,11 +109,11 @@ where
             &self.child,
             &mut state.child,
             &mut memory.child,
-            ctx,
+            bb,
             params.into_value(),
         );
         if self.after_success && matches!(result, NodeResult::Success) {
-            memory.last = Some(ctx.now());
+            memory.last = Some(bb.now());
         }
         result
     }
@@ -131,7 +134,7 @@ where
             if let Some(last) = &memory.last {
                 inspector.field("last", last);
             }
-            BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
+            BtNode::<Blackboard, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state.map(|state| &state.child),
                 &memory.child,

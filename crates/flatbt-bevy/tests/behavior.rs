@@ -302,12 +302,8 @@ fn restarting_an_agent_enters_from_the_root() {
 #[derive(Resource, Default)]
 struct Noticed(u32);
 
-/// The tick passes the blackboard with change detection bypassed, so a node
-/// writing to it -- which is how nodes leave notes for each other -- does not
-/// mark it changed. A pinned compromise, not an accident: the gather rewrites
-/// the blackboard every tick anyway, and marking a whole population changed
-/// every frame would drag the rest of the engine along. The tree's output is
-/// the act; the blackboard is its input.
+/// Thinking writes to the blackboard persist without marking it changed. The gather
+/// refreshes perception; gameplay systems observe the final act.
 #[test]
 fn a_node_writing_to_the_blackboard_does_not_mark_it_changed() {
     fn tally() -> impl BehaviorNode<Guard, Act> {

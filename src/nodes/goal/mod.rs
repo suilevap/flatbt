@@ -14,25 +14,25 @@
 //! use flatbt::goal_match;
 //!
 //! #[derive(Clone, PartialEq, Debug)]
-//! enum Goal { Open, GetKey }
+//! enum Goal { PlanRoute, FindWaypoint }
 //!
 //! #[derive(Default)]
-//! struct World { open: bool, key: bool }
+//! struct Blackboard { route_planned: bool, waypoint_found: bool }
 //!
 //! let tree = goals::<4, _, _>(
-//!     |_: &World| Goal::Open,
+//!     |_: &Blackboard| Goal::PlanRoute,
 //!     goal_match!(|goal: &Goal| {
-//!         Goal::Open => seq((
-//!             need(|world: &World, _: &Goal| (!world.key).then_some(Goal::GetKey)),
-//!             leaf(|world: &mut World| { world.open = true; NodeResult::Success }),
+//!         Goal::PlanRoute => seq((
+//!             need(|bb: &Blackboard, _: &Goal| (!bb.waypoint_found).then_some(Goal::FindWaypoint)),
+//!             leaf(|bb: &mut Blackboard| { bb.route_planned = true; NodeResult::Success }),
 //!         )),
-//!         Goal::GetKey => leaf(|world: &mut World| { world.key = true; NodeResult::Success }),
+//!         Goal::FindWaypoint => leaf(|bb: &mut Blackboard| { bb.waypoint_found = true; NodeResult::Success }),
 //!     }),
 //! );
 //! let mut state: BtState<_, _> = BtState::new(&tree);
-//! let mut world = World::default();
-//! assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Evaluate), NodeResult::Success);
-//! assert!(world.key && world.open);
+//! let mut bb = Blackboard::default();
+//! assert_eq!(update(&tree, &mut state, &mut bb, EntryMode::Evaluate), NodeResult::Success);
+//! assert!(bb.waypoint_found && bb.route_planned);
 //! ```
 //!
 //! No recursion and no heap: the run state is `DEPTH` goals and one run state of

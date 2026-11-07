@@ -78,7 +78,7 @@ pub struct Goals<Root, Dispatch, Done, const DEPTH: usize> {
 }
 
 /// Runs `dispatch` for the goal on top of a stack of at most `DEPTH` goals,
-/// starting with the one `root` reads from the context.
+/// starting with the one `root` reads from the blackboard.
 ///
 /// Only the top goal's subtree runs, and only it has run state. When it asks
 /// for a subgoal with [`need`](super::need), its run ends and `goals` pushes
@@ -109,7 +109,7 @@ pub fn goals<const DEPTH: usize, Root, Dispatch>(
 }
 
 impl<Root, Dispatch, Done, const DEPTH: usize> Goals<Root, Dispatch, Done, DEPTH> {
-    /// Asks `done(ctx, goal)` for every goal on the stack on every update,
+    /// Asks `done(bb, goal)` for every goal on the stack on every update,
     /// from the root up. The first goal already achieved is popped with the
     /// goals above it, as if its subtree had succeeded.
     pub fn done<IsDone>(self, done: IsDone) -> Goals<Root, Dispatch, IsDone, DEPTH> {
@@ -125,21 +125,23 @@ impl<Root, Dispatch, Done, const DEPTH: usize> Goals<Root, Dispatch, Done, DEPTH
 pub struct NotDone;
 
 /// Whether a goal is already achieved.
-pub trait GoalDone<Context, Goal> {
-    fn is_done(&self, ctx: &Context, goal: &Goal) -> bool;
+pub trait GoalDone<Blackboard, Goal> {
+    fn is_done(&self, bb: &Blackboard, goal: &Goal) -> bool;
 }
 
-impl<Context, Goal> GoalDone<Context, Goal> for NotDone {
+impl<Blackboard, Goal> GoalDone<Blackboard, Goal> for NotDone {
     #[inline(always)]
-    fn is_done(&self, _: &Context, _: &Goal) -> bool {
+    fn is_done(&self, _: &Blackboard, _: &Goal) -> bool {
         false
     }
 }
 
-impl<Context, Goal, IsDone: Fn(&Context, &Goal) -> bool> GoalDone<Context, Goal> for IsDone {
+impl<Blackboard, Goal, IsDone: Fn(&Blackboard, &Goal) -> bool> GoalDone<Blackboard, Goal>
+    for IsDone
+{
     #[inline(always)]
-    fn is_done(&self, ctx: &Context, goal: &Goal) -> bool {
-        self(ctx, goal)
+    fn is_done(&self, bb: &Blackboard, goal: &Goal) -> bool {
+        self(bb, goal)
     }
 }
 
@@ -221,7 +223,7 @@ fn too_many_steps<Act>(entry: Entry<'_>) -> NodeResult<Act> {
 }
 
 impl<
-    Context,
+    Blackboard,
     Act,
     Params,
     Goal,
@@ -231,37 +233,37 @@ impl<
     DispatchState,
     DispatchMemory,
     const DEPTH: usize,
-> BtNode<Context, Act, Params> for Goals<Root, Dispatch, Done, DEPTH>
+> BtNode<Blackboard, Act, Params> for Goals<Root, Dispatch, Done, DEPTH>
 where
     Goal: Clone + PartialEq + fmt::Debug + Send + 'static,
-    Root: Fn(&Context) -> Goal,
+    Root: Fn(&Blackboard) -> Goal,
     Dispatch: for<'a> BtNode<
-            Context,
+            Blackboard,
             Act,
             GoalCall<'a, Goal>,
             State = DispatchState,
             Memory = DispatchMemory,
         >,
-    Done: GoalDone<Context, Goal>,
+    Done: GoalDone<Blackboard, Goal>,
     DispatchState: Default + Send + 'static,
     DispatchMemory: Default + Send + 'static,
 {
     type State = GoalsState<Goal, DispatchState, DEPTH>;
     type Memory = DispatchMemory;
-    const NODES: usize = 1 + <Dispatch as BtNode<Context, Act, GoalCall<'static, Goal>>>::NODES;
+    const NODES: usize = 1 + <Dispatch as BtNode<Blackboard, Act, GoalCall<'static, Goal>>>::NODES;
 
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut DispatchMemory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         _: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         // Whether the top goal's run starts now: pushed, or back from a
         // subgoal. Otherwise it continues as the update entered `goals`.
         let mut fresh = false;
-        let root = (self.root)(ctx);
+        let root = (self.root)(bb);
         if state.goals[0].as_ref() != Some(&root) {
             state.truncate(0);
             state.goals[0] = Some(root);
@@ -271,7 +273,7 @@ where
             .goals
             .iter()
             .flatten()
-            .position(|goal| self.done.is_done(ctx, goal))
+            .position(|goal| self.done.is_done(bb, goal))
         {
             entry.record("done", || done);
             if done == 0 {
@@ -296,9 +298,9 @@ where
             };
             let top = &mut state.top;
             let result = if fresh {
-                entry.run_candidate(1, &self.dispatch, top, memory, ctx, call)
+                entry.run_candidate(1, &self.dispatch, top, memory, bb, call)
             } else {
-                entry.run(1, &self.dispatch, top, memory, ctx, call)
+                entry.run(1, &self.dispatch, top, memory, bb, call)
             };
             if let Some(subgoal) = request {
                 // Stopped to ask; the act it returned is a placeholder. Its run
@@ -352,7 +354,7 @@ where
                     inspector.field("failed", &Failed(&state.results));
                 }
             }
-            BtNode::<Context, Act, GoalCall<'_, Goal>>::inspect(
+            BtNode::<Blackboard, Act, GoalCall<'_, Goal>>::inspect(
                 &self.dispatch,
                 state.map(|state| &state.top),
                 memory,

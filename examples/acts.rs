@@ -12,7 +12,7 @@ use flatbt::{BtAction, BtNode, BtState, EntryMode, action, check, select, seq, u
 
 #[path = "support/guard.rs"]
 mod support;
-use support::Guard;
+use support::{Guard, World};
 
 /// The guard's whole vocabulary. An `Act` is an order to the world, not a
 /// change to it.
@@ -30,12 +30,13 @@ struct Reload;
 impl BtAction<Guard, Act> for Reload {
     type State = ();
 
-    fn start(&self, _: &mut Guard, _: ()) -> Option<()> {
+    fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
+        guard.considered.push("reload");
         Some(())
     }
 
     fn is_in_progress(&self, _: &(), guard: &Guard, _: ()) -> bool {
-        guard.ammo < guard.magazine
+        guard.observed.ammo < guard.observed.magazine
     }
 
     fn tick(&self, _: &mut (), _: &mut Guard, _: ()) -> Act {
@@ -49,7 +50,8 @@ struct Shoot;
 impl BtAction<Guard, Act> for Shoot {
     type State = ();
 
-    fn start(&self, _: &mut Guard, _: ()) -> Option<()> {
+    fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
+        guard.considered.push("shoot");
         Some(())
     }
 
@@ -69,7 +71,8 @@ struct Approach;
 impl BtAction<Guard, Act> for Approach {
     type State = ();
 
-    fn start(&self, _: &mut Guard, _: ()) -> Option<()> {
+    fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
+        guard.considered.push("approach");
         Some(())
     }
 
@@ -78,7 +81,7 @@ impl BtAction<Guard, Act> for Approach {
     }
 
     fn tick(&self, _: &mut (), guard: &mut Guard, _: ()) -> Act {
-        Act::WalkTo(guard.intruder)
+        Act::WalkTo(guard.observed.intruder)
     }
 }
 
@@ -95,25 +98,35 @@ fn guard() -> impl BtNode<Guard, Act> {
 fn main() {
     let tree = guard();
     let mut state = BtState::new(&tree);
-    let mut guard = Guard::new(1);
+    let mut world = World::new(1);
+    let mut guard = Guard::default();
 
     for tick in 1..=10 {
         if tick == 5 {
-            guard.intruder = 8.0; // the intruder moves; the walk follows it
-            guard.trace.push("-- intruder moves to 8 --".into());
+            world.intruder = 8.0;
+            world.trace.push("-- intruder moves to 8 --".into());
         }
 
-        // The whole interface between the tree and the game is this value.
-        match update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act() {
-            Some(Act::WalkTo(target)) => guard.step_towards(target),
-            Some(Act::Firing) => guard.fire(),
-            Some(Act::Loading) => guard.load_one(),
+        // Refresh facts, preserving the AI's reasoning from previous updates.
+        let observed = world.observe();
+        guard.observed = observed;
+        let act = update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act();
+        assert_eq!(guard.observed, observed);
+        assert_eq!(world.observe(), observed);
+
+        // Only this final act changes gameplay state. The observation stays
+        // unchanged until the driver gathers fresh facts on the next tick.
+        match act {
+            Some(Act::WalkTo(target)) => world.step_towards(target),
+            Some(Act::Firing) => world.fire(),
+            Some(Act::Loading) => world.load_one(),
             // A tree that ended is not doing anything.
-            None => guard.trace.push("idle".into()),
+            None => world.trace.push("idle".into()),
         }
+        assert_eq!(guard.observed, observed);
     }
 
-    for line in &guard.trace {
+    for line in &world.trace {
         println!("{line}");
     }
 }

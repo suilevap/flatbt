@@ -1,7 +1,7 @@
-//! Nodes that measure time through the context's [`BtClock`].
+//! Nodes that measure time through the blackboard's [`BtClock`].
 //!
 //! Time is whatever the game says it is: seconds, turns, simulation ticks. The
-//! context implements `BtClock`, and spans are given in its `Duration`.
+//! blackboard implements `BtClock`, and spans are given in its `Duration`.
 //!
 //! ```
 //! use flatbt::prelude::*;
@@ -37,7 +37,7 @@ pub use wait::{ActionWait, action_wait};
 use core::fmt::Debug;
 use core::ops::Add;
 
-/// A context that knows the time, for the nodes in this module.
+/// A blackboard that knows the time, for the nodes in this module.
 ///
 /// `Instant + Duration` is the instant a span after it. For seconds as `f32`
 /// both are `f32`; for `std::time` they are `Instant` and `Duration`; for
@@ -60,10 +60,10 @@ pub trait BtClock {
 
 /// Whether `span` has passed since `since`.
 #[inline]
-fn elapsed<Context: BtClock>(
-    ctx: &Context,
-    since: Context::Instant,
-    span: Context::Duration,
+fn elapsed<Blackboard: BtClock>(
+    bb: &Blackboard,
+    since: Blackboard::Instant,
+    span: Blackboard::Duration,
 ) -> bool {
-    ctx.now() >= since + span
+    bb.now() >= since + span
 }

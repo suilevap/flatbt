@@ -1,7 +1,9 @@
 //! Bevy ECS integration for FlatBT.
 //!
-//! A tree reads a blackboard component and returns what the agent is doing.
-//! The tick writes that into an act component, and ordinary systems act on it.
+//! A tree thinks with an agent's mutable blackboard component and proposes an act.
+//! The tick publishes the final act component, and ordinary systems act on it.
+//! Considered alternatives retain their blackboard and node-memory writes, including
+//! alternatives that fail. See [`flatbt::BtNode`]'s thinking and acting contract.
 //! Nothing here says what is in either one.
 //!
 //! ```
@@ -12,10 +14,13 @@
 //! #[derive(Component)]
 //! struct Ammo(u32);
 //!
-//! // 1. What the tree reads: an aggregate view of the world for this agent.
+//! // 1. Gathered facts, plus thoughts kept while considering branches.
+//! #[derive(Default)]
+//! struct Observed { ammo: u32 }
 //! #[derive(Component, Default)]
 //! struct Guard {
-//!     ammo: u32,
+//!     observed: Observed,
+//!     alternatives_considered: u32,
 //! }
 //!
 //! // 2. What it decides. An order to the world, not a change to it.
@@ -31,12 +36,18 @@
 //! // dry. A `check` before the leaf in a `seq` would be asked only on entry.
 //! fn shoot() -> impl BehaviorNode<Guard, Act> {
 //!     select((
+//!         seq((
+//!             leaf(|blackboard: &mut Guard| {
+//!                 blackboard.alternatives_considered += 1;
+//!                 NodeResult::Success
+//!             }),
+//!             guard(
+//!                 |blackboard: &Guard| blackboard.observed.ammo > 0,
+//!                 leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
+//!             ),
+//!         )),
 //!         guard(
-//!             |guard: &Guard| guard.ammo > 0,
-//!             leaf(|_: &mut Guard| NodeResult::Running(Act::Firing)),
-//!         ),
-//!         guard(
-//!             |guard: &Guard| guard.ammo == 0,
+//!             |guard: &Guard| guard.observed.ammo == 0,
 //!             leaf(|_: &mut Guard| NodeResult::Running(Act::Loading)),
 //!         ),
 //!     ))
@@ -45,7 +56,8 @@
 //! // 4. The game's own systems, at the game's own rates.
 //! fn gather(mut agents: Query<(&Ammo, &mut Guard)>) {
 //!     for (ammo, mut guard) in agents.iter_mut() {
-//!         guard.bypass_change_detection().ammo = ammo.0;
+//!         // Refresh perception while preserving the agent's working memory.
+//!         guard.bypass_change_detection().observed.ammo = ammo.0;
 //!     }
 //! }
 //!
@@ -98,13 +110,12 @@
 //! cannot be named. A game may read the act freely, and writing to it only
 //! lasts until the next tick.
 //!
-//! **The blackboard belongs to the game.** It is the tree's input, gathered by
-//! the game's own systems. Nodes do get `&mut` to it -- it is how they leave
-//! notes for each other -- but the tick passes it with change detection
-//! bypassed, so those writes are invisible to `Changed<C>` and to anything
-//! built on it. That is deliberate: a gather rewrites the blackboard every tick
-//! anyway, and marking a whole population changed every frame would drag the
-//! rest of the engine along. Anything the world should notice is an act.
+//! **The blackboard represents the world to the agent.** Gather refreshes its facts;
+//! nodes record reasoning without simulating gameplay in those facts. Gather
+//! refreshes sensory fields while preserving thoughts that should survive. Every
+//! visited branch keeps its writes even if it fails or is replaced. The tick bypasses change
+//! detection for those writes, so `Changed<Blackboard>` does not observe them.
+//! Gameplay systems carry out only the final act published by the tick.
 //!
 //! There is no way to issue an ECS command from a node. `Commands` borrows the
 //! world and would put lifetimes back into every signature; the act is the way

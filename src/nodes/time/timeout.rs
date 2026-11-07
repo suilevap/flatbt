@@ -35,13 +35,13 @@ impl<Instant, ChildState: Default> Default for TimeoutState<Instant, ChildState>
     }
 }
 
-impl<Context, Act, Params, Child, ChildState, ChildMemory> BtNode<Context, Act, Params>
-    for Timeout<Context::Duration, Child>
+impl<Blackboard, Act, Params, Child, ChildState, ChildMemory> BtNode<Blackboard, Act, Params>
+    for Timeout<Blackboard::Duration, Child>
 where
-    Context: BtClock,
+    Blackboard: BtClock,
     Params: ParamValue,
     Child: for<'a> BtNode<
-            Context,
+            Blackboard,
             Act,
             <Params::Shape as ParamShape>::Value<'a>,
             State = ChildState,
@@ -50,22 +50,25 @@ where
     ChildState: Default + Send + 'static,
     ChildMemory: Default + Send + 'static,
 {
-    type State = TimeoutState<Context::Instant, ChildState>;
+    type State = TimeoutState<Blackboard::Instant, ChildState>;
     type Memory = ChildMemory;
-    const NODES: usize =
-        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
+    const NODES: usize = 1 + <Child as BtNode<
+        Blackboard,
+        Act,
+        <Params::Shape as ParamShape>::Value<'static>,
+    >>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut ChildMemory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        let started = *state.started.get_or_insert_with(|| ctx.now());
-        if elapsed(ctx, started, self.span) {
+        let started = *state.started.get_or_insert_with(|| bb.now());
+        if elapsed(bb, started, self.span) {
             entry.record("timed_out", || true);
             return NodeResult::Failure;
         }
@@ -74,7 +77,7 @@ where
             &self.child,
             &mut state.child,
             memory,
-            ctx,
+            bb,
             params.into_value(),
         )
     }
@@ -90,7 +93,7 @@ where
             if let Some(started) = state.and_then(|state| state.started.as_ref()) {
                 inspector.field("started", started);
             }
-            BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
+            BtNode::<Blackboard, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.child,
                 state.map(|state| &state.child),
                 memory,

@@ -163,7 +163,7 @@ impl Eq for NodeInfo<'_> {}
 ///
 /// Each node is one [`enter`](Self::enter), then its fields, then its
 /// children, then one [`exit`](Self::exit) -- unless `enter` returns false,
-/// which skips the rest. Nodes report through [`node`](dyn Inspector::node),
+/// which skips the rest. Nodes report through `dyn Inspector::node`,
 /// which keeps that order.
 pub trait Inspector {
     /// Starts a node. Returns whether to receive its fields and children.
@@ -224,7 +224,7 @@ pub fn label<Node>(label: &'static str, node: Node) -> Named<Node> {
     }
 }
 
-impl<Context, Act, Params, Node: BtNode<Context, Act, Params>> BtNode<Context, Act, Params>
+impl<Blackboard, Act, Params, Node: BtNode<Blackboard, Act, Params>> BtNode<Blackboard, Act, Params>
     for Named<Node>
 {
     type State = Node::State;
@@ -236,11 +236,11 @@ impl<Context, Act, Params, Node: BtNode<Context, Act, Params>> BtNode<Context, A
         &self,
         state: &mut Node::State,
         memory: &mut Node::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        self.node.update(state, memory, ctx, params, entry)
+        self.node.update(state, memory, bb, params, entry)
     }
 
     fn inspect(
@@ -341,12 +341,12 @@ fn last_segment(full: &str) -> &str {
 /// indented by depth. Each node is `name (kind)`, or its kind when it has no
 /// name; a label comes first, as `pattern => `, and fields follow in braces,
 /// as `scope {target: 3}`. A tree that is not running writes `not running`.
-pub struct Describe<'a, Node: BtNode<Context, Act>, Context, Act = ()> {
+pub struct Describe<'a, Node: BtNode<Blackboard, Act>, Blackboard, Act = ()> {
     node: &'a Node,
     state: Option<&'a Node::State>,
     memory: &'a Node::Memory,
     inactive: bool,
-    context: PhantomData<fn(&mut Context) -> Act>,
+    blackboard: PhantomData<fn(&mut Blackboard) -> Act>,
 }
 
 /// A fingerprint of the running path: equal while the same nodes run, and in
@@ -376,7 +376,7 @@ pub struct Describe<'a, Node: BtNode<Context, Act>, Context, Act = ()> {
 /// }
 /// assert_eq!(logged, ["select > guard > leaf", "select > leaf"]);
 /// ```
-pub fn path_id<Context, Act, Node: BtNode<Context, Act>>(
+pub fn path_id<Blackboard, Act, Node: BtNode<Blackboard, Act>>(
     node: &Node,
     state: Option<&Node::State>,
     memory: &Node::Memory,
@@ -412,21 +412,21 @@ impl Inspector for PathHash {
 /// Describes `node` over `state` and `memory`, for a driver holding them
 /// without a [`BtState`](crate::BtState), such as the slots
 /// [`update_slot`](crate::update_slot) takes.
-pub fn describe<'a, Context, Act, Node: BtNode<Context, Act>>(
+pub fn describe<'a, Blackboard, Act, Node: BtNode<Blackboard, Act>>(
     node: &'a Node,
     state: Option<&'a Node::State>,
     memory: &'a Node::Memory,
-) -> Describe<'a, Node, Context, Act> {
+) -> Describe<'a, Node, Blackboard, Act> {
     Describe {
         node,
         state,
         memory,
         inactive: false,
-        context: PhantomData,
+        blackboard: PhantomData,
     }
 }
 
-impl<Node: BtNode<Context, Act>, Context, Act> Describe<'_, Node, Context, Act> {
+impl<Node: BtNode<Blackboard, Act>, Blackboard, Act> Describe<'_, Node, Blackboard, Act> {
     /// Also writes nodes off the running path, in `{:#}`. Each line then starts
     /// with `*` for a node on the path, or `-` for one off it.
     pub fn with_inactive(self) -> Self {
@@ -437,7 +437,9 @@ impl<Node: BtNode<Context, Act>, Context, Act> Describe<'_, Node, Context, Act> 
     }
 }
 
-impl<Node: BtNode<Context, Act>, Context, Act> fmt::Display for Describe<'_, Node, Context, Act> {
+impl<Node: BtNode<Blackboard, Act>, Blackboard, Act> fmt::Display
+    for Describe<'_, Node, Blackboard, Act>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lines = f.alternate();
         let mut text = Text {
@@ -458,7 +460,9 @@ impl<Node: BtNode<Context, Act>, Context, Act> fmt::Display for Describe<'_, Nod
     }
 }
 
-impl<Node: BtNode<Context, Act>, Context, Act> fmt::Debug for Describe<'_, Node, Context, Act> {
+impl<Node: BtNode<Blackboard, Act>, Blackboard, Act> fmt::Debug
+    for Describe<'_, Node, Blackboard, Act>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }

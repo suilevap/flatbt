@@ -10,7 +10,7 @@ pub struct ByScore<ScoreFn, Score> {
     inertia: Option<Score>,
 }
 
-/// Orders children by `score(ctx, index)`, highest first. Under
+/// Orders children by `score(bb, index)`, highest first. Under
 /// `select(order_by(..))` this is a utility selector: the best child runs, a
 /// better one preempts it under `Evaluate`, and when it fails the best of the
 /// rest runs.
@@ -35,9 +35,9 @@ impl<ScoreFn, Score> ByScore<ScoreFn, Score> {
     }
 }
 
-impl<Context, ScoreFn, Score> BtOrder<Context> for ByScore<ScoreFn, Score>
+impl<Blackboard, ScoreFn, Score> BtOrder<Blackboard> for ByScore<ScoreFn, Score>
 where
-    ScoreFn: Fn(&Context, usize) -> Score,
+    ScoreFn: Fn(&Blackboard, usize) -> Score,
     Score: Copy + PartialOrd + Add<Output = Score> + Debug + 'static,
 {
     type State = ();
@@ -52,13 +52,13 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize> {
         let mut best: Option<(usize, Score)> = None;
         for index in pass.left() {
-            let mut score = (self.score)(ctx, index);
+            let mut score = (self.score)(bb, index);
             // Every child is scored at the first position; record them there.
             if pass.is_start() {
                 entry.record("score", || score);

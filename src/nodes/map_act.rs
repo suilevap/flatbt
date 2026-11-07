@@ -38,13 +38,13 @@ pub fn map_act<Map, Child, ChildAct>(map: Map, child: Child) -> MapAct<Map, Chil
 }
 
 impl<
-    Context,
+    Blackboard,
     Act,
     ChildAct,
     Params,
     Map: Fn(ChildAct) -> Act,
-    Child: BtNode<Context, ChildAct, Params>,
-> BtNode<Context, Act, Params> for MapAct<Map, Child, ChildAct>
+    Child: BtNode<Blackboard, ChildAct, Params>,
+> BtNode<Blackboard, Act, Params> for MapAct<Map, Child, ChildAct>
 {
     type State = Child::State;
     type Memory = Child::Memory;
@@ -55,11 +55,11 @@ impl<
         &self,
         state: &mut Child::State,
         memory: &mut Child::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        match entry.run(1, &self.child, state, memory, ctx, params) {
+        match entry.run(1, &self.child, state, memory, bb, params) {
             NodeResult::Running(act) => NodeResult::Running((self.map)(act)),
             NodeResult::Success => NodeResult::Success,
             NodeResult::Failure => NodeResult::Failure,

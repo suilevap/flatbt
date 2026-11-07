@@ -1,23 +1,57 @@
 //! Resumable behavior trees with static dispatch and inline state.
 //!
-//! An update says whether the invocation ended, and if it did not, what the
-//! agent is now doing. `BtState<_, _>` below says this tree decides nothing, so
-//! its act type is `()`:
+//! # Thinking and acting
+//!
+//! `Blackboard` is the AI's representation of the world and its working memory.
+//! Gather refreshes observed facts; nodes record reasoning and proposed plans.
+//! A tree may consider several alternatives and keep what it learned. Failure
+//! and branch replacement retain writes to the blackboard and node memory. Only the
+//! final returned `Act` is applied to the world by the driver, after the update.
+//! This contract applies to every node and builder; see [`BtNode`].
 //!
 //! ```
 //! use flatbt::prelude::*;
 //!
-//! let tree = seq((
-//!     check(|ammo: &usize| *ammo > 0),
-//!     leaf(|ammo: &mut usize| {
-//!         *ammo -= 1;
-//!         NodeResult::Success
+//! struct Observed { ammo: u32 }
+//! struct Blackboard { observed: Observed, rejected_options: u32 }
+//! enum Act { Fire, Reload }
+//! struct World { ammo: u32 }
+//!
+//! let tree = select((
+//!     leaf(|bb: &mut Blackboard| {
+//!         if bb.observed.ammo == 0 {
+//!             bb.rejected_options += 1; // Record a rejected option.
+//!             NodeResult::Failure
+//!         } else {
+//!             NodeResult::Running(Act::Fire)
+//!         }
 //!     }),
+//!     leaf(|_: &mut Blackboard| NodeResult::Running(Act::Reload)),
 //! ));
-//! let mut state: BtState<_, _> = BtState::new(&tree);
-//! let mut ammo = 1;
-//! assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
-//! assert_eq!(ammo, 0);
+//! let mut state = BtState::new(&tree);
+//! let mut world = World { ammo: 0 };
+//! let mut bb = Blackboard {
+//!     observed: Observed { ammo: world.ammo }, // Gather facts before thinking.
+//!     rejected_options: 0,
+//! };
+//!
+//! let act = update(&tree, &mut state, &mut bb, EntryMode::Evaluate).act();
+//! assert_eq!(bb.rejected_options, 1); // The rejected option left a thought.
+//! assert_eq!(bb.observed.ammo, 0);
+//! assert_eq!(world.ammo, 0);        // Thinking spent and loaded no ammunition.
+//!
+//! // The driver applies only the final act to the actual world.
+//! match act {
+//!     Some(Act::Fire) => world.ammo -= 1,
+//!     Some(Act::Reload) => world.ammo = 3,
+//!     None => {}
+//! }
+//! assert_eq!(world.ammo, 3);
+//! assert_eq!(bb.observed.ammo, 0); // Still the observation from before the act.
+//!
+//! bb.observed = Observed { ammo: world.ammo }; // Gather the outcome next time.
+//! assert_eq!(bb.observed.ammo, 3);
+//! assert_eq!(bb.rejected_options, 1); // Refreshing facts preserves reasoning.
 //! ```
 //!
 //! A tree that decides something names the act type in the nodes that decide,
@@ -32,12 +66,12 @@
 //! }
 //!
 //! let tree = seq((
-//!     check(|ammo: &usize| *ammo == 0),
+//!     check(|observed_ammo: &usize| *observed_ammo == 0),
 //!     leaf(|_: &mut usize| NodeResult::Running(Act::Reloading)),
 //! ));
 //! let mut state = BtState::new(&tree);
-//! let mut ammo = 0;
-//! let doing = update(&tree, &mut state, &mut ammo, EntryMode::Evaluate).act();
+//! let mut observed_ammo = 0;
+//! let doing = update(&tree, &mut state, &mut observed_ammo, EntryMode::Evaluate).act();
 //! assert_eq!(doing, Some(Act::Reloading));
 //! ```
 //!
@@ -71,9 +105,12 @@ pub mod trace;
 
 pub use composition::{
     BtChildren, BtControl, Check, ControlMemory, ControlNode, ControlOp, ControlState, Guarded,
-    Leaf, ReadFn, ReadsContext, ReadsParams, Selector, Sequence, check, child_state, control,
+    Leaf, ReadFn, ReadsBlackboard, ReadsParams, Selector, Sequence, check, child_state, control,
     guard, leaf, select, seq,
 };
+
+#[doc(hidden)]
+pub use composition::ReadsContext;
 #[cfg(feature = "extras")]
 pub use nodes::{
     ActionNode, ActionWait, ActionWhile, AwaitFuture, Awaiting, BtAction, BtCancel, BtClock,

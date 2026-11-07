@@ -1,8 +1,11 @@
+//! Inline action lifecycle for internal planning work, with no gameplay act.
+//! Blackboard writes record reasoning; the tasks neither move nor fire anything.
+
 use flatbt::prelude::*;
 
 #[derive(Default)]
 struct Agent {
-    effects: Vec<&'static str>,
+    reasoning: Vec<&'static str>,
 }
 
 struct Task {
@@ -24,20 +27,20 @@ impl BtAction<Agent> for Task {
         state.0 < self.steps
     }
 
-    fn tick(&self, state: &mut Progress, ctx: &mut Agent, _: ()) {
+    fn tick(&self, state: &mut Progress, bb: &mut Agent, _: ()) {
         state.0 += 1;
-        ctx.effects.push(self.name);
+        bb.reasoning.push(self.name);
     }
 }
 
 fn main() {
     let root = seq((
         action(Task {
-            name: "move",
+            name: "score route",
             steps: 2,
         }),
         action(Task {
-            name: "fire",
+            name: "compare cover",
             steps: 1,
         }),
     ));
@@ -45,11 +48,14 @@ fn main() {
     let mut agent = Agent::default();
     for frame in 1..=4 {
         let result = update(&root, &mut state, &mut agent, EntryMode::Resume);
-        println!("update {frame}: {result:?} | {:?}", agent.effects);
+        println!("update {frame}: {result:?} | {:?}", agent.reasoning);
         if frame == 3 {
-            // Move completes and Fire starts and ticks in this same update.
+            // Route scoring completes and cover comparison starts in this update.
             assert_eq!(result, NodeResult::RUNNING);
-            assert_eq!(agent.effects, ["move", "move", "fire"]);
+            assert_eq!(
+                agent.reasoning,
+                ["score route", "score route", "compare cover"]
+            );
         }
         if frame == 4 {
             assert_eq!(result, NodeResult::Success);

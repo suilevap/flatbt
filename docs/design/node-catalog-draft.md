@@ -156,7 +156,7 @@ outlives a run. These used to need a blackboard field or accessor each.
 | Change | Unlocks | Recommendation |
 | --- | --- | --- |
 | Exported tuple generator for "all children alive" | `parallel` | Do it together with `parallel`, in core's `build.rs`. A codegen export, not a runtime change. |
-| Context passed to abort | `on_abort` hooks | **Reject.** It contradicts state-owned cancellation. |
+| Blackboard passed to abort | `on_abort` hooks | **Reject.** It contradicts state-owned cancellation. |
 
 No resume hook for control policies (reactive sequence is covered by `guard`)
 and no core-managed persistent memory (the blackboard holds it explicitly).

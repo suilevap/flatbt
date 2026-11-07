@@ -18,52 +18,52 @@ use wait::wait_frames;
 
 #[test]
 fn evaluate_preserves_sequence_progress_but_rescans_selector() {
-    struct Context {
+    struct Blackboard {
         gate_open: bool,
         checks: usize,
     }
-    fn gate(ctx: &mut Context) -> NodeResult {
-        ctx.checks += 1;
-        if ctx.gate_open { Success } else { Failure }
+    fn gate(bb: &mut Blackboard) -> NodeResult {
+        bb.checks += 1;
+        if bb.gate_open { Success } else { Failure }
     }
 
     let sequence = seq((leaf(gate), wait_frames(1)));
     let mut state: BtState<_, _> = BtState::new(&sequence);
-    let mut ctx = Context {
+    let mut bb = Blackboard {
         gate_open: true,
         checks: 0,
     };
     assert_eq!(
-        update(&sequence, &mut state, &mut ctx, EntryMode::Resume),
+        update(&sequence, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.gate_open = false;
+    bb.gate_open = false;
     assert_eq!(
-        update(&sequence, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&sequence, &mut state, &mut bb, EntryMode::Evaluate),
         Success
     );
-    assert_eq!(ctx.checks, 1);
+    assert_eq!(bb.checks, 1);
 
     let selector = select((leaf(gate), wait_frames(1)));
     let mut state: BtState<_, _> = BtState::new(&selector);
-    let mut ctx = Context {
+    let mut bb = Blackboard {
         gate_open: false,
         checks: 0,
     };
     assert_eq!(
-        update(&selector, &mut state, &mut ctx, EntryMode::Resume),
+        update(&selector, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.gate_open = true;
+    bb.gate_open = true;
     assert_eq!(
-        update(&selector, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&selector, &mut state, &mut bb, EntryMode::Evaluate),
         Success
     );
-    assert_eq!(ctx.checks, 2);
+    assert_eq!(bb.checks, 2);
 }
 
 #[derive(Default)]
-struct Context {
+struct Blackboard {
     urgent: bool,
     entries: Vec<(&'static str, EntryMode, usize)>,
 }
@@ -89,7 +89,7 @@ impl Drop for ProbeState {
     }
 }
 
-impl BtNode<Context> for Probe {
+impl BtNode<Blackboard> for Probe {
     type State = ProbeState;
     type Memory = ();
 
@@ -97,13 +97,13 @@ impl BtNode<Context> for Probe {
         &self,
         state: &mut ProbeState,
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         _: (),
         entry: Entry<'_>,
     ) -> NodeResult {
         state.drops.get_or_insert_with(|| self.drops.clone());
         state.updates += 1;
-        ctx.entries.push((self.name, entry.mode(), state.updates));
+        bb.entries.push((self.name, entry.mode(), state.updates));
         if state.updates <= self.suspend_updates {
             Running
         } else {
@@ -131,17 +131,17 @@ fn failed_candidate_preserves_existing_state_for_evaluate() {
         },
     ));
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         Success
     );
     assert_eq!(
-        ctx.entries,
+        bb.entries,
         [
             ("candidate", EntryMode::Evaluate, 1),
             ("old", EntryMode::Evaluate, 1),
@@ -160,7 +160,7 @@ fn higher_priority_running_candidate_preempts_and_drops_old_path() {
     let new_drops = Arc::new(AtomicUsize::new(0));
     let tree = select((
         seq((
-            leaf(|ctx: &mut Context| if ctx.urgent { Success } else { Failure }),
+            leaf(|bb: &mut Blackboard| if bb.urgent { Success } else { Failure }),
             Probe {
                 name: "new",
                 suspend_updates: 3,
@@ -176,24 +176,24 @@ fn higher_priority_running_candidate_preempts_and_drops_old_path() {
         },
     ));
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.urgent = true;
+    bb.urgent = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         Running
     );
     assert_eq!(old_drops.load(Ordering::Relaxed), 1);
     assert_eq!(new_drops.load(Ordering::Relaxed), 0);
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     assert_eq!(
-        ctx.entries,
+        bb.entries,
         [
             ("old", EntryMode::Evaluate, 1),
             ("new", EntryMode::Evaluate, 1),

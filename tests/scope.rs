@@ -8,7 +8,7 @@ use flatbt::{
     BtNode, BtState, Entry, EntryMode, NodeResult, action, leaf, leaf_with, select, seq, update,
 };
 
-#[path = "../examples/support/scoped_params.rs"]
+#[path = "support/scoped_params.rs"]
 mod support;
 #[path = "../examples/support/wait_frames.rs"]
 mod wait;
@@ -342,62 +342,62 @@ fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_c
             self.0.lock().unwrap().push(self.1);
         }
     }
-    struct Context {
+    struct Blackboard {
         urgent: bool,
         done: bool,
         log: Log,
     }
     struct Pending;
-    impl BtNode<Context, (), &Resource> for Pending {
+    impl BtNode<Blackboard, (), &Resource> for Pending {
         type State = Option<Resource>;
         type Memory = ();
         fn update(
             &self,
             state: &mut Self::State,
             _: &mut (),
-            ctx: &mut Context,
+            bb: &mut Blackboard,
             _: &Resource,
             _: Entry<'_>,
         ) -> NodeResult {
-            state.get_or_insert_with(|| Resource(ctx.log.clone(), "child"));
-            if ctx.done { Success } else { Running }
+            state.get_or_insert_with(|| Resource(bb.log.clone(), "child"));
+            if bb.done { Success } else { Running }
         }
     }
     let tree = scope! {
-        let outer: Resource = |ctx: &mut Context| Resource(ctx.log.clone(), "outer");
+        let outer: Resource = |bb: &mut Blackboard| Resource(bb.log.clone(), "outer");
         select {
             scope! {
-                let local: Resource = |ctx: &mut Context| Resource(ctx.log.clone(), "candidate");
+                let local: Resource = |bb: &mut Blackboard| Resource(bb.log.clone(), "candidate");
                 sequence {
-                    flatbt::check(|ctx: &Context| ctx.urgent);
+                    flatbt::check(|bb: &Blackboard| bb.urgent);
                     Pending.with(local);
                 }
             };
             scope! {
-                let local: Resource = |ctx: &mut Context| Resource(ctx.log.clone(), "saved");
+                let local: Resource = |bb: &mut Blackboard| Resource(bb.log.clone(), "saved");
                 sequence { Pending.with(local); }
             };
         }
     };
     let log = Log::default();
-    let mut ctx = Context {
+    let mut bb = Blackboard {
         urgent: false,
         done: false,
         log: log.clone(),
     };
     let mut state: BtState<_, _> = BtState::new(&tree);
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         Running
     );
     assert_eq!(*log.lock().unwrap(), ["candidate", "candidate"]);
-    ctx.urgent = true;
+    bb.urgent = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         Running
     );
     assert_eq!(
@@ -419,19 +419,19 @@ fn nested_branch_scopes_release_children_before_locals_on_preemption_reset_and_c
     );
     log.lock().unwrap().clear();
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.done = true;
+    bb.done = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Success
     );
     assert_eq!(*log.lock().unwrap(), ["child", "candidate", "outer"]);
     log.lock().unwrap().clear();
-    ctx.done = false;
+    bb.done = false;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     drop(state);
@@ -547,80 +547,80 @@ impl BtNode<World, (), &mut Option<Vector2>> for GetVisibleDoorPos {
 
 #[test]
 fn selector_revalidates_children_without_recomputing_function_locals() {
-    struct Context {
+    struct Blackboard {
         next: u32,
         prefer_first: bool,
         init_order: Vec<&'static str>,
         visits: Vec<(u32, EntryMode, usize)>,
     }
-    fn first(ctx: &mut Context) -> u32 {
-        ctx.init_order.push("first");
-        ctx.next
+    fn first(bb: &mut Blackboard) -> u32 {
+        bb.init_order.push("first");
+        bb.next
     }
     struct Visit;
-    impl BtNode<Context, (), &u32> for Visit {
+    impl BtNode<Blackboard, (), &u32> for Visit {
         type State = usize;
         type Memory = ();
         fn update(
             &self,
             count: &mut usize,
             _: &mut (),
-            ctx: &mut Context,
+            bb: &mut Blackboard,
             input: &u32,
             entry: Entry<'_>,
         ) -> NodeResult {
             *count += 1;
-            ctx.visits.push((*input, entry.mode(), *count));
+            bb.visits.push((*input, entry.mode(), *count));
             if *count < 3 { Running } else { Success }
         }
     }
     let tree = scope! {
         let a: u32 = first;
-        let b: u32 = |ctx: &mut Context| {
-            ctx.init_order.push("second");
-            ctx.next + 10
+        let b: u32 = |bb: &mut Blackboard| {
+            bb.init_order.push("second");
+            bb.next + 10
         };
         select {
             sequence {
-                flatbt::check(|ctx: &Context| ctx.prefer_first);
+                flatbt::check(|bb: &Blackboard| bb.prefer_first);
                 Visit.with(a);
             }
             sequence { Visit.with(b); }
         }
     };
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context {
+    let mut bb = Blackboard {
         next: 1,
         prefer_first: false,
         init_order: Vec::new(),
         visits: Vec::new(),
     };
-    assert!(ctx.init_order.is_empty());
+    assert!(bb.init_order.is_empty());
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.next = 100;
-    ctx.prefer_first = true;
+    bb.next = 100;
+    bb.prefer_first = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
-        Running
-    );
-    assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         Running
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
+        Running
+    );
+    assert_eq!(
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Success
     );
-    assert_eq!(ctx.init_order, ["first", "second"]);
+    assert_eq!(bb.init_order, ["first", "second"]);
     assert_eq!(
-        ctx.visits,
+        bb.visits,
         [
             (11, EntryMode::Evaluate, 1),
             (11, EntryMode::Resume, 2),
@@ -630,11 +630,11 @@ fn selector_revalidates_children_without_recomputing_function_locals() {
         ]
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    assert_eq!(ctx.init_order, ["first", "second", "first", "second"]);
-    assert_eq!(ctx.visits.last(), Some(&(100, EntryMode::Evaluate, 1)));
+    assert_eq!(bb.init_order, ["first", "second", "first", "second"]);
+    assert_eq!(bb.visits.last(), Some(&(100, EntryMode::Evaluate, 1)));
 }
 
 #[test]
@@ -807,7 +807,7 @@ fn a_scope_hands_what_it_is_given_to_its_initializers() {
         let target: u32 = |trace: &mut Vec<u32>| trace.len() as u32 + 5;
         sequence {
             scope! {
-                // Reads what the scope was given; the other reads the context.
+                // Reads what the scope was given; the other reads the blackboard.
                 let doubled: u32 = |_: &mut Vec<u32>, target: &u32| target * 2;
                 let seen: u32 = |trace: &mut Vec<u32>| trace.len() as u32;
                 sequence {

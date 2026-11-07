@@ -2,21 +2,21 @@ use flatbt::{BtNode, Entry, NodeResult};
 
 /// Runs the nested node, then fails: a candidate its parent rejects.
 /// Forwards its entire state to the nested node.
-pub struct Reject<N>(pub N);
+pub struct Reject<Node>(pub Node);
 
-impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
-    type State = N::State;
-    type Memory = N::Memory;
+impl<Blackboard, Act, Node: BtNode<Blackboard, Act>> BtNode<Blackboard, Act> for Reject<Node> {
+    type State = Node::State;
+    type Memory = Node::Memory;
 
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        bb: &mut Blackboard,
         _: (),
         entry: Entry<'_>,
-    ) -> NodeResult {
-        let _ = self.0.update(state, memory, ctx, (), entry);
+    ) -> NodeResult<Act> {
+        let _ = self.0.update(state, memory, bb, (), entry);
         NodeResult::Failure
     }
 }

@@ -2,9 +2,9 @@ use core::marker::PhantomData;
 
 use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamValue, Write};
-use crate::{BtChildren, BtNode, ControlOp, Entry, NodeResult, ReadsContext, ReadsParams};
+use crate::{BtChildren, BtNode, ControlOp, Entry, NodeResult, ReadsBlackboard, ReadsParams};
 
-/// Owns invocation-local data outside application context.
+/// Owns invocation-local data alongside the agent's blackboard.
 pub struct Scope<Locals, Child, Initializers = NoInit> {
     child: Child,
     init: Initializers,
@@ -15,6 +15,9 @@ pub struct Scope<Locals, Child, Initializers = NoInit> {
 /// Producers may fill slots for later consumers. Nested scopes inherit no
 /// locals; what a scope is given (`.with(..)` on it, a goal) reaches its
 /// initializers, which copy what the body needs into locals.
+/// Initializers and children follow [`BtNode`]'s thinking and acting contract:
+/// blackboard and node-memory writes remain after failure. Locals live only for
+/// this scope invocation and drop with it.
 pub fn scope<Locals, Child>(child: Child) -> Scope<Locals, Child> {
     Scope {
         child,
@@ -54,7 +57,7 @@ impl<Locals, Child, Initializers> Scope<Locals, Child, Initializers> {
 
 /// What a [`Scope`] runs when an invocation starts: [`NoInit`], or the
 /// initializers given to [`Scope::init`].
-pub trait ScopeInit<Context, Act, Locals, Params> {
+pub trait ScopeInit<Blackboard, Act, Locals, Params> {
     /// Invocation state; for initializers, whether they ran.
     type State: Default + Send + 'static;
     /// The initializers' memory.
@@ -68,7 +71,7 @@ pub trait ScopeInit<Context, Act, Locals, Params> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         locals: &mut Locals,
         params: Params,
         entry: Entry<'_>,
@@ -85,7 +88,7 @@ pub trait ScopeInit<Context, Act, Locals, Params> {
 /// No initializers: a scope that only owns its locals.
 pub struct NoInit;
 
-impl<Context, Act, Locals, Params> ScopeInit<Context, Act, Locals, Params> for NoInit {
+impl<Blackboard, Act, Locals, Params> ScopeInit<Blackboard, Act, Locals, Params> for NoInit {
     type State = ();
     type Memory = ();
     const NODES: usize = 0;
@@ -95,7 +98,7 @@ impl<Context, Act, Locals, Params> ScopeInit<Context, Act, Locals, Params> for N
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: &mut Locals,
         _: Params,
         _: Entry<'_>,
@@ -116,11 +119,12 @@ pub struct InitState<NodesState> {
     done: bool,
 }
 
-impl<Context, Act, Locals, Params, Nodes> ScopeInit<Context, Act, Locals, Params> for Init<Nodes>
+impl<Blackboard, Act, Locals, Params, Nodes> ScopeInit<Blackboard, Act, Locals, Params>
+    for Init<Nodes>
 where
     Locals: 'static,
     Params: ParamValue,
-    Nodes: BtChildren<Context, Act, (Write<Locals>, Params::Shape)>,
+    Nodes: BtChildren<Blackboard, Act, (Write<Locals>, Params::Shape)>,
 {
     type State = InitState<Nodes::State>;
     type Memory = Nodes::Memory;
@@ -131,7 +135,7 @@ where
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         locals: &mut Locals,
         params: Params,
         entry: Entry<'_>,
@@ -139,7 +143,7 @@ where
         if state.done {
             return None;
         }
-        let mut next = |_: &mut Context, index: usize, succeeded: bool| {
+        let mut next = |_: &mut Blackboard, index: usize, succeeded: bool| {
             if succeeded {
                 ControlOp::RunChild(index + 1)
             } else {
@@ -151,7 +155,7 @@ where
             &mut state.init,
             memory,
             0,
-            ctx,
+            bb,
             &mut (locals, params.into_value()),
             entry,
             &mut next,
@@ -191,32 +195,33 @@ pub struct ScopeState<Locals, ChildState, InitializersState = ()> {
     locals: Locals,
 }
 
-impl<Context, Act, Params, Locals, Child, ChildState, ChildMemory, Initializers>
-    BtNode<Context, Act, Params> for Scope<Locals, Child, Initializers>
+impl<Blackboard, Act, Params, Locals, Child, ChildState, ChildMemory, Initializers>
+    BtNode<Blackboard, Act, Params> for Scope<Locals, Child, Initializers>
 where
     Locals: Default + Send + 'static,
-    Child: for<'a> BtNode<Context, Act, &'a mut Locals, State = ChildState, Memory = ChildMemory>,
+    Child:
+        for<'a> BtNode<Blackboard, Act, &'a mut Locals, State = ChildState, Memory = ChildMemory>,
     ChildState: Default + Send + 'static,
     ChildMemory: Default + Send + 'static,
-    Initializers: ScopeInit<Context, Act, Locals, Params>,
+    Initializers: ScopeInit<Blackboard, Act, Locals, Params>,
 {
     type State = ScopeState<Locals, ChildState, Initializers::State>;
     type Memory = ScopeMemory<ChildMemory, Initializers::Memory>;
     const NODES: usize =
-        1 + Initializers::NODES + <Child as BtNode<Context, Act, &'static mut Locals>>::NODES;
+        1 + Initializers::NODES + <Child as BtNode<Blackboard, Act, &'static mut Locals>>::NODES;
 
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         if let Some(result) = self.init.run(
             &mut state.init,
             &mut memory.init,
-            ctx,
+            bb,
             &mut state.locals,
             params,
             entry,
@@ -228,7 +233,7 @@ where
             &self.child,
             &mut state.child,
             &mut memory.child,
-            ctx,
+            bb,
             &mut state.locals,
         )
     }
@@ -246,7 +251,7 @@ where
             self.init
                 .inspect(state.map(|state| &state.init), &memory.init, inspector);
             let child = state.map(|state| &state.child);
-            BtNode::<Context, Act, &mut Locals>::inspect(
+            BtNode::<Blackboard, Act, &mut Locals>::inspect(
                 &self.child,
                 child,
                 &memory.child,
@@ -260,15 +265,15 @@ where
 /// initializer one, run by [`Scope::init`].
 pub struct Compute<Function>(Function);
 
-/// Computes from context and fills the output slot.
+/// Computes from blackboard and fills the output slot.
 /// The callable is checked where the tree runs, like [`crate::leaf`], so
 /// an initializer closure stays open to inference. Annotate its argument.
 pub fn compute<Function>(init: Function) -> Compute<Function> {
     Compute(init)
 }
 
-impl<Context, Act, Value, Function: Fn(&mut Context) -> Value>
-    BtNode<Context, Act, &mut Option<Value>> for Compute<Function>
+impl<Blackboard, Act, Value, Function: Fn(&mut Blackboard) -> Value>
+    BtNode<Blackboard, Act, &mut Option<Value>> for Compute<Function>
 {
     type State = ();
     type Memory = ();
@@ -277,11 +282,11 @@ impl<Context, Act, Value, Function: Fn(&mut Context) -> Value>
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         output: &mut Option<Value>,
         _: Entry<'_>,
     ) -> NodeResult<Act> {
-        *output = Some((self.0)(ctx));
+        *output = Some((self.0)(bb));
         NodeResult::Success
     }
 
@@ -290,8 +295,8 @@ impl<Context, Act, Value, Function: Fn(&mut Context) -> Value>
     }
 }
 
-/// A `scope!` initializer: computes a local's value on entry, from the context
-/// or from the context and the scope's parameters.
+/// A `scope!` initializer: computes a local's value on entry, from the blackboard
+/// or from the blackboard and the scope's parameters.
 pub struct InitLocal<Function, Project, Reads> {
     init: Function,
     project: Project,
@@ -300,7 +305,7 @@ pub struct InitLocal<Function, Project, Reads> {
 
 /// Fills the local `project` picks with `init`'s answer, on entry.
 ///
-/// `init` is `Fn(&mut Context) -> Value`, or `Fn(&mut Context, Params) ->
+/// `init` is `Fn(&mut Blackboard) -> Value`, or `Fn(&mut Blackboard, Params) ->
 /// Value` where `Params` is a reborrow of what the scope was given (`&Target`
 /// for `.with(target)` on the scope). Annotate the closure's arguments.
 pub fn init_local<Locals, Value, Function, Project, Reads>(
@@ -317,34 +322,34 @@ where
     }
 }
 
-/// An initializer's callable: over the context, or over the context and the
+/// An initializer's callable: over the blackboard, or over the blackboard and the
 /// scope's parameters. The marker is inferred from the callable's arity.
-pub trait InitFn<Context, Params, Value, Reads> {
-    fn call(&self, ctx: &mut Context, params: Params) -> Value;
+pub trait InitFn<Blackboard, Params, Value, Reads> {
+    fn call(&self, bb: &mut Blackboard, params: Params) -> Value;
 }
 
-impl<Context, Params, Value, Function: Fn(&mut Context) -> Value>
-    InitFn<Context, Params, Value, ReadsContext> for Function
+impl<Blackboard, Params, Value, Function: Fn(&mut Blackboard) -> Value>
+    InitFn<Blackboard, Params, Value, ReadsBlackboard> for Function
 {
     #[inline(always)]
-    fn call(&self, ctx: &mut Context, _: Params) -> Value {
-        self(ctx)
+    fn call(&self, bb: &mut Blackboard, _: Params) -> Value {
+        self(bb)
     }
 }
 
-impl<Context, Params, Value, Function: Fn(&mut Context, Params) -> Value>
-    InitFn<Context, Params, Value, ReadsParams> for Function
+impl<Blackboard, Params, Value, Function: Fn(&mut Blackboard, Params) -> Value>
+    InitFn<Blackboard, Params, Value, ReadsParams> for Function
 {
     #[inline(always)]
-    fn call(&self, ctx: &mut Context, params: Params) -> Value {
-        self(ctx, params)
+    fn call(&self, bb: &mut Blackboard, params: Params) -> Value {
+        self(bb, params)
     }
 }
 
-impl<'a, Context, Act, Locals, Params, Value, Function, Project, Reads>
-    BtNode<Context, Act, (&'a mut Locals, Params)> for InitLocal<Function, Project, Reads>
+impl<'a, Blackboard, Act, Locals, Params, Value, Function, Project, Reads>
+    BtNode<Blackboard, Act, (&'a mut Locals, Params)> for InitLocal<Function, Project, Reads>
 where
-    Function: InitFn<Context, Params, Value, Reads>,
+    Function: InitFn<Blackboard, Params, Value, Reads>,
     Project: Fn(&mut Locals) -> &mut Option<Value>,
 {
     type State = ();
@@ -354,11 +359,11 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         (locals, params): (&'a mut Locals, Params),
         _: Entry<'_>,
     ) -> NodeResult<Act> {
-        *(self.project)(locals) = Some(self.init.call(ctx, params));
+        *(self.project)(locals) = Some(self.init.call(bb, params));
         NodeResult::Success
     }
 

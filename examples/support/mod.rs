@@ -3,7 +3,7 @@ use flatbt::{BtControl, ControlOp};
 /// Repeats one child a fixed number of times, stopping at the first failure.
 pub struct Repeat(pub usize);
 
-impl<C> BtControl<C> for Repeat {
+impl<Blackboard> BtControl<Blackboard> for Repeat {
     type State = usize;
     type Memory = ();
 
@@ -11,7 +11,7 @@ impl<C> BtControl<C> for Repeat {
         &self,
         _: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Blackboard,
         _active_child_index: Option<usize>,
         child_count: usize,
     ) -> ControlOp {
@@ -29,7 +29,7 @@ impl<C> BtControl<C> for Repeat {
         &self,
         completed: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Blackboard,
         _completed_child_index: usize,
         _child_count: usize,
     ) -> ControlOp {
@@ -45,7 +45,7 @@ impl<C> BtControl<C> for Repeat {
         &self,
         _: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Blackboard,
         _completed_child_index: usize,
         _child_count: usize,
     ) -> ControlOp {

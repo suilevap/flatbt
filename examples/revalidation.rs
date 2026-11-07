@@ -1,3 +1,6 @@
+//! Reconsider planning tasks while retaining notes from a preempted plan.
+//! These events describe reasoning, not completed movement or other world acts.
+
 use flatbt::{BtState, update};
 use flatbt::{EntryMode, NodeResult, check, leaf, select, seq};
 
@@ -7,32 +10,32 @@ use wait::wait_frames;
 
 #[derive(Default)]
 struct Agent {
-    urgent: bool,
+    observed_urgent: bool,
     events: Vec<&'static str>,
 }
 
 fn main() {
     let tree = select((
         seq((
-            check(|ctx: &Agent| ctx.urgent),
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("start urgent task");
+            check(|bb: &Agent| bb.observed_urgent),
+            leaf(|bb: &mut Agent| {
+                bb.events.push("start urgent planning");
                 NodeResult::Success
             }),
             wait_frames(2),
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("finish urgent task");
+            leaf(|bb: &mut Agent| {
+                bb.events.push("finish urgent planning");
                 NodeResult::Success
             }),
         )),
         seq((
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("start patrol");
+            leaf(|bb: &mut Agent| {
+                bb.events.push("start patrol planning");
                 NodeResult::Success
             }),
             wait_frames(3),
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("finish patrol");
+            leaf(|bb: &mut Agent| {
+                bb.events.push("finish patrol planning");
                 NodeResult::Success
             }),
         )),
@@ -46,7 +49,7 @@ fn main() {
         (4, true, EntryMode::Resume),
         (5, true, EntryMode::Resume),
     ] {
-        agent.urgent = urgent;
+        agent.observed_urgent = urgent; // Refresh the latest observation.
         let result = update(&tree, &mut state, &mut agent, mode);
         println!(
             "update {update_index}: {result:?} | {mode:?} | {:?}",
@@ -55,7 +58,11 @@ fn main() {
     }
     assert_eq!(
         agent.events,
-        ["start patrol", "start urgent task", "finish urgent task"]
+        [
+            "start patrol planning",
+            "start urgent planning",
+            "finish urgent planning"
+        ]
     );
     assert!(!state.is_running());
 }

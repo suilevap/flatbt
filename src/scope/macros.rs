@@ -1,7 +1,7 @@
 /// Owns named locals with explicit sequence/select control flow.
 ///
-/// - `let name: Type = callback;`: initialize with `Fn(&mut Context) -> Type`,
-///   or `Fn(&mut Context, Params) -> Type` to read what the scope itself was
+/// - `let name: Type = callback;`: initialize with `Fn(&mut Blackboard) -> Type`,
+///   or `Fn(&mut Blackboard, Params) -> Type` to read what the scope itself was
 ///   given: `scope! { .. }.with(target)` passes `&Target`.
 /// - `let name: Type;`: reserve an output slot for a producer.
 /// - `Node.with(name);`: shared input. `out name`: exclusive output slot.
@@ -25,8 +25,8 @@
 /// impl BtNode<Vec<u32>, (), &u32> for Observe {
 ///     type State = ();
 ///     type Memory = ();
-///     fn update(&self, _: &mut (), _: &mut (), ctx: &mut Vec<u32>, input: &u32, _: Entry<'_>) -> NodeResult {
-///         ctx.push(*input);
+///     fn update(&self, _: &mut (), _: &mut (), bb: &mut Vec<u32>, input: &u32, _: Entry<'_>) -> NodeResult {
+///         bb.push(*input);
 ///         NodeResult::Success
 ///     }
 /// }

@@ -2,8 +2,12 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
-/// Inline lifecycle: start, query progress, tick while Running, then complete.
-/// All callbacks may run on rejected candidates; effects are not rolled back.
+/// Thinking lifecycle: start, query progress, tick while Running, then complete.
+///
+/// All callbacks may run while considering a branch that is later rejected.
+/// Blackboard writes are retained as working memory. `tick` proposes an act; the
+/// driver applies only the root's final act to the world. This is the same
+/// thinking and acting contract as [`BtNode`].
 ///
 /// An action is what occupies an agent, so it is also what says what the agent
 /// is doing: [`tick`](Self::tick) returns the act, and the node reports it as
@@ -13,25 +17,29 @@ use crate::{BtNode, Entry, NodeResult};
 ///
 /// State owns cancellation. Use [`crate::CancelOnDrop`] or a custom Drop;
 /// disarm in complete when cancellation is no longer needed. No cancel traversal.
-/// `Params` carries inputs/outputs separately from `Context`. Parameters are borrowed each
+/// `Params` carries inputs/outputs separately from `Blackboard`. Parameters are borrowed each
 /// update; store owned snapshots in State when needed.
-pub trait BtAction<Context, Act = (), Params = ()> {
+pub trait BtAction<Blackboard, Act = (), Params = ()> {
     type State: Send + 'static;
 
-    fn start(&self, ctx: &mut Context, params: Params) -> Option<Self::State>;
-    fn is_in_progress(&self, state: &Self::State, ctx: &Context, params: Params) -> bool;
+    /// Initializes this attempt, or returns None to fail. May update working
+    /// memory or start invocation-owned planning work before selection.
+    fn start(&self, bb: &mut Blackboard, params: Params) -> Option<Self::State>;
+    fn is_in_progress(&self, state: &Self::State, bb: &Blackboard, params: Params) -> bool;
 
-    /// Runs inline while progress is true, and says what the agent is doing.
+    /// Advances internal work while progress is true and proposes an act.
+    /// Called while considering this branch, including if a parent later
+    /// rejects it. Apply gameplay changes through the driver's final act.
     ///
     /// Required rather than defaulted: an action is what occupies the agent, so
     /// being busy without saying with what is the state this design removes. In
-    /// a tree that decides nothing the act type is `()` and the body is empty;
-    /// external operations that advance on their own also do no work here, they
-    /// just restate the act.
-    fn tick(&self, state: &mut Self::State, ctx: &mut Context, params: Params) -> Act;
+    /// a planner with no gameplay act the act type is `()`: update reasoning
+    /// and return unit. Operations that advance on their own can simply
+    /// restate the proposed act here.
+    fn tick(&self, state: &mut Self::State, bb: &mut Blackboard, params: Params) -> Act;
 
     /// Handles completion before state drops. Disarm cancellation handles here.
-    fn complete(&self, _state: &mut Self::State, _ctx: &mut Context, _params: Params) -> bool {
+    fn complete(&self, _state: &mut Self::State, _bb: &mut Blackboard, _params: Params) -> bool {
         true
     }
 
@@ -45,15 +53,16 @@ pub trait BtAction<Context, Act = (), Params = ()> {
 pub struct ActionNode<Action>(Action);
 
 /// Initializes action state on entry. `Action::State` need not implement Default.
+/// Its callbacks may update the blackboard before selection; see [`BtAction`].
 pub fn action<Action>(action: Action) -> ActionNode<Action> {
     ActionNode(action)
 }
 
-impl<Context, Act, Params: ParamValue, Action, ActionState> BtNode<Context, Act, Params>
+impl<Blackboard, Act, Params: ParamValue, Action, ActionState> BtNode<Blackboard, Act, Params>
     for ActionNode<Action>
 where
     Action: for<'a> BtAction<
-            Context,
+            Blackboard,
             Act,
             <Params::Shape as ParamShape>::Value<'a>,
             State = ActionState,
@@ -67,13 +76,13 @@ where
         &self,
         state: &mut Self::State,
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         let mut params = params.into_value();
         if state.is_none() {
-            *state = self.0.start(ctx, Params::Shape::reborrow(&mut params));
+            *state = self.0.start(bb, Params::Shape::reborrow(&mut params));
             let started = state.is_some();
             entry.record("started", || started);
         }
@@ -82,16 +91,16 @@ where
         };
         if self
             .0
-            .is_in_progress(active, ctx, Params::Shape::reborrow(&mut params))
+            .is_in_progress(active, bb, Params::Shape::reborrow(&mut params))
         {
             NodeResult::Running(
                 self.0
-                    .tick(active, ctx, Params::Shape::reborrow(&mut params)),
+                    .tick(active, bb, Params::Shape::reborrow(&mut params)),
             )
         } else {
             let completed = self
                 .0
-                .complete(active, ctx, Params::Shape::reborrow(&mut params));
+                .complete(active, bb, Params::Shape::reborrow(&mut params));
             entry.record("completed", || completed);
             let result = if completed {
                 NodeResult::Success
@@ -107,7 +116,7 @@ where
         let node = NodeInfo::new("action", state.is_some()).with_type_name::<Action>();
         inspector.node(node, |inspector| {
             let started = state.and_then(Option::as_ref);
-            BtAction::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
+            BtAction::<Blackboard, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                 &self.0, started, inspector,
             );
         });

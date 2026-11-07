@@ -13,7 +13,7 @@ pub fn repeat<Child>(times: usize, child: Child) -> ControlNode<Repeat, (Child,)
     control(Repeat(times), (child,))
 }
 
-impl<Context> BtControl<Context> for Repeat {
+impl<Blackboard> BtControl<Blackboard> for Repeat {
     /// Successes so far in this invocation.
     type State = usize;
     type Memory = ();
@@ -40,7 +40,7 @@ impl<Context> BtControl<Context> for Repeat {
         &self,
         done: &mut usize,
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         active: Option<usize>,
         _: usize,
     ) -> ControlOp {
@@ -59,7 +59,7 @@ impl<Context> BtControl<Context> for Repeat {
         &self,
         done: &mut usize,
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -76,7 +76,7 @@ impl<Context> BtControl<Context> for Repeat {
         &self,
         _: &mut usize,
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -96,7 +96,7 @@ pub fn retry<Child>(attempts: usize, child: Child) -> ControlNode<Retry, (Child,
     control(Retry(attempts), (child,))
 }
 
-impl<Context> BtControl<Context> for Retry {
+impl<Blackboard> BtControl<Blackboard> for Retry {
     /// Failures so far in this invocation.
     type State = usize;
     type Memory = ();
@@ -123,7 +123,7 @@ impl<Context> BtControl<Context> for Retry {
         &self,
         failed: &mut usize,
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         active: Option<usize>,
         _: usize,
     ) -> ControlOp {
@@ -142,7 +142,7 @@ impl<Context> BtControl<Context> for Retry {
         &self,
         _: &mut usize,
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -154,7 +154,7 @@ impl<Context> BtControl<Context> for Retry {
         &self,
         failed: &mut usize,
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {

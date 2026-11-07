@@ -58,7 +58,7 @@ scope! {
 - Values survive Running, Resume, and Evaluate. Completion/reset permits fresh
   initialization on the next entry.
 - Initializers receive the context, and optionally a reborrow of the
-  parameters the scope itself was given (`Fn(&mut Context, Params) -> T`).
+  parameters the scope itself was given (`Fn(&mut Blackboard, Params) -> T`).
   That is how values reach a nested scope: `.with(..)` on the scope, or a goal
   through `with_goal`, copied into locals on entry. Option/Result returns are
   values, not BT control flow. Use a producer node for failure or suspension.

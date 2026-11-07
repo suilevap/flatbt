@@ -7,7 +7,7 @@ use crate::{BtNode, Entry, NodeResult};
 /// A subgoal, asked for when there is one.
 pub struct Need<Subgoal>(Subgoal);
 
-/// Asks `subgoal(ctx, goal)` for what the current goal needs first.
+/// Asks `subgoal(bb, goal)` for what the current goal needs first.
 ///
 /// - `None`: nothing is in the way; succeeds.
 /// - `Some(g)` that already ended for this goal: returns how it ended, for as
@@ -25,11 +25,12 @@ pub fn need<Subgoal>(subgoal: Subgoal) -> Need<Subgoal> {
     Need(subgoal)
 }
 
-impl<'p, Context, Act, Goal, Subgoal> BtNode<Context, Act, GoalCall<'p, Goal>> for Need<Subgoal>
+impl<'p, Blackboard, Act, Goal, Subgoal> BtNode<Blackboard, Act, GoalCall<'p, Goal>>
+    for Need<Subgoal>
 where
     Act: Default,
     Goal: Clone + PartialEq + fmt::Debug + Send + 'static,
-    Subgoal: Fn(&Context, &Goal) -> Option<Goal>,
+    Subgoal: Fn(&Blackboard, &Goal) -> Option<Goal>,
 {
     type State = ();
     type Memory = ();
@@ -39,11 +40,11 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         mut call: GoalCall<'p, Goal>,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        let Some(subgoal) = (self.0)(ctx, call.goal) else {
+        let Some(subgoal) = (self.0)(bb, call.goal) else {
             return NodeResult::Success;
         };
         entry.record("goal", || subgoal.clone());

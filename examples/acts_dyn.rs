@@ -15,34 +15,34 @@ use flatbt::{BtAction, BtNode, BtState, EntryMode, action, check, select, seq, u
 
 #[path = "support/guard.rs"]
 mod support;
-use support::Guard;
+use support::{Guard, World};
 
 /// An order the guard can be given. Each one carries out itself.
 trait Act {
-    fn apply(&self, guard: &mut Guard);
+    fn apply(&self, world: &mut World);
 }
 
 struct WalkTo(f32);
 
 impl Act for WalkTo {
-    fn apply(&self, guard: &mut Guard) {
-        guard.step_towards(self.0);
+    fn apply(&self, world: &mut World) {
+        world.step_towards(self.0);
     }
 }
 
 struct Firing;
 
 impl Act for Firing {
-    fn apply(&self, guard: &mut Guard) {
-        guard.fire();
+    fn apply(&self, world: &mut World) {
+        world.fire();
     }
 }
 
 struct Loading;
 
 impl Act for Loading {
-    fn apply(&self, guard: &mut Guard) {
-        guard.load_one();
+    fn apply(&self, world: &mut World) {
+        world.load_one();
     }
 }
 
@@ -52,12 +52,13 @@ struct Reload;
 impl BtAction<Guard, Box<dyn Act>> for Reload {
     type State = ();
 
-    fn start(&self, _: &mut Guard, _: ()) -> Option<()> {
+    fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
+        guard.considered.push("reload");
         Some(())
     }
 
     fn is_in_progress(&self, _: &(), guard: &Guard, _: ()) -> bool {
-        guard.ammo < guard.magazine
+        guard.observed.ammo < guard.observed.magazine
     }
 
     fn tick(&self, _: &mut (), _: &mut Guard, _: ()) -> Box<dyn Act> {
@@ -70,7 +71,8 @@ struct Shoot;
 impl BtAction<Guard, Box<dyn Act>> for Shoot {
     type State = ();
 
-    fn start(&self, _: &mut Guard, _: ()) -> Option<()> {
+    fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
+        guard.considered.push("shoot");
         Some(())
     }
 
@@ -88,7 +90,8 @@ struct Approach;
 impl BtAction<Guard, Box<dyn Act>> for Approach {
     type State = ();
 
-    fn start(&self, _: &mut Guard, _: ()) -> Option<()> {
+    fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
+        guard.considered.push("approach");
         Some(())
     }
 
@@ -97,7 +100,7 @@ impl BtAction<Guard, Box<dyn Act>> for Approach {
     }
 
     fn tick(&self, _: &mut (), guard: &mut Guard, _: ()) -> Box<dyn Act> {
-        Box::new(WalkTo(guard.intruder))
+        Box::new(WalkTo(guard.observed.intruder))
     }
 }
 
@@ -112,22 +115,30 @@ fn guard() -> impl BtNode<Guard, Box<dyn Act>> {
 fn main() {
     let tree = guard();
     let mut state = BtState::new(&tree);
-    let mut guard = Guard::new(1);
+    let mut world = World::new(1);
+    let mut guard = Guard::default();
 
     for tick in 1..=10 {
         if tick == 5 {
-            guard.intruder = 8.0;
-            guard.trace.push("-- intruder moves to 8 --".into());
+            world.intruder = 8.0;
+            world.trace.push("-- intruder moves to 8 --".into());
         }
+
+        let observed = world.observe();
+        guard.observed = observed;
+        let act = update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act();
+        assert_eq!(guard.observed, observed);
+        assert_eq!(world.observe(), observed);
 
         // No match, and no place that has to know every kind of order.
-        match update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act() {
-            Some(act) => act.apply(&mut guard),
-            None => guard.trace.push("idle".into()),
+        match act {
+            Some(act) => act.apply(&mut world),
+            None => world.trace.push("idle".into()),
         }
+        assert_eq!(guard.observed, observed);
     }
 
-    for line in &guard.trace {
+    for line in &world.trace {
         println!("{line}");
     }
 }

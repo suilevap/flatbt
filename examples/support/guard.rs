@@ -1,8 +1,34 @@
-//! The world the two act examples share, so the only difference between them
-//! is how the act is represented.
+//! Separate gameplay state from the guard's perception and reasoning.
+//! Shared by the enum and dynamic-act examples.
 
-/// What the guard knows. The tree reads this and never writes it.
+/// Facts gathered from the world before a decision.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Observed {
+    pub post: f32,
+    pub intruder: f32,
+    pub ammo: u32,
+    pub magazine: u32,
+}
+
+/// The AI's view of the world and the alternatives it has considered.
+#[derive(Default)]
 pub struct Guard {
+    pub observed: Observed,
+    pub considered: Vec<&'static str>,
+}
+
+impl Guard {
+    pub fn in_range(&self) -> bool {
+        (self.observed.post - self.observed.intruder).abs() <= 1.0
+    }
+
+    pub fn dry(&self) -> bool {
+        self.observed.ammo == 0
+    }
+}
+
+/// Actual gameplay state. Only the driver receives this object.
+pub struct World {
     pub post: f32,
     pub intruder: f32,
     pub ammo: u32,
@@ -11,7 +37,7 @@ pub struct Guard {
     pub trace: Vec<String>,
 }
 
-impl Guard {
+impl World {
     pub fn new(ammo: u32) -> Self {
         Self {
             post: 0.0,
@@ -22,12 +48,13 @@ impl Guard {
         }
     }
 
-    pub fn in_range(&self) -> bool {
-        (self.post - self.intruder).abs() <= 1.0
-    }
-
-    pub fn dry(&self) -> bool {
-        self.ammo == 0
+    pub fn observe(&self) -> Observed {
+        Observed {
+            post: self.post,
+            intruder: self.intruder,
+            ammo: self.ammo,
+            magazine: self.magazine,
+        }
     }
 
     // --- what the world does when it is told to -----------------------------
