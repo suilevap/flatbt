@@ -2,8 +2,12 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
-/// Inline lifecycle: start, query progress, tick while Running, then complete.
-/// All callbacks may run on rejected candidates; effects are not rolled back.
+/// Thinking lifecycle: start, query progress, tick while Running, then complete.
+///
+/// All callbacks may run while considering a branch that is later rejected.
+/// Blackboard writes are retained as working memory. `tick` proposes an act; the
+/// driver applies only the root's final act to the world. This is the same
+/// thinking and acting contract as [`BtNode`].
 ///
 /// An action is what occupies an agent, so it is also what says what the agent
 /// is doing: [`tick`](Self::tick) returns the act, and the node reports it as
@@ -18,16 +22,20 @@ use crate::{BtNode, Entry, NodeResult};
 pub trait BtAction<Blackboard, Act = (), Params = ()> {
     type State: Send + 'static;
 
+    /// Initializes this attempt, or returns None to fail. May update working
+    /// memory or start invocation-owned planning work before selection.
     fn start(&self, bb: &mut Blackboard, params: Params) -> Option<Self::State>;
     fn is_in_progress(&self, state: &Self::State, bb: &Blackboard, params: Params) -> bool;
 
-    /// Runs inline while progress is true, and says what the agent is doing.
+    /// Advances internal work while progress is true and proposes an act.
+    /// Called while considering this branch, including if a parent later
+    /// rejects it. Apply gameplay changes through the driver's final act.
     ///
     /// Required rather than defaulted: an action is what occupies the agent, so
     /// being busy without saying with what is the state this design removes. In
-    /// a tree that decides nothing the act type is `()` and the body is empty;
-    /// external operations that advance on their own also do no work here, they
-    /// just restate the act.
+    /// a planner with no gameplay act the act type is `()`: update reasoning
+    /// and return unit. Operations that advance on their own can simply
+    /// restate the proposed act here.
     fn tick(&self, state: &mut Self::State, bb: &mut Blackboard, params: Params) -> Act;
 
     /// Handles completion before state drops. Disarm cancellation handles here.
@@ -45,6 +53,7 @@ pub trait BtAction<Blackboard, Act = (), Params = ()> {
 pub struct ActionNode<Action>(Action);
 
 /// Initializes action state on entry. `Action::State` need not implement Default.
+/// Its callbacks may update the blackboard before selection; see [`BtAction`].
 pub fn action<Action>(action: Action) -> ActionNode<Action> {
     ActionNode(action)
 }

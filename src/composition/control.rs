@@ -38,6 +38,9 @@ pub struct ControlMemory<PolicyMemory, ChildrenMemory> {
 
 /// Static control-flow policy with per-invocation state, and memory kept for
 /// the agent's lifetime (`()` for most policies; see [`BtNode::Memory`]).
+/// Callbacks operate on the agent's mutable blackboard. Their writes, and those of
+/// every child considered, remain even when another child is selected. A child
+/// index requests execution, not a commitment of its act to the world.
 /// Child indices must be below `child_count`. Policies must terminate;
 /// execution has no iteration budget.
 pub trait BtControl<Blackboard> {
@@ -102,6 +105,7 @@ pub struct ControlNode<Policy, Children> {
 }
 
 /// Combines a policy and children with static dispatch.
+/// All children follow [`BtNode`]'s thinking and acting contract.
 pub fn control<Policy, Children>(
     policy: Policy,
     children: Children,
@@ -341,6 +345,8 @@ impl<Blackboard> BtControl<Blackboard> for Sequence {
 pub struct Selector;
 
 /// Runs a selector. Empty selectors fail.
+/// Blackboard and memory writes from failed alternatives remain available to later
+/// alternatives; only the final returned act reaches the driver.
 pub fn select<Children>(children: Children) -> ControlNode<Selector, Children> {
     control(Selector, children)
 }

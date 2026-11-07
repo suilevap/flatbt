@@ -8,7 +8,7 @@ use flatbt::{
     BtNode, BtState, Entry, EntryMode, NodeResult, action, leaf, leaf_with, select, seq, update,
 };
 
-#[path = "../examples/support/scoped_params.rs"]
+#[path = "support/scoped_params.rs"]
 mod support;
 #[path = "../examples/support/wait_frames.rs"]
 mod wait;

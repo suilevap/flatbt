@@ -5,11 +5,14 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamShape, ParamValue};
 use crate::{BtNode, Entry, NodeResult};
 
-/// Stateless callable. Captures hold configuration; blackboard holds mutable data.
+/// Stateless callable. Captures hold configuration; the blackboard holds perception
+/// and mutable working memory.
 pub struct Leaf<Function>(Function);
 
-/// Wraps a callable. Blackboard effects are immediate and survive failure.
-/// Implement [`BtNode`] directly for invocation-local state.
+/// Wraps a callable that thinks with the agent's mutable blackboard.
+/// Writes remain even when this leaf or its branch fails. A returned act is
+/// proposed to the parent; the driver applies only the root's final act to the
+/// world. See [`BtNode`]. Implement it directly for invocation-local state.
 ///
 /// The callable is checked where the tree runs, not here, so a closure stays
 /// open to inference. That is what lets one closure serve a blackboard borrowed
@@ -102,12 +105,12 @@ pub struct Guarded<Predicate, Child, Reads> {
 /// ```
 /// use flatbt::{BtState, EntryMode, NodeResult, guard, leaf, update};
 ///
-/// let tree = guard(|ammo: &u32| *ammo > 0, leaf(|_: &mut u32| NodeResult::RUNNING));
+/// let tree = guard(|observed_ammo: &u32| *observed_ammo > 0, leaf(|_: &mut u32| NodeResult::RUNNING));
 /// let mut state = BtState::new(&tree);
-/// let mut ammo = 1;
-/// assert!(update(&tree, &mut state, &mut ammo, EntryMode::Resume).is_running());
-/// ammo = 0;
-/// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Failure);
+/// let mut observed_ammo = 1;
+/// assert!(update(&tree, &mut state, &mut observed_ammo, EntryMode::Resume).is_running());
+/// observed_ammo = 0; // A fresh observation after the world spent the last round.
+/// assert_eq!(update(&tree, &mut state, &mut observed_ammo, EntryMode::Resume), NodeResult::Failure);
 /// ```
 ///
 /// The predicate is `Fn(&Blackboard) -> bool`, or `Fn(&Blackboard, Params) -> bool` to also read the

@@ -70,7 +70,12 @@ impl<'root, Node: BtNode<Blackboard, Act>, Blackboard, Act> BtState<'root, Node,
     }
 }
 
-/// Runs the root and hands back what the agent is doing.
+/// Thinks through the root and returns the final act for the driver to apply.
+///
+/// Every visited node may update the blackboard and node memory, including alternatives
+/// that fail or are replaced. These writes remain and may affect later choices
+/// in the same update. Only the act in the returned result is handed to the
+/// world; see [`BtNode`]'s thinking and acting contract.
 ///
 /// Resume follows saved selection; Evaluate revalidates from root. Fresh state
 /// always enters as Evaluate. A different root logs an error and returns Failure
@@ -108,6 +113,7 @@ pub fn update<'t, Blackboard, Act, Node: BtNode<Blackboard, Act>>(
 /// as an ECS component. An empty slot enters with Evaluate; a terminal result
 /// clears it. `memory` starts as `Default` and is kept for the agent's
 /// lifetime. The caller must pair each slot and memory with one root.
+/// Blackboard and memory writes are kept under the same contract as [`update`].
 ///
 /// ```
 /// use flatbt::{BtNode, EntryMode, NodeResult, leaf, update_slot};

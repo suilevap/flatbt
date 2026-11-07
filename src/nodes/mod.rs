@@ -1,6 +1,10 @@
 //! Ready-made nodes and policies built on the public core API: actions with
 //! cancellation, `choose!`, orders for `select` and `seq`, decorators, and
 //! callable helpers.
+//!
+//! All builders follow [`crate::BtNode`]'s thinking and acting contract. Visiting
+//! an alternative may change the agent's blackboard and node memory even if it fails;
+//! only the final returned act is applied to the world by the driver.
 
 pub mod action;
 pub mod choose;

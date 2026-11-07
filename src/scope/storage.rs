@@ -4,7 +4,7 @@ use crate::inspect::{Inspector, NodeInfo};
 use crate::params::{ParamValue, Write};
 use crate::{BtChildren, BtNode, ControlOp, Entry, NodeResult, ReadsBlackboard, ReadsParams};
 
-/// Owns invocation-local data outside application blackboard.
+/// Owns invocation-local data alongside the agent's blackboard.
 pub struct Scope<Locals, Child, Initializers = NoInit> {
     child: Child,
     init: Initializers,
@@ -15,6 +15,9 @@ pub struct Scope<Locals, Child, Initializers = NoInit> {
 /// Producers may fill slots for later consumers. Nested scopes inherit no
 /// locals; what a scope is given (`.with(..)` on it, a goal) reaches its
 /// initializers, which copy what the body needs into locals.
+/// Initializers and children follow [`BtNode`]'s thinking and acting contract:
+/// blackboard and node-memory writes remain after failure. Locals live only for
+/// this scope invocation and drop with it.
 pub fn scope<Locals, Child>(child: Child) -> Scope<Locals, Child> {
     Scope {
         child,

@@ -163,7 +163,7 @@ impl Eq for NodeInfo<'_> {}
 ///
 /// Each node is one [`enter`](Self::enter), then its fields, then its
 /// children, then one [`exit`](Self::exit) -- unless `enter` returns false,
-/// which skips the rest. Nodes report through [`node`](dyn Inspector::node),
+/// which skips the rest. Nodes report through `dyn Inspector::node`,
 /// which keeps that order.
 pub trait Inspector {
     /// Starts a node. Returns whether to receive its fields and children.

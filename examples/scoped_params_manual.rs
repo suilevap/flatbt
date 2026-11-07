@@ -1,3 +1,6 @@
+//! Invocation-local planning inputs. Blackboard holds observations and reasoning;
+//! this example prepares a route without moving anything in the world.
+
 use flatbt::prelude::*;
 
 #[path = "support/scoped_params.rs"]
@@ -7,9 +10,9 @@ mod wait;
 use support::*;
 
 fn main() {
-    fn get_visible_door_pos(world: &mut World) -> Vector2 {
-        world.selections += 1;
-        world.visible_door
+    fn get_visible_door_pos(bb: &mut Blackboard) -> Vector2 {
+        bb.selections += 1;
+        bb.observed.visible_door
     }
     // scope! generates these fields in the companion example.
     #[derive(Default)]
@@ -21,9 +24,9 @@ fn main() {
     let tree = scope::<Locals, _>(seq((
         // Run initializers once before the body.
         bind(
-            compute(|world: &mut World| {
-                world.selections += 1;
-                world.next_patrol
+            compute(|bb: &mut Blackboard| {
+                bb.selections += 1;
+                bb.observed.next_patrol
             }),
             write(|locals: &mut Locals| &mut locals.walk_pos),
         ),
@@ -33,41 +36,46 @@ fn main() {
         ),
         // Scope body.
         seq((
-            bind(LookAt, read(|locals: &Locals| locals.door_pos.as_ref())),
+            bind(
+                ConsiderView,
+                read(|locals: &Locals| locals.door_pos.as_ref()),
+            ),
             no_params(wait::wait_frames(1)),
             bind(
-                action(Walk),
+                action(PlanRoute),
                 read(|locals: &Locals| locals.walk_pos.as_ref()),
             ),
         )),
     )));
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut world = World {
-        next_patrol: Vector2(10.0, 20.0),
-        visible_door: Vector2(90.0, 80.0),
-        looked_at: Vec::new(),
-        walked_to: Vec::new(),
+    let mut bb = Blackboard {
+        observed: Observed {
+            next_patrol: Vector2(10.0, 20.0),
+            visible_door: Vector2(90.0, 80.0),
+        },
+        considered_views: Vec::new(),
+        planned_routes: Vec::new(),
         selections: 0,
     };
     assert_eq!(
-        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         NodeResult::RUNNING
     );
-    // Initializers ran once. Their values survive changes to the world.
-    world.next_patrol = Vector2(-1.0, -1.0);
+    // The application refreshes perception. Already-bound planning inputs persist.
+    bb.observed.next_patrol = Vector2(-1.0, -1.0);
     assert_eq!(
-        update(&tree, &mut state, &mut world, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         NodeResult::RUNNING
     );
     assert_eq!(
-        update(&tree, &mut state, &mut world, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         NodeResult::Success
     );
-    assert_eq!(world.selections, 2);
-    assert_eq!(world.looked_at, [Vector2(90.0, 80.0)]);
-    assert_eq!(world.walked_to, [Vector2(10.0, 20.0)]);
+    assert_eq!(bb.selections, 2);
+    assert_eq!(bb.considered_views, [Vector2(90.0, 80.0)]);
+    assert_eq!(bb.planned_routes, [Vector2(10.0, 20.0)]);
     println!(
-        "Looked at {:?}; walked to {:?}",
-        world.looked_at, world.walked_to
+        "Considered view {:?}; planned route to {:?}",
+        bb.considered_views, bb.planned_routes
     );
 }

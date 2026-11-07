@@ -21,6 +21,9 @@ use crate::{Behavior, BehaviorTree, Tick, TickAt, TickFn, TreeBuilder};
 pub struct BehaviorSystems;
 
 /// Builds one tree and registers the system that ticks its agents.
+/// Agents think with a mutable `Blackboard` component. Writes by failed alternatives
+/// remain in it; the tick publishes only the final returned act for gameplay
+/// systems to carry out. See [`flatbt::BtNode`].
 ///
 /// One per tree. The tree is built when the app is built, so the tick system is
 /// in place before any agent exists and any schedule will do. Adding the same
@@ -81,11 +84,10 @@ where
 
     /// Decides, per agent per tick, whether the tree is entered at all and how.
     ///
-    /// Defaults to [`Tick::Evaluate`], which is the answer that is always
-    /// correct: the other two are optimisations that cost an agent
-    /// responsiveness and never change what it does once it runs. Reach for
-    /// them when a profile says to, and expect the tree to behave the same
-    /// under all three -- see [`Tick`].
+    /// Defaults to [`Tick::Evaluate`], reconsidering choices from the root.
+    /// Use [`Tick::Resume`] to follow the saved choice, or [`Tick::Skip`] when
+    /// no internal work needs advancing. Different modes can visit different
+    /// alternatives and retain different thoughts; see [`Tick`].
     ///
     /// The answer comes from the blackboard and a [`TickAt`]: the agent and the
     /// schedule's clock. Anything else it needs -- a perception flag, whose turn
@@ -260,12 +262,9 @@ where
     Act: Component<Mutability = Mutable> + PartialEq,
     Builder: TreeBuilder<Blackboard, Act>,
 {
-    // Whether a blackboard changed is the gather's business, not the tick's: it
-    // is rewritten every tick anyway, and marking the whole population changed
-    // would drag the rest of the engine along. Nodes may write to it -- it is
-    // how they leave notes for each other -- and those writes are *not* visible
-    // to `Changed<Blackboard>` either. The blackboard is the tree's input; its output is
-    // the act.
+    // Gather systems refresh perception and preserve working memory. Thinking
+    // keeps writes from every considered branch without marking the whole
+    // blackboard changed; gameplay systems observe the final act below.
     let bb = bb.bypass_change_detection();
     let Some(mode) = tree.tick_mode()(bb, at).entry_mode() else {
         // Skipped: the suspended invocation and the standing act stay as they

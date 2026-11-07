@@ -1,6 +1,8 @@
 //! Invocation-local values and parameter bindings.
 //! Use [`scope!`] for named locals, or [`scope()`] and [`bind`] for function-based
 //! construction. Scope owns data; its child controls execution.
+//! Blackboard and node-memory writes follow [`crate::BtNode`]'s thinking and acting
+//! contract. Local writes last until their scope invocation ends.
 
 mod binding;
 mod macros;

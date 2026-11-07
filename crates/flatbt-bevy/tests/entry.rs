@@ -1,7 +1,6 @@
 //! What each [`Tick`] does to an agent, and to the act it is carrying.
 //!
-//! The property that matters is first: `Evaluate` every tick is always correct,
-//! and the other two only cost responsiveness.
+//! A linear task keeps its progress under every mode; skipped ticks do no work.
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -68,9 +67,8 @@ fn run(mode: flatbt_bevy::TickFn<Work>, ticks: u32) -> Work {
     app.world_mut().entity_mut(agent).take::<Work>().unwrap()
 }
 
-/// `Evaluate` every tick is the answer that cannot be wrong. `Resume` and
-/// `Skip` are optimisations: they change how many ticks an agent needs, never
-/// where it gets to.
+/// This linear task makes the same progress under Evaluate and Resume.
+/// Skipping delays it without resetting its progress.
 #[test]
 fn every_tick_mode_reaches_the_same_place_given_enough_ticks() {
     assert_eq!(run(|_, _| Tick::Evaluate, 3).done, 3);

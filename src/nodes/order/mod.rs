@@ -48,6 +48,9 @@ const MAX_CHILDREN: usize = 64;
 ///
 /// `State` lives as long as the invocation and survives `Evaluate`; `Memory`
 /// lives as long as the agent (see [`BtNode::Memory`](crate::BtNode::Memory)).
+/// Each callback sees the blackboard left by earlier callbacks and child updates.
+/// Its writes, such as advancing a random generator, remain even if an offered
+/// child fails. This follows [`BtNode`](crate::BtNode)'s thinking and acting contract.
 pub trait BtOrder<Blackboard> {
     type State: Default + Send + 'static;
     type Memory: Default + Send + 'static;

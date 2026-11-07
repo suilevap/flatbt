@@ -9,6 +9,8 @@ pub struct LeafWith<Function>(Function);
 
 /// [`leaf`](crate::leaf) whose callable also receives the node's parameters,
 /// so inside `scope!` it reads and writes locals through `.with(..)`.
+/// Blackboard and output writes remain after failure; proposed acts follow
+/// [`BtNode`]'s thinking and acting contract.
 ///
 /// Annotate the arguments; borrowed parameters then stay open to every
 /// lifetime a binding hands out.
@@ -105,7 +107,7 @@ pub struct ActionWhile<Condition, MakeAct, Reads> {
 /// Reports `act` while `condition` holds, then succeeds.
 ///
 /// The most common action, without a [`BtAction`](crate::BtAction) impl: the
-/// world does the work, and this says what the agent is doing until it is
+/// blackboard does the work, and this says what the agent is doing until it is
 /// done. Waiting for something is the same node with the condition negated.
 /// Both are asked on every update, so `act` follows a moving target.
 ///
@@ -115,12 +117,12 @@ pub struct ActionWhile<Condition, MakeAct, Reads> {
 /// #[derive(Debug, PartialEq)]
 /// enum Act { Reload }
 ///
-/// let tree = action_while(|ammo: &u32| *ammo < 3, |_: &u32| Act::Reload);
+/// let tree = action_while(|observed_ammo: &u32| *observed_ammo < 3, |_: &u32| Act::Reload);
 /// let mut state = BtState::new(&tree);
-/// let mut ammo = 2;
-/// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Running(Act::Reload));
-/// ammo = 3;
-/// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
+/// let mut observed_ammo = 2;
+/// assert_eq!(update(&tree, &mut state, &mut observed_ammo, EntryMode::Resume), NodeResult::Running(Act::Reload));
+/// observed_ammo = 3; // A fresh observation after the driver reloaded.
+/// assert_eq!(update(&tree, &mut state, &mut observed_ammo, EntryMode::Resume), NodeResult::Success);
 /// ```
 ///
 /// Each closure is `Fn(&Blackboard)`, or `Fn(&Blackboard, Params)` to also read the node's
@@ -131,22 +133,22 @@ pub struct ActionWhile<Condition, MakeAct, Reads> {
 ///
 /// #[derive(Debug, PartialEq)]
 /// enum Act { WalkTo(u32) }
-/// struct World { at: u32, positions: [u32; 2] }
+/// struct Blackboard { at: u32, positions: [u32; 2] }
 ///
 /// let tree = scope! {
-///     let target: usize = |_: &mut World| 1;
+///     let target: usize = |_: &mut Blackboard| 1;
 ///     sequence {
 ///         action_while(
-///             |world: &World, target: &usize| world.at != world.positions[*target],
-///             |world: &World, target: &usize| Act::WalkTo(world.positions[*target]),
+///             |blackboard: &Blackboard, target: &usize| blackboard.at != blackboard.positions[*target],
+///             |blackboard: &Blackboard, target: &usize| Act::WalkTo(blackboard.positions[*target]),
 ///         ).with(target);
 ///     }
 /// };
 /// let mut state = BtState::new(&tree);
-/// let mut world = World { at: 0, positions: [2, 5] };
-/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Running(Act::WalkTo(5)));
-/// world.at = 5;
-/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
+/// let mut blackboard = Blackboard { at: 0, positions: [2, 5] };
+/// assert_eq!(update(&tree, &mut state, &mut blackboard, EntryMode::Resume), NodeResult::Running(Act::WalkTo(5)));
+/// blackboard.at = 5;
+/// assert_eq!(update(&tree, &mut state, &mut blackboard, EntryMode::Resume), NodeResult::Success);
 /// ```
 pub fn action_while<Condition, MakeAct, Reads>(
     condition: Condition,

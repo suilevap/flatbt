@@ -1,7 +1,11 @@
 use crate::inspect::{Inspector, NodeInfo};
 use crate::trace::{Handle, TraceLog};
 
-/// Success/Failure ends an invocation; Running preserves it.
+/// Success/Failure ends an invocation; Running preserves it and proposes an act.
+///
+/// This is an execution outcome, not a transaction result. Blackboard and memory
+/// writes remain after Failure or replacement. A parent may discard a child's
+/// proposed act; the driver applies only the act returned by the root.
 ///
 /// `Act` is what an agent is *doing* while it runs. A node that occupies the
 /// agent has to say with what, so a decision cannot exist without something
@@ -28,7 +32,8 @@ impl<Act> NodeResult<Act> {
         Self::Failure
     }
 
-    /// What the agent is doing, if this invocation is still running.
+    /// This invocation's proposed act, if still running. A driver applies it
+    /// from the root's final result; a parent may discard a child's proposal.
     pub fn act(self) -> Option<Act> {
         match self {
             Self::Running(act) => Some(act),
@@ -89,7 +94,9 @@ pub(crate) mod diagnostics {
     }
 }
 
-/// Entry mode. Evaluate rechecks decisions without resetting state.
+/// How an update considers branches. Evaluate rechecks decisions without
+/// resetting invocation state. Both modes keep blackboard and memory writes from
+/// every node visited; neither mode provides rollback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryMode {
     Evaluate,
@@ -274,8 +281,28 @@ impl From<EntryMode> for Entry<'_> {
 
 /// Immutable definition with owned invocation state and memory.
 ///
-/// `Blackboard` is application blackboard; `Act` is what a running invocation is doing, and
-/// defaults to `()`; `Params` carries parameters, including update-local borrows.
+/// `Blackboard` is the agent's mutable perception and working memory; `Act` is the
+/// proposed standing act, defaulting to `()`; `Params` carries parameters,
+/// including update-local borrows.
+///
+/// # Thinking and acting
+///
+/// The blackboard represents what the AI knows about the world. The application
+/// refreshes observed facts; callbacks record considered options, inferences,
+/// and plans. Keep predictions separate from observations: proposing a shot
+/// does not spend observed ammunition. The driver's act changes gameplay state,
+/// and a later observation reports the outcome.
+///
+/// All node and builder APIs share this contract. Updating a node is real work
+/// on its blackboard and memory, including when considering an alternative that
+/// fails or is replaced. Those writes are kept and may inform later choices.
+/// Failure ends an invocation; it does not undo its thinking.
+///
+/// A child returning `Running(act)` proposes an act to its parent. The driver
+/// applies only the act returned by the root to the world, after the update.
+/// Keep gameplay changes in that driver; callbacks may run on alternatives
+/// whose acts never reach it. Planning work may start during consideration;
+/// keep its cancellation handles in invocation state.
 ///
 /// A node keeps two kinds of per-agent state:
 ///
@@ -289,9 +316,9 @@ impl From<EntryMode> for Entry<'_> {
 ///   candidate's; writes by a rejected candidate are kept, like blackboard
 ///   writes. Most nodes have none: `type Memory = ();`.
 ///
-/// Nodes that never occupy the agent -- predicates, instant effects -- stay
-/// generic over `Act` and never name it, so the act type unifies from the nodes
-/// that do decide and is never written out.
+/// Nodes that never occupy the agent -- predicates and updates to working
+/// memory -- stay generic over `Act` and never name it, so the act type unifies
+/// from the nodes that do decide and is never written out.
 ///
 /// `entry` carries the [`EntryMode`]. Fresh entry receives Evaluate. Existing
 /// entry receives Resume or Evaluate; Evaluate must not reset state. Composers
@@ -314,6 +341,8 @@ pub trait BtNode<Blackboard, Act = (), Params = ()> {
     /// index, so a composing node that reports its children counts them too.
     const NODES: usize = 1;
 
+    /// Considers this node, retaining blackboard and memory writes regardless of
+    /// the outcome. A returned act is a proposal until it reaches the driver.
     fn update(
         &self,
         state: &mut Self::State,

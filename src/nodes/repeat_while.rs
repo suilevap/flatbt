@@ -53,22 +53,22 @@ pub struct RepeatWhile<Condition, Child, Reads> {
 /// ```
 /// use flatbt::prelude::*;
 ///
-/// struct World { at: u32 }
+/// struct Blackboard { at: u32 }
 ///
 /// let tree = scope! {
-///     let target: u32 = |_: &mut World| 3;
+///     let target: u32 = |_: &mut Blackboard| 3;
 ///     sequence {
 ///         repeat_while(
-///             |world: &World, target: &u32| world.at < *target,
-///             leaf_with(|_: &mut World, target: &u32| NodeResult::Running(*target)),
+///             |blackboard: &Blackboard, target: &u32| blackboard.at < *target,
+///             leaf_with(|_: &mut Blackboard, target: &u32| NodeResult::Running(*target)),
 ///         ).with(target);
 ///     }
 /// };
 /// let mut state = BtState::new(&tree);
-/// let mut world = World { at: 0 };
-/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Running(3));
-/// world.at = 3;
-/// assert_eq!(update(&tree, &mut state, &mut world, EntryMode::Resume), NodeResult::Success);
+/// let mut blackboard = Blackboard { at: 0 };
+/// assert_eq!(update(&tree, &mut state, &mut blackboard, EntryMode::Resume), NodeResult::Running(3));
+/// blackboard.at = 3;
+/// assert_eq!(update(&tree, &mut state, &mut blackboard, EntryMode::Resume), NodeResult::Success);
 /// ```
 pub fn repeat_while<Condition, Child, Reads>(
     condition: Condition,

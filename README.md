@@ -22,24 +22,68 @@ authoring API:
 use flatbt::prelude::*;
 ```
 
-## Run a tree
+## Think, then act
+
+`Blackboard` is the AI's representation of the world, plus its reasoning. The
+application gathers facts into `observed`; the tree reads those facts and records
+rejected options, estimates, and plans separately. Proposing a shot never reduces
+observed ammunition. The driver applies **the final returned `Act`** to the world;
+a later observation reports what actually happened. `Failure` and branch
+replacement preserve reasoning and node-memory writes.
+
+This is the shared contract of all node, control, action, order, and scope
+builders. An inner node's act is a proposal; a parent can discard it.
 
 ```rust
 use flatbt::prelude::*;
 
-let tree = seq((
-    check(|ammo: &usize| *ammo > 0),
-    leaf(|ammo: &mut usize| {
-        *ammo -= 1;
-        NodeResult::Success
-    }),
-));
+struct Observed { ammo: u32 }
+struct Blackboard { observed: Observed, rejected_options: u32 }
+enum Act { Fire, Reload }
+struct World { ammo: u32 }
 
-let mut state: BtState<_, _> = BtState::new(&tree);
-let mut ammo = 1;
-assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
-assert_eq!(ammo, 0);
+let tree = select((
+    leaf(|bb: &mut Blackboard| {
+        if bb.observed.ammo == 0 {
+            bb.rejected_options += 1; // Record a rejected option.
+            NodeResult::Failure
+        } else {
+            NodeResult::Running(Act::Fire)
+        }
+    }),
+    leaf(|_: &mut Blackboard| NodeResult::Running(Act::Reload)),
+));
+let mut state = BtState::new(&tree);
+let mut world = World { ammo: 0 };
+let mut bb = Blackboard {
+    observed: Observed { ammo: world.ammo }, // Gather facts before thinking.
+    rejected_options: 0,
+};
+
+let act = update(&tree, &mut state, &mut bb, EntryMode::Evaluate).act();
+assert_eq!(bb.rejected_options, 1); // The rejected option left a thought.
+assert_eq!(bb.observed.ammo, 0);
+assert_eq!(world.ammo, 0);        // Thinking spent and loaded no ammunition.
+
+// The driver applies only the final act to the actual world.
+match act {
+    Some(Act::Fire) => world.ammo -= 1,
+    Some(Act::Reload) => world.ammo = 3,
+    None => {}
+}
+assert_eq!(world.ammo, 3);
+assert_eq!(bb.observed.ammo, 0); // Still the observation from before the act.
+
+bb.observed = Observed { ammo: world.ammo }; // Gather the outcome next time.
+assert_eq!(bb.observed.ammo, 3);
+assert_eq!(bb.rejected_options, 1); // Refreshing facts preserves reasoning.
 ```
+
+Run [thinking](examples/thinking.rs) to see a rejected shot retain its reason,
+a final act change ammunition, and a fresh observation report the outcome. The
+same separation is used by the [acts](examples/acts.rs) and Bevy examples.
+
+## Run a tree
 
 One immutable tree can serve multiple agents. Each owns a `BtState` bound to that
 tree. The tree must outlive its states. `update` rejects a different root.
@@ -95,7 +139,7 @@ enum Act { MoveTo(f32), Reloading }
 
 fn fighter() -> impl BtNode<Fighter, Act> {          // `Act` unifies; never written out
     select((
-        seq((check(|f: &Fighter| f.ammo == 0), action(Reload))),
+        seq((check(|f: &Fighter| f.observed.ammo == 0), action(Reload))),
         action(Chase),
     ))
 }
@@ -113,7 +157,7 @@ impl BtAction<Fighter, Act> for Chase {
     type State = ();
     fn start(&self, _: &mut Fighter, _: ()) -> Option<()> { Some(()) }
     fn is_in_progress(&self, _: &(), f: &Fighter, _: ()) -> bool { !f.arrived() }
-    fn tick(&self, _: &mut (), f: &mut Fighter, _: ()) -> Act { Act::MoveTo(f.player) }
+    fn tick(&self, _: &mut (), f: &mut Fighter, _: ()) -> Act { Act::MoveTo(f.observed.player) }
 }
 ```
 
@@ -138,12 +182,12 @@ the price of an allocation per deciding update:
 
 ```rust,ignore
 match update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act() {
-    Some(Act::WalkTo(to)) => guard.step_towards(to),   // enum
+    Some(Act::WalkTo(to)) => world.step_towards(to),   // enum
     ..
 }
 
 match update(&tree, &mut state, &mut guard, EntryMode::Evaluate).act() {
-    Some(act) => act.apply(&mut guard),                // Box<dyn Act>
+    Some(act) => act.apply(&mut world),                // Box<dyn Act>
     None => {}
 }
 ```
@@ -214,7 +258,7 @@ preempts the running one, and `seq` does only while still on its first child.
 - Scores: higher goes first; a tie keeps the running child, then goes to the
   lower index; NaN leaves a child out. Integer scores give a dynamic priority.
   `inertia` is added to the running child's score.
-- Random orders draw from a generator the blackboard owns, `rng: Fn(&mut C) ->
+- Random orders draw from a generator the blackboard owns, `rng: Fn(&mut Blackboard) ->
   u32`, once per position, so tests stay deterministic. When `Evaluate`
   restarts a pass they keep the running child first, so a random choice holds
   while it runs; the rest is drawn afresh. A weight that is not positive leaves
@@ -254,29 +298,30 @@ and revalidation. Nodes receive references to explicitly named fields.
 use flatbt::prelude::*;
 
 let tree = scope! {
-    let walk_pos: Vector2 = |bb: &mut World| bb.next_patrol_pos;
+    let walk_pos: Vector2 = |bb: &mut Blackboard| bb.observed.next_patrol;
     let door_pos: Vector2 = get_visible_door_pos;
     sequence {
-        LookAt.with(door_pos);
+        ConsiderView.with(door_pos);
         wait_frames(1);
-        action(Walk).with(walk_pos);
+        action(PlanRoute).with(walk_pos);
     }
 };
 ```
 
-Initializers are `Fn(&mut World) -> T`, with the argument annotated. `LookAt`
-receives `&Vector2`; `Walk`
-implements `BtAction<World, &Vector2>`. Use `select { ... }`
+Initializers are `Fn(&mut Blackboard) -> T`, with the argument annotated. `ConsiderView`
+receives `&Vector2`; `PlanRoute`
+implements `BtAction<Blackboard, (), &Vector2>`. These nodes record considered views
+and planned routes; they do not turn or move a gameplay object. Use `select { ... }`
 for fallback. Nested controls share locals; nested scopes own separate locals.
 
 A scope can be given parameters like any node, and its initializers can read
-them: an initializer `Fn(&mut World, Params) -> T` receives a reborrow of what
+them: an initializer `Fn(&mut Blackboard, Params) -> T` receives a reborrow of what
 the scope was given. Values from outside become locals on entry:
 
 ```rust,ignore
 scope! {
-    let to: Vector2 = |_: &mut World, target: &Vector2| *target;
-    sequence { action(Walk).with(to); }
+    let to: Vector2 = |_: &mut Blackboard, target: &Vector2| *target;
+    sequence { action(PlanRoute).with(to); }
 }
 .with(target) // in an enclosing scope; or a goal, through `with_goal`
 ```
@@ -306,14 +351,16 @@ start → Some(state)  → is_in_progress
 ```
 
 Later updates query progress without restarting. State needs `Send + 'static`,
-but not `Default`. `tick` both does inline work and returns the act — required
+but not `Default`. `tick` both advances internal work and proposes an act — required
 rather than defaulted, because an action is what occupies the agent and being
 busy without saying with what is what this design removes. For a tree that
-decides nothing the act type is `()` and the body is empty. All callbacks run
-inline and may execute on a branch later rejected. Effects are not rolled back.
+does internal planning without a gameplay act, use `Act = ()` and return unit
+after updating reasoning. All callbacks run
+inline while branches are considered. Blackboard writes remain even when a branch is
+rejected; apply gameplay changes through the driver's final act.
 
-For external work, `start` submits a request, `is_in_progress` observes it, and
-`complete` handles its outcome. The external system advances independently;
+For offloaded planning, `start` submits a computation, `is_in_progress` observes
+it, and `complete` handles its answer. The worker advances independently;
 update the BT on completion or periodically with Evaluate for reactivity.
 
 State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
@@ -331,7 +378,7 @@ let tree = scope! {
     let target: Cell = pick_target;
     let path: Path;
     sequence {
-        await_future(|bb: &mut World, target: &Cell| Some(bb.paths.plan(*target)), |_| Act::Thinking)
+        await_future(|bb: &mut Blackboard, target: &Cell| Some(bb.paths.plan(*target)), |_| Act::Thinking)
             .with(target, out path);
         action(Walk).with(path);
     }
@@ -373,8 +420,8 @@ constructor takes either; annotate the closure's arguments.
 let tree = scope! {
     let target: Entity = pick_target;
     sequence {
-        with(target) guard(|bb: &World, target: &Entity| bb.is_alive(*target), seq((
-            repeat_while(|bb: &World, target: &Entity| bb.far_from(*target), action(Approach)),
+        with(target) guard(|bb: &Blackboard, target: &Entity| bb.is_alive(*target), seq((
+            repeat_while(|bb: &Blackboard, target: &Entity| bb.far_from(*target), action(Approach)),
             action(Attack),
         )));
     }
@@ -382,7 +429,7 @@ let tree = scope! {
 ```
 
 The target is picked once per invocation and every node below the guard
-receives it: `Approach` and `Attack` implement `BtAction<World, Act, &Entity>`.
+receives it: `Approach` and `Attack` implement `BtAction<Blackboard, Act, &Entity>`.
 A child that takes no parameters needs `no_params(..)`.
 
 ### Time
@@ -424,18 +471,18 @@ A blocker is just a goal: `select` and `seq` decide what to do about it.
 
 ```rust,ignore
 let tree = goals::<8, _, _>(
-    |w: &World| Goal::Reach(w.target),
+    |w: &Blackboard| Goal::Reach(w.target),
     goal_match!(|goal: &Goal| {
         Goal::Reach(_) => select((
-            seq((need(|w: &World, g: &Goal| w.door_on_the_way(g).then_some(Goal::OpenDoor)), walk)),
-            seq((need(|w: &World, g: &Goal| w.door_on_the_way(g).then_some(Goal::Climb)), walk)),
+            seq((need(|w: &Blackboard, g: &Goal| w.door_on_the_way(g).then_some(Goal::OpenDoor)), walk)),
+            seq((need(|w: &Blackboard, g: &Goal| w.door_on_the_way(g).then_some(Goal::Climb)), walk)),
         )),
-        Goal::OpenDoor => seq((need(|w: &World, _: &Goal| (!w.has_key).then_some(Goal::GetKey)), open)),
-        Goal::GetKey => seq((need(|w: &World, _: &Goal| Some(Goal::Reach(w.key_at))), pick_up)),
+        Goal::OpenDoor => seq((need(|w: &Blackboard, _: &Goal| (!w.has_key).then_some(Goal::GetKey)), open)),
+        Goal::GetKey => seq((need(|w: &Blackboard, _: &Goal| Some(Goal::Reach(w.key_at))), pick_up)),
         Goal::Climb => climb,
     }),
 )
-.done(|w: &World, goal: &Goal| w.achieved(goal));
+.done(|w: &Blackboard, goal: &Goal| w.achieved(goal));
 ```
 
 - Only the top goal runs. Pushing and popping happen in the same update, so the
@@ -459,9 +506,9 @@ let tree = goals::<8, _, _>(
 
 ## Bevy
 
-Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns what
-the agent is doing; the tick writes that into an act component, and ordinary
-systems match it and do the work. A node never changes the world.
+Add the `flatbt-bevy` crate. A tree thinks with an agent's mutable blackboard component and returns its final act.
+The tick publishes that act component, and ordinary systems carry it out.
+Considered alternatives keep their blackboard and node-memory writes.
 
 ```toml
 flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
@@ -471,9 +518,12 @@ flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
 use bevy::prelude::*;
 use flatbt_bevy::prelude::*; // FlatBT's prelude plus the Bevy types
 
-/// What the tree reads: an aggregate view of the world for this agent.
+/// What the agent perceives, plus mutable working memory.
 #[derive(Component, Default)]
-struct Guard { ammo: u32, alarm: bool, reload_left: u32 }
+struct Guard { observed: Observed, reload_options_considered: u32 }
+
+#[derive(Default)]
+struct Observed { ammo: u32, alarm: bool, reload_left: u32, intruder: f32 }
 
 /// What it decides. An order to the world, not a change to it.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -482,8 +532,8 @@ enum Act { MarchingTo(f32), Firing, Reloading }
 fn guard_tree() -> impl BehaviorNode<Guard, Act> {
     select((
         guard(alarm_raised, action(FireAt)),
-        seq((check(|g: &Guard| g.ammo == 0), action(Reload))),
-        action(MarchTo { where_to: |g: &Guard| g.intruder }),
+        seq((check(|g: &Guard| g.observed.ammo == 0), action(Reload))),
+        action(MarchTo { where_to: |g: &Guard| g.observed.intruder }),
     ))
 }
 
@@ -537,10 +587,11 @@ good place to decide who gets it.
   is written in place with `set_if_neq`; only appearing and disappearing cost an
   insert or a remove, applied right after the tick. A warmed tick whose acts only
   change value allocates nothing and adds no sync point.
-- **Nodes never change the world.** An action starts something, the act appears,
-  a system does the work, and `is_in_progress` watches the world until it is
-  done. A node cannot issue `Commands`; a system that needs them has them where
-  it matches the act.
+- **Nodes reason from observations.** An action proposes an act, the tick
+  publishes the final one, and gameplay systems carry it out. Fresh observations
+  report the outcome to `is_in_progress`. Planning may update reasoning while
+  observed ammunition and position stay as gathered. Systems issuing gameplay
+  `Commands` do so when carrying out the final act.
 - **Stopping releases the act.** Removing the `Behavior`, by despawn or by
   swapping trees included, takes the act back in a removal hook:
 
@@ -549,11 +600,13 @@ good place to decide who gets it.
   commands.entity(guard).restart_behavior(guard_tree); // still an agent, back at the root
   ```
 
-  Removing the blackboard does not stop an agent: nothing ticks it, and it keeps
+  Removing the blackboard component does not stop an agent: nothing ticks it, and it keeps
   its last act.
-- **The blackboard is input.** The game fills it before `BehaviorSystems`, in as
-  many systems and at as many rates as it likes. Node writes to it bypass change
-  detection, so `Changed<Blackboard>` never sees them.
+- **The blackboard holds perception and working memory.** The game refreshes sensory
+  fields before `BehaviorSystems`, at its own rates, while preserving thoughts
+  the tree should remember. Node writes remain after rejected branches and
+  bypass change detection, so `Changed<Guard>` never sees them. Systems carrying
+  out the final act update gameplay state.
 - **The builder names the tree.** It is called once, at registration, into a
   resource; `Behavior::for_tree` only takes its type, so a closure's captures
   configure nothing at the agent. Vary a tree with a second builder function.
@@ -566,6 +619,10 @@ good place to decide who gets it.
 The reasoning behind each is in the crate docs: `cargo doc -p flatbt-bevy --open`.
 
 ### Ticking
+
+A failed `Resume` in `Behavior::tick` is followed by a fresh `Evaluate` in the
+same tick. The second pass sees the first pass's blackboard and memory writes; only
+the final act is published. A tick can therefore contain two tree passes.
 
 `BehaviorPlugin::for_tree(builder)` builds the tree and adds its tick when the
 app is built, so the tick is in place before any agent exists and any schedule
@@ -584,9 +641,10 @@ BehaviorPlugin::for_tree(guard_tree).tick_mode(|guard: &Guard, _| {
 })
 ```
 
-`Evaluate` is the default because it is the answer that cannot be wrong. The
-other two are optimisations that cost an agent responsiveness and never change
-what it does once it runs — a tree that breaks under one of them has a bug.
+`Evaluate` is the default: it reconsiders choices from the root. `Resume`
+follows the saved choice, and `Skip` leaves the invocation untouched. Choose
+the cadence the agent needs: different modes can visit different alternatives
+and retain different thoughts.
 
 `Skip` does not enter the tree at all and leaves both the suspended invocation
 and the standing act alone, so the systems carrying that act out keep seeing it.
@@ -771,7 +829,9 @@ node owns its children's state, initialization, fresh-entry Evaluate, and
 cleanup on completion or replacement. Any node may suspend without implementing
 `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 
-- Blackboard mutations and ticks take effect immediately, including on failed branches.
+- Blackboard and node-memory writes remain after failed or replaced branches and can
+  inform later choices. Only the root's final act is applied to the world by the
+  driver; action callbacks run while alternatives are considered.
 - `NodeResult::error` and `ControlOp::error` report a diagnostic and return Failure.
   Diagnostics go to stderr; `set_error_handler` sends them elsewhere. Without
   the `std` feature they are discarded.
@@ -883,14 +943,15 @@ cargo run --example resume
 
 | Example | Shows |
 | --- | --- |
+| [thinking](examples/thinking.rs) | Observe ammunition, reject a shot, apply the final act, observe the outcome |
 | [acts](examples/acts.rs) | What a tree decides, as an enum the driver matches |
 | [acts_dyn](examples/acts_dyn.rs) | The same, with the act as a trait object |
-| [synchronous](examples/synchronous.rs) | Composition and custom policy |
+| [synchronous](examples/synchronous.rs) | Internal reasoning with composition and a custom policy |
 | [resume](examples/resume.rs) | Wait across updates, then continue |
 | [revalidation](examples/revalidation.rs) | Preserve or preempt a saved branch |
 | [choose](examples/choose.rs) | Blackboard-driven and nested choice |
-| [action](examples/action.rs) | Inline lifecycle |
-| [external_action](examples/external_action.rs) | External work, 10 frames / 3 BT updates |
+| [action](examples/action.rs) | Inline lifecycle for planning work |
+| [external_action](examples/external_action.rs) | External planning, 10 worker frames / 3 BT updates |
 | [scoped_params](examples/scoped_params.rs) | Named local bindings |
 | [scoped_params_manual](examples/scoped_params_manual.rs) | Equivalent function API |
 

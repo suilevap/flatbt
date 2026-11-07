@@ -11,23 +11,23 @@ pub struct Focus<Lens, Child, Focused> {
 }
 
 /// Runs `child`, a tree over `Focused`, on the part of the blackboard `lens` selects,
-/// so one subtree serves several blackboards that contain a `Focused`.
+/// so one subtree serves several minds that contain a `Focused`.
 ///
 /// ```
 /// use flatbt::prelude::*;
 ///
-/// struct Legs { steps: u32 }
-/// struct Agent { legs: Legs }
+/// struct Navigation { attempts: u32 }
+/// struct Agent { navigation: Navigation }
 ///
-/// fn walk() -> impl BtNode<Legs> {
-///     leaf(|legs: &mut Legs| { legs.steps += 1; NodeResult::Success })
+/// fn remember_attempt() -> impl BtNode<Navigation> {
+///     leaf(|navigation: &mut Navigation| { navigation.attempts += 1; NodeResult::Success })
 /// }
 ///
-/// let tree = focus(|agent: &mut Agent| &mut agent.legs, walk());
+/// let tree = focus(|agent: &mut Agent| &mut agent.navigation, remember_attempt());
 /// let mut state: BtState<_, _> = BtState::new(&tree);
-/// let mut agent = Agent { legs: Legs { steps: 0 } };
+/// let mut agent = Agent { navigation: Navigation { attempts: 0 } };
 /// assert_eq!(update(&tree, &mut state, &mut agent, EntryMode::Evaluate), NodeResult::Success);
-/// assert_eq!(agent.legs.steps, 1);
+/// assert_eq!(agent.navigation.attempts, 1);
 /// ```
 pub fn focus<Blackboard, Focused, Lens, Child>(
     lens: Lens,

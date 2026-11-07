@@ -1,4 +1,8 @@
 //! Static child dispatch, control policies, and basic composition.
+//!
+//! Every builder follows [`crate::BtNode`]'s thinking and acting contract:
+//! branches retain changes to the blackboard and node memory; the driver applies
+//! the final act to the world.
 
 mod children;
 mod control;

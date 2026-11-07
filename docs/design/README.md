@@ -8,6 +8,7 @@ Code and tests define current behavior; historical proposals may differ.
 | Document | Scope |
 | --- | --- |
 | [Package layout](package-layout.md) | Two crates, and what goes in each |
+| [Thinking and acting](thinking-and-acting.md) | Mutable thinking, retained writes, and the final act applied by the driver |
 | [Static state](static-state.md) | State composition, dispatch, ownership |
 | [Tree and state](tree-state.md) | Diagram: graph, code, memory layout |
 | [Choice](choose.md) | Candidate identity and selection |

@@ -34,22 +34,33 @@ struct Alarm {
 
 // --- what a guard knows, and what it decides ---------------------------------
 
-/// An aggregate view of the world from one guard's point of view, filled by
-/// `gather`. The tree reads it and never writes it.
-#[derive(Component, Default, Debug)]
-struct Guard {
+/// Facts gathered from the world. Decisions read this snapshot.
+#[derive(Default, Debug)]
+struct Observed {
     name: &'static str,
     post: f32,
     ammo: u32,
     alarm: bool,
     intruder: f32,
     alarm_changed: bool,
-    /// How much of a reload the world still has to do. `refill` owns it.
+    /// Missing rounds at the last observation, derived from gameplay Ammo.
     reload_left: u32,
 }
 
+#[derive(Default, Debug)]
+struct Reasoning {
+    reload_options_considered: u32,
+}
+
+/// The guard's representation of the world, plus its own reasoning.
+#[derive(Component, Default, Debug)]
+struct Guard {
+    observed: Observed,
+    reasoning: Reasoning,
+}
+
 /// What a guard is doing. An order to the world, not a change to it -- and the
-/// only thing the tree puts back.
+/// only output that gameplay systems carry out.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 enum Act {
     MarchingTo(f32),
@@ -59,7 +70,8 @@ enum Act {
 
 fn gather(mut guards: Query<(&Name, &Post, &Ammo, &mut Guard)>, alarm: Res<Alarm>) {
     for (name, post, ammo, mut guard) in guards.iter_mut() {
-        *guard = Guard {
+        // Refresh world facts without erasing the guard's reasoning.
+        guard.observed = Observed {
             name: name.0,
             post: post.0,
             ammo: ammo.0,
@@ -73,13 +85,11 @@ fn gather(mut guards: Query<(&Name, &Post, &Ammo, &mut Guard)>, alarm: Res<Alarm
 
 /// Reconsider when the alarm moves; otherwise carry on with what was decided.
 ///
-/// Both non-`Evaluate` branches are optimisations: answering `Tick::Evaluate`
-/// every time is always correct and only makes guards quicker to change their
-/// minds. `Skip` pays off because a guard walking somewhere it already chose
-/// has nothing to decide until it arrives -- `march` is doing the walking, and
-/// the standing act is left in place for it.
+/// Gather still refreshes perception every tick. Resume follows the standing
+/// choice until a changed alarm asks for revalidation. Both modes read the
+/// observed facts and can retain reasoning from the branches they visit.
 fn pace(guard: &Guard, _: TickAt) -> Tick {
-    if guard.alarm_changed {
+    if guard.observed.alarm_changed {
         Tick::Evaluate
     } else {
         Tick::Resume
@@ -91,7 +101,8 @@ fn pace(guard: &Guard, _: TickAt) -> Tick {
 /// Signals a reload and waits for the world to finish it.
 ///
 /// The tree does not know how long a reload takes or how many rounds it puts
-/// back: it says `Reloading` and `refill` answers by working `reload_left` down.
+/// back: it says `Reloading`, `carry_out` changes Ammo, and the next gather
+/// refreshes observed `reload_left`.
 /// Every action here is that shape.
 struct Reload;
 
@@ -99,12 +110,13 @@ impl BtAction<Guard, Act> for Reload {
     type State = ();
 
     fn start(&self, guard: &mut Guard, _: ()) -> Option<()> {
-        println!("  {} starts reloading", guard.name);
+        guard.reasoning.reload_options_considered += 1;
+        println!("  {} considers reloading", guard.observed.name);
         Some(())
     }
 
     fn is_in_progress(&self, _: &(), guard: &Guard, _: ()) -> bool {
-        guard.reload_left > 0
+        guard.observed.reload_left > 0
     }
 
     fn tick(&self, _: &mut (), _: &mut Guard, _: ()) -> Act {
@@ -112,7 +124,7 @@ impl BtAction<Guard, Act> for Reload {
     }
 
     fn complete(&self, _: &mut (), guard: &mut Guard, _: ()) -> bool {
-        println!("  {} is loaded", guard.name);
+        println!("  {} observes a full magazine", guard.observed.name);
         true
     }
 }
@@ -150,7 +162,7 @@ impl BtAction<Guard, Act> for MarchTo {
     }
 
     fn is_in_progress(&self, _: &(), guard: &Guard, _: ()) -> bool {
-        ((self.where_to)(guard) - guard.post).abs() > 0.5
+        ((self.where_to)(guard) - guard.observed.post).abs() > 0.5
     }
 
     fn tick(&self, _: &mut (), guard: &mut Guard, _: ()) -> Act {
@@ -159,11 +171,11 @@ impl BtAction<Guard, Act> for MarchTo {
 }
 
 fn alarm_raised(guard: &Guard) -> bool {
-    guard.alarm
+    guard.observed.alarm
 }
 
 fn in_range(guard: &Guard) -> bool {
-    (guard.post - guard.intruder).abs() <= 1.0
+    (guard.observed.post - guard.observed.intruder).abs() <= 1.0
 }
 
 /// A subtree is a plain function returning a node, so it composes into any tree
@@ -173,7 +185,7 @@ fn in_range(guard: &Guard) -> bool {
 /// leaves range or the magazine runs dry.
 fn fire_at_intruder() -> impl BehaviorNode<Guard, Act> {
     guard(
-        |guard: &Guard| in_range(guard) && guard.ammo > 0,
+        |guard: &Guard| in_range(guard) && guard.observed.ammo > 0,
         action(FireAt),
     )
 }
@@ -185,17 +197,20 @@ fn guard_tree() -> impl BehaviorNode<Guard, Act> {
         // Shoot while the intruder is close and the magazine holds rounds.
         seq((check(alarm_raised), fire_at_intruder())),
         // Out of ammo: reload, and wait for the world to say it is done.
-        seq((check(|guard: &Guard| guard.ammo == 0), action(Reload))),
+        seq((
+            check(|guard: &Guard| guard.observed.ammo == 0),
+            action(Reload),
+        )),
         // Alarm but out of range: close in, following the intruder.
         seq((
             check(alarm_raised),
             action(MarchTo {
-                where_to: |guard: &Guard| guard.intruder,
+                where_to: |guard: &Guard| guard.observed.intruder,
             }),
         )),
         // Otherwise walk the beat.
         action(MarchTo {
-            where_to: |guard: &Guard| guard.post + 3.0,
+            where_to: |guard: &Guard| guard.observed.post + 3.0,
         }),
     ))
 }
@@ -279,14 +294,17 @@ fn main() {
     );
 
     // One tree, many agents: each carries only its own invocation state.
-    app.world_mut().spawn((
-        Name("Ada"),
-        Post(0.0),
-        Ammo(1),
-        Destination::default(),
-        Guard::default(),
-        Behavior::for_tree(guard_tree),
-    ));
+    let ada = app
+        .world_mut()
+        .spawn((
+            Name("Ada"),
+            Post(0.0),
+            Ammo(1),
+            Destination::default(),
+            Guard::default(),
+            Behavior::for_tree(guard_tree),
+        ))
+        .id();
     let brun = app
         .world_mut()
         .spawn((
@@ -315,4 +333,13 @@ fn main() {
         println!("tick {tick}");
         app.update();
     }
+    // Gather preserved the reasoning written by Reload::start on an earlier tick.
+    assert!(
+        app.world()
+            .get::<Guard>(ada)
+            .unwrap()
+            .reasoning
+            .reload_options_considered
+            > 0
+    );
 }

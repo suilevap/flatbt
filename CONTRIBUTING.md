@@ -37,3 +37,5 @@ and historical decisions. [Experiments](experiments/README.md) record archived
 implementations and how to inspect them.
 
 These documents support development; proposals do not define the public API.
+The [thinking and acting contract](docs/design/thinking-and-acting.md) records the execution
+semantics shared by all builders; keep their docs and examples consistent with it.
