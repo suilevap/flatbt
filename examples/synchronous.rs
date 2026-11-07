@@ -15,29 +15,29 @@ struct Agent {
 fn main() {
     let tree = select((
         seq((
-            check(|ctx: &Agent| ctx.enemy_visible && ctx.ammo >= 2),
-            leaf(|ctx: &mut Agent| {
-                ctx.trace.push("aim");
+            check(|bb: &Agent| bb.enemy_visible && bb.ammo >= 2),
+            leaf(|bb: &mut Agent| {
+                bb.trace.push("aim");
                 NodeResult::Success
             }),
             control(
                 Repeat(2),
-                (leaf(|ctx: &mut Agent| {
-                    ctx.ammo -= 1;
-                    ctx.trace.push("fire");
+                (leaf(|bb: &mut Agent| {
+                    bb.ammo -= 1;
+                    bb.trace.push("fire");
                     NodeResult::Success
                 }),),
             ),
         )),
         seq((
-            check(|ctx: &Agent| ctx.has_route),
-            leaf(|ctx: &mut Agent| {
-                ctx.trace.push("patrol");
+            check(|bb: &Agent| bb.has_route),
+            leaf(|bb: &mut Agent| {
+                bb.trace.push("patrol");
                 NodeResult::Success
             }),
         )),
-        leaf(|ctx: &mut Agent| {
-            ctx.trace.push("idle");
+        leaf(|bb: &mut Agent| {
+            bb.trace.push("idle");
             NodeResult::Success
         }),
     ));

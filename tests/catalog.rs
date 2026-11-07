@@ -446,10 +446,10 @@ fn one_constructor_takes_either_shape_under_the_same_binding() {
     let tree = scope! {
         let target: usize = |_: &mut Arena| 1;
         sequence {
-            // Context only: ignores the target it is handed.
+            // Blackboard only: ignores the target it is handed.
             guard(
                 |arena: &Arena| arena.alive.contains(&true),
-                // Context and target.
+                // Blackboard and target.
                 action_while(
                     |arena: &Arena, target: &usize| arena.alive[*target],
                     |_: &Arena| Act::Step,

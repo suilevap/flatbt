@@ -100,7 +100,7 @@ pub struct Bound<Node, Binding> {
     binding: Binding,
 }
 
-/// Binds local fields to node parameters on each update; context and state stay
+/// Binds local fields to node parameters on each update; blackboard and state stay
 /// unchanged. Missing inputs log a diagnostic and fail without calling the node.
 /// Output writes survive Failure. State cannot retain parameter borrows.
 pub fn bind<Node, Binding>(node: Node, binding: Binding) -> Bound<Node, Binding> {
@@ -117,23 +117,23 @@ pub trait WithParams: Sized {
 
 impl<Node> WithParams for Node {}
 
-impl<Context, Act, Locals: 'static, Node, Binding, NodeState, NodeMemory>
-    BtNode<Context, Act, &mut Locals> for Bound<Node, Binding>
+impl<Blackboard, Act, Locals: 'static, Node, Binding, NodeState, NodeMemory>
+    BtNode<Blackboard, Act, &mut Locals> for Bound<Node, Binding>
 where
     Binding: ParamBinding<Locals>,
-    Node: for<'a> BtNode<Context, Act, Binding::Params<'a>, State = NodeState, Memory = NodeMemory>,
+    Node: for<'a> BtNode<Blackboard, Act, Binding::Params<'a>, State = NodeState, Memory = NodeMemory>,
     NodeState: Default + Send + 'static,
     NodeMemory: Default + Send + 'static,
 {
     type State = NodeState;
     type Memory = NodeMemory;
-    const NODES: usize = <Node as BtNode<Context, Act, Binding::Params<'static>>>::NODES;
+    const NODES: usize = <Node as BtNode<Blackboard, Act, Binding::Params<'static>>>::NODES;
 
     fn update(
         &self,
         state: &mut NodeState,
         memory: &mut NodeMemory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         locals: &mut Locals,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
@@ -143,7 +143,7 @@ where
                 core::any::type_name::<Node>()
             ));
         };
-        self.node.update(state, memory, ctx, params, entry)
+        self.node.update(state, memory, bb, params, entry)
     }
 
     fn inspect(
@@ -152,33 +152,35 @@ where
         memory: &NodeMemory,
         inspector: &mut dyn Inspector,
     ) {
-        BtNode::<Context, Act, Binding::Params<'_>>::inspect(&self.node, state, memory, inspector);
+        BtNode::<Blackboard, Act, Binding::Params<'_>>::inspect(
+            &self.node, state, memory, inspector,
+        );
     }
 }
 
 /// In a scope's initializers, which receive the locals and the scope's
 /// parameters: binds over the locals and ignores the parameters.
-impl<'p, Context, Act, Locals: 'static, Params, Node, Binding, NodeState, NodeMemory>
-    BtNode<Context, Act, (&'p mut Locals, Params)> for Bound<Node, Binding>
+impl<'p, Blackboard, Act, Locals: 'static, Params, Node, Binding, NodeState, NodeMemory>
+    BtNode<Blackboard, Act, (&'p mut Locals, Params)> for Bound<Node, Binding>
 where
     Binding: ParamBinding<Locals>,
-    Node: for<'a> BtNode<Context, Act, Binding::Params<'a>, State = NodeState, Memory = NodeMemory>,
+    Node: for<'a> BtNode<Blackboard, Act, Binding::Params<'a>, State = NodeState, Memory = NodeMemory>,
     NodeState: Default + Send + 'static,
     NodeMemory: Default + Send + 'static,
 {
     type State = NodeState;
     type Memory = NodeMemory;
-    const NODES: usize = <Node as BtNode<Context, Act, Binding::Params<'static>>>::NODES;
+    const NODES: usize = <Node as BtNode<Blackboard, Act, Binding::Params<'static>>>::NODES;
 
     fn update(
         &self,
         state: &mut NodeState,
         memory: &mut NodeMemory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         (locals, _): (&'p mut Locals, Params),
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        BtNode::<Context, Act, &mut Locals>::update(self, state, memory, ctx, locals, entry)
+        BtNode::<Blackboard, Act, &mut Locals>::update(self, state, memory, bb, locals, entry)
     }
 
     fn inspect(
@@ -187,7 +189,9 @@ where
         memory: &NodeMemory,
         inspector: &mut dyn Inspector,
     ) {
-        BtNode::<Context, Act, Binding::Params<'_>>::inspect(&self.node, state, memory, inspector);
+        BtNode::<Blackboard, Act, Binding::Params<'_>>::inspect(
+            &self.node, state, memory, inspector,
+        );
     }
 }
 
@@ -198,7 +202,7 @@ pub fn no_params<Node>(node: Node) -> WithoutParams<Node> {
     WithoutParams(node)
 }
 
-impl<Context, Act, Params, Node: BtNode<Context, Act>> BtNode<Context, Act, Params>
+impl<Blackboard, Act, Params, Node: BtNode<Blackboard, Act>> BtNode<Blackboard, Act, Params>
     for WithoutParams<Node>
 {
     type State = Node::State;
@@ -209,11 +213,11 @@ impl<Context, Act, Params, Node: BtNode<Context, Act>> BtNode<Context, Act, Para
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         _: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        self.0.update(state, memory, ctx, (), entry)
+        self.0.update(state, memory, bb, (), entry)
     }
 
     fn inspect(

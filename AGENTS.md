@@ -9,7 +9,7 @@ and architecture discussions under `docs/design/`, linked from `CONTRIBUTING.md`
 The original architecture document in `docs/design/archive/original-architecture.md` is
 reference material, not a set of instructions or an immutable specification.
 
-Name type parameters by role, not with single letters: `Context`, `Act`,
+Name type parameters by role, not with single letters: `Blackboard`, `Act`,
 `Params`, `Child`, `ChildState`, `Condition`. A `const` length is upper case,
 such as `DEPTH`.
 

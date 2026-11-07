@@ -1,10 +1,10 @@
 use crate::{BtControl, ControlNode, ControlOp};
 
-/// Selects from shared context on Evaluate; forwards the child's result.
+/// Selects from shared blackboard on Evaluate; forwards the child's result.
 /// Resume follows the saved child.
 pub struct Choose<Chooser>(pub Chooser);
 
-impl<Context, Chooser: Fn(&Context) -> usize> BtControl<Context> for Choose<Chooser> {
+impl<Blackboard, Chooser: Fn(&Blackboard) -> usize> BtControl<Blackboard> for Choose<Chooser> {
     type State = ();
     type Memory = ();
 
@@ -16,18 +16,18 @@ impl<Context, Chooser: Fn(&Context) -> usize> BtControl<Context> for Choose<Choo
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         _: Option<usize>,
         _: usize,
     ) -> ControlOp {
-        ControlOp::RunChild((self.0)(ctx))
+        ControlOp::RunChild((self.0)(bb))
     }
 
     fn child_succeeded(
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -38,7 +38,7 @@ impl<Context, Chooser: Fn(&Context) -> usize> BtControl<Context> for Choose<Choo
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -49,7 +49,7 @@ impl<Context, Chooser: Fn(&Context) -> usize> BtControl<Context> for Choose<Choo
 /// Static choice node, built by [`crate::choose!`].
 pub type ChooseNode<Chooser, Children> = ControlNode<Choose<Chooser>, Children>;
 
-/// Matches shared context to select a statically typed node.
+/// Matches shared blackboard to select a statically typed node.
 ///
 /// ```
 /// use flatbt::{BtState, EntryMode, NodeResult, check, leaf, update};
@@ -68,34 +68,34 @@ pub type ChooseNode<Chooser, Children> = ControlNode<Choose<Chooser>, Children>;
 /// assert_eq!(value, 1);
 /// ```
 ///
-/// Arm definitions are built once, in order, without access to context or match
+/// Arm definitions are built once, in order, without access to blackboard or match
 /// bindings. Evaluate repeats patterns/guards; Resume follows the saved arm.
 /// Returns the chosen result without fallback. Each arm has distinct identity,
 /// even with the same node type; an or-pattern shares one arm.
 ///
 /// Nested choices use static tuple dispatch and inline state. No added heap
 /// allocation or type erasure. Limit: `FLATBT_MAX_CHILDREN` (default 32).
-/// Use `move |context: &Context| match ...` to own chooser captures.
+/// Use `move |blackboard: &Blackboard| match ...` to own chooser captures.
 #[macro_export]
 macro_rules! choose {
     ([$($indices:literal)*] $($args:tt)*) => {
         $crate::choose!(@arms [$($indices)*] $($args)*)
     };
-    (|$bb:ident: $context:ty| match $($tail:tt)+) => {
-        $crate::choose!(@match [] [$bb: $context] [] $($tail)+)
+    (|$bb:ident: $blackboard_type:ty| match $($tail:tt)+) => {
+        $crate::choose!(@match [] [$bb: $blackboard_type] [] $($tail)+)
     };
-    (move |$bb:ident: $context:ty| match $($tail:tt)+) => {
-        $crate::choose!(@match [move] [$bb: $context] [] $($tail)+)
+    (move |$bb:ident: $blackboard_type:ty| match $($tail:tt)+) => {
+        $crate::choose!(@match [move] [$bb: $blackboard_type] [] $($tail)+)
     };
     // The final brace group contains match arms; earlier tokens form the scrutinee.
-    (@match [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]
+    (@match [$($capture:tt)*] [$bb:ident: $blackboard_type:ty] [$($value:tt)+]
         { $($arms:tt)* } $(,)?) => {
-        $crate::choose!(@parse [[$($capture)*] [$bb: $context] [$($value)+]]
+        $crate::choose!(@parse [[$($capture)*] [$bb: $blackboard_type] [$($value)+]]
             [] ; $($arms)*)
     };
-    (@match [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)*]
+    (@match [$($capture:tt)*] [$bb:ident: $blackboard_type:ty] [$($value:tt)*]
         $next:tt $($tail:tt)*) => {
-        $crate::choose!(@match [$($capture)*] [$bb: $context]
+        $crate::choose!(@match [$($capture)*] [$bb: $blackboard_type]
             [$($value)* $next] $($tail)*)
     };
     // Block arms may omit commas.
@@ -113,21 +113,21 @@ macro_rules! choose {
         $crate::__flatbt_child_indices!([$crate::choose]; $($setup)* [] [] ; $($arms)*)
     };
     (@arms [$index:literal $($indices:literal)*]
-        [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]
+        [$($capture:tt)*] [$bb:ident: $blackboard_type:ty] [$($value:tt)+]
         [$($nodes:tt)*] [$($selection:tt)*] ;
         [$pattern:pat $(if $guard:expr)?] [$node:expr] $($rest:tt)*) => {
         $crate::choose!(@arms [$($indices)*]
-            [$($capture)*] [$bb: $context] [$($value)+]
+            [$($capture)*] [$bb: $blackboard_type] [$($value)+]
             [$($nodes)* $crate::inspect::label(stringify!($pattern $(if $guard)?), $node),]
             [$($selection)* $pattern $(if $guard)? => $index,]
             ; $($rest)*
         )
     };
     (@arms [$($indices:literal)*]
-        [$($capture:tt)*] [$bb:ident: $context:ty] [$($value:tt)+]
+        [$($capture:tt)*] [$bb:ident: $blackboard_type:ty] [$($value:tt)+]
         [$($nodes:tt)*] [$($selection:tt)*] ;) => {
         $crate::control(
-            $crate::Choose($($capture)* |$bb: $context| match $($value)+ { $($selection)* }),
+            $crate::Choose($($capture)* |$bb: $blackboard_type| match $($value)+ { $($selection)* }),
             ($($nodes)*),
         )
     };

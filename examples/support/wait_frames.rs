@@ -9,7 +9,7 @@ pub fn wait_frames(frames: usize) -> WaitFrames {
     WaitFrames(frames)
 }
 
-impl<C> BtNode<C> for WaitFrames {
+impl<Blackboard> BtNode<Blackboard> for WaitFrames {
     type State = usize;
     type Memory = ();
 
@@ -17,7 +17,7 @@ impl<C> BtNode<C> for WaitFrames {
         &self,
         elapsed: &mut usize,
         _: &mut (),
-        _: &mut C,
+        _: &mut Blackboard,
         _: (),
         _: Entry<'_>,
     ) -> NodeResult {

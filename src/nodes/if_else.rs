@@ -29,7 +29,7 @@ pub fn if_else<Condition, Then, Otherwise>(
     control(IfElse(condition), (then, otherwise))
 }
 
-impl<Context, Condition: Fn(&Context) -> bool> BtControl<Context> for IfElse<Condition> {
+impl<Blackboard, Condition: Fn(&Blackboard) -> bool> BtControl<Blackboard> for IfElse<Condition> {
     type State = ();
     type Memory = ();
 
@@ -48,11 +48,11 @@ impl<Context, Condition: Fn(&Context) -> bool> BtControl<Context> for IfElse<Con
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         _: Option<usize>,
         _: usize,
     ) -> ControlOp {
-        ControlOp::RunChild(if (self.0)(ctx) { 0 } else { 1 })
+        ControlOp::RunChild(if (self.0)(bb) { 0 } else { 1 })
     }
 
     #[inline]
@@ -60,7 +60,7 @@ impl<Context, Condition: Fn(&Context) -> bool> BtControl<Context> for IfElse<Con
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {
@@ -72,7 +72,7 @@ impl<Context, Condition: Fn(&Context) -> bool> BtControl<Context> for IfElse<Con
         &self,
         _: &mut (),
         _: &mut (),
-        _: &mut Context,
+        _: &mut Blackboard,
         _: usize,
         _: usize,
     ) -> ControlOp {

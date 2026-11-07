@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::mpsc;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context as TaskContext, Poll, Waker};
 use std::time::{Duration, Instant};
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
@@ -11,7 +11,7 @@ use flatbt_bevy::prelude::*;
 
 /// Polls once without blocking.
 fn poll<T: Unpin>(promise: &mut Promise<T>) -> Option<T> {
-    match Pin::new(promise).poll(&mut Context::from_waker(Waker::noop())) {
+    match Pin::new(promise).poll(&mut TaskContext::from_waker(Waker::noop())) {
         Poll::Ready(answer) => Some(answer),
         Poll::Pending => None,
     }
@@ -53,32 +53,32 @@ fn background_never_blocks_the_caller() {
 #[test]
 fn a_tree_waits_the_same_on_every_runner() {
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
-    struct Mind {
+    struct Blackboard {
         runner: Runner,
     }
     let tree = scope! {
-        let input: u32 = |_: &mut Mind| 21;
+        let input: u32 = |_: &mut Blackboard| 21;
         let doubled: u32;
         sequence {
             await_future(
-                |mind: &mut Mind, input: &u32| {
+                |bb: &mut Blackboard, input: &u32| {
                     let input = *input;
-                    Some(mind.runner.run(move || Some(input * 2)))
+                    Some(bb.runner.run(move || Some(input * 2)))
                 },
-                |_: &Mind| 0,
+                |_: &Blackboard| 0,
             )
             .with(input, out doubled);
-            leaf_with(|_: &mut Mind, doubled: &u32| NodeResult::Running(*doubled))
+            leaf_with(|_: &mut Blackboard, doubled: &u32| NodeResult::Running(*doubled))
                 .with(doubled);
         }
     };
     for runner in [Runner::Inline, Runner::Background] {
         let mut state = BtState::new(&tree);
-        let mut mind = Mind { runner };
+        let mut bb = Blackboard { runner };
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut waited = 0;
         loop {
-            match update(&tree, &mut state, &mut mind, EntryMode::Resume) {
+            match update(&tree, &mut state, &mut bb, EntryMode::Resume) {
                 NodeResult::Running(0) => waited += 1,
                 result => {
                     assert_eq!(result, NodeResult::Running(42), "{runner:?}");

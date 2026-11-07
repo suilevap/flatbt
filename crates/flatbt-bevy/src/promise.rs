@@ -9,33 +9,33 @@
 //! ```
 //! use flatbt_bevy::prelude::*;
 //!
-//! struct Mind { runner: Runner, from: u32 }
+//! struct Blackboard { runner: Runner, from: u32 }
 //!
 //! fn plan(from: u32, to: u32) -> Option<u32> {
 //!     (to >= from).then(|| to - from)
 //! }
 //!
 //! let tree = scope! {
-//!     let goal: u32 = |_: &mut Mind| 7;
+//!     let goal: u32 = |_: &mut Blackboard| 7;
 //!     let steps: u32;
 //!     sequence {
 //!         await_future(
-//!             |mind: &mut Mind, goal: &u32| {
-//!                 let (from, to) = (mind.from, *goal);
-//!                 Some(mind.runner.run(move || plan(from, to)))
+//!             |bb: &mut Blackboard, goal: &u32| {
+//!                 let (from, to) = (bb.from, *goal);
+//!                 Some(bb.runner.run(move || plan(from, to)))
 //!             },
-//!             |_: &Mind| "thinking",
+//!             |_: &Blackboard| "thinking",
 //!         )
 //!         .with(goal, out steps);
-//!         leaf_with(|_: &mut Mind, steps: &u32| NodeResult::Running(if *steps == 5 { "walking" } else { "lost" }))
+//!         leaf_with(|_: &mut Blackboard, steps: &u32| NodeResult::Running(if *steps == 5 { "walking" } else { "lost" }))
 //!             .with(steps);
 //!     }
 //! };
 //! let mut state = BtState::new(&tree);
 //! // Inline: answered at once and passed on in the same update. With
 //! // `Runner::Background` the tree reports "thinking" until the plan lands.
-//! let mut mind = Mind { runner: Runner::Inline, from: 2 };
-//! assert_eq!(update(&tree, &mut state, &mut mind, EntryMode::Resume), NodeResult::Running("walking"));
+//! let mut bb = Blackboard { runner: Runner::Inline, from: 2 };
+//! assert_eq!(update(&tree, &mut state, &mut bb, EntryMode::Resume), NodeResult::Running("walking"));
 //! ```
 //!
 //! Dropping a promise drops its work's answer; a background task is
@@ -43,7 +43,7 @@
 
 use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll};
+use core::task::{Context as TaskContext, Poll};
 
 use bevy_tasks::{AsyncComputeTaskPool, Task};
 
@@ -92,7 +92,7 @@ impl<T> Promise<T> {
 impl<T: Unpin> Future for Promise<T> {
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<T> {
         match &mut self.get_mut().0 {
             State::Ready(value) => match value.take() {
                 Some(value) => Poll::Ready(value),

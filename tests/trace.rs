@@ -165,11 +165,11 @@ impl<C, A, N: BtNode<C, A>> BtNode<C, A> for PassThrough<N> {
         &self,
         state: &mut N::State,
         memory: &mut N::Memory,
-        ctx: &mut C,
+        bb: &mut C,
         _: (),
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        self.0.update(state, memory, ctx, (), entry)
+        self.0.update(state, memory, bb, (), entry)
     }
 }
 
@@ -185,11 +185,11 @@ impl<C, A, N: BtNode<C, A>> BtNode<C, A> for Wrapped<N> {
         &self,
         state: &mut N::State,
         memory: &mut N::Memory,
-        ctx: &mut C,
+        bb: &mut C,
         _: (),
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        entry.run(1, &self.0, state, memory, ctx, ())
+        entry.run(1, &self.0, state, memory, bb, ())
     }
 
     fn inspect(&self, state: Option<&N::State>, memory: &N::Memory, inspector: &mut dyn Inspector) {

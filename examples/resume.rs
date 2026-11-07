@@ -13,13 +13,13 @@ struct Agent {
 
 fn main() {
     let tree = seq((
-        leaf(|ctx: &mut Agent| {
-            ctx.checks += 1;
+        leaf(|bb: &mut Agent| {
+            bb.checks += 1;
             NodeResult::Success
         }),
         wait_frames(3),
-        leaf(|ctx: &mut Agent| {
-            ctx.shots += 1;
+        leaf(|bb: &mut Agent| {
+            bb.shots += 1;
             NodeResult::Success
         }),
     ));

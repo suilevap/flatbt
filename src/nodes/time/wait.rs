@@ -15,7 +15,7 @@ pub struct ActionWait<Span, MakeAct, Reads> {
 /// Reports `act` until `span` has passed since this node started, then
 /// succeeds. A zero span succeeds at once.
 ///
-/// `act` is `Fn(&Context)` or `Fn(&Context, Params)`, as for
+/// `act` is `Fn(&Blackboard)` or `Fn(&Blackboard, Params)`, as for
 /// [`action_while`](crate::action_while), and is asked on every update.
 ///
 /// ```
@@ -46,37 +46,37 @@ pub fn action_wait<Span, MakeAct, Reads>(
     }
 }
 
-impl<Context, Act, Params, MakeAct, Reads> BtNode<Context, Act, Params>
-    for ActionWait<Context::Duration, MakeAct, Reads>
+impl<Blackboard, Act, Params, MakeAct, Reads> BtNode<Blackboard, Act, Params>
+    for ActionWait<Blackboard::Duration, MakeAct, Reads>
 where
-    Context: BtClock,
+    Blackboard: BtClock,
     Params: ParamValue,
-    MakeAct: ReadFn<Context, Params, Act, Reads>,
+    MakeAct: ReadFn<Blackboard, Params, Act, Reads>,
 {
     /// When this node started.
-    type State = Option<Context::Instant>;
+    type State = Option<Blackboard::Instant>;
     type Memory = ();
 
     #[inline]
     fn update(
         &self,
-        started: &mut Option<Context::Instant>,
+        started: &mut Option<Blackboard::Instant>,
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         _: Entry<'_>,
     ) -> NodeResult<Act> {
-        let started = *started.get_or_insert_with(|| ctx.now());
-        if elapsed(ctx, started, self.span) {
+        let started = *started.get_or_insert_with(|| bb.now());
+        if elapsed(bb, started, self.span) {
             NodeResult::Success
         } else {
-            NodeResult::Running(self.act.call(ctx, params.into_value()))
+            NodeResult::Running(self.act.call(bb, params.into_value()))
         }
     }
 
     fn inspect(
         &self,
-        started: Option<&Option<Context::Instant>>,
+        started: Option<&Option<Blackboard::Instant>>,
         _: &(),
         inspector: &mut dyn Inspector,
     ) {

@@ -48,7 +48,7 @@ const MAX_CHILDREN: usize = 64;
 ///
 /// `State` lives as long as the invocation and survives `Evaluate`; `Memory`
 /// lives as long as the agent (see [`BtNode::Memory`](crate::BtNode::Memory)).
-pub trait BtOrder<Context> {
+pub trait BtOrder<Blackboard> {
     type State: Default + Send + 'static;
     type Memory: Default + Send + 'static;
 
@@ -63,7 +63,7 @@ pub trait BtOrder<Context> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize>;
@@ -184,12 +184,12 @@ fn unsupported(position: usize, at: Option<usize>) {
     ));
 }
 
-impl<Context, Act, Shape, Order, Children> BtChildren<Context, Act, Shape>
+impl<Blackboard, Act, Shape, Order, Children> BtChildren<Blackboard, Act, Shape>
     for Ordered<Order, Children>
 where
     Shape: ParamShape,
-    Order: BtOrder<Context>,
-    Children: BtChildren<Context, Act, Shape>,
+    Order: BtOrder<Blackboard>,
+    Children: BtChildren<Blackboard, Act, Shape>,
 {
     type State = OrderedState<Order::State, Children::State>;
     type Memory = OrderedMemory<Order::Memory, Children::Memory>;
@@ -209,10 +209,10 @@ where
         state: &mut Self::State,
         memory: &mut Self::Memory,
         first: usize,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: &mut Shape::Value<'_>,
         entry: Entry<'_>,
-        next: &mut impl FnMut(&mut Context, usize, bool) -> ControlOp,
+        next: &mut impl FnMut(&mut Blackboard, usize, bool) -> ControlOp,
     ) -> Result<NodeResult<Act>, ControlOp> {
         // The child count is static, so too many is a build error, not a check
         // on every update.
@@ -224,12 +224,12 @@ where
         };
         let mut position = first;
         loop {
-            let succeeded = match self.child_at(state, &mut memory.order, position, ctx, entry) {
+            let succeeded = match self.child_at(state, &mut memory.order, position, bb, entry) {
                 Ok(Some(child)) => {
                     // One child at a time: the order, not the tuple, decides
                     // which child the next position holds.
                     let mut ended = false;
-                    let mut stop = |_: &mut Context, _: usize, succeeded: bool| {
+                    let mut stop = |_: &mut Blackboard, _: usize, succeeded: bool| {
                         ended = succeeded;
                         ControlOp::Failure
                     };
@@ -237,7 +237,7 @@ where
                         &mut state.children,
                         &mut memory.children,
                         child as usize,
-                        ctx,
+                        bb,
                         params,
                         entry,
                         &mut stop,
@@ -250,7 +250,7 @@ where
                 // control sees a Failure there.
                 Ok(None) | Err(()) => false,
             };
-            match next(ctx, position, succeeded) {
+            match next(bb, position, succeeded) {
                 ControlOp::RunChild(following) if following == position + 1 => position = following,
                 op => return Err(op),
             }
@@ -265,9 +265,9 @@ where
     ) {
         inspector.field(
             "order",
-            &format_args!("{}", BtOrder::<Context>::kind(&self.order)),
+            &format_args!("{}", BtOrder::<Blackboard>::kind(&self.order)),
         );
-        BtOrder::<Context>::inspect(
+        BtOrder::<Blackboard>::inspect(
             &self.order,
             state.map(|state| &state.order),
             &memory.order,
@@ -308,24 +308,26 @@ impl<Order, Children> Ordered<Order, Children> {
     /// The child at `position`, picking it if the pass has moved on. `Err`
     /// after reporting a position out of order.
     #[inline]
-    fn child_at<Context, Act, Shape>(
+    fn child_at<Blackboard, Act, Shape>(
         &self,
         state: &mut OrderedState<Order::State, Children::State>,
         memory: &mut Order::Memory,
         position: usize,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         entry: Entry<'_>,
     ) -> Result<Option<u8>, ()>
     where
         Shape: ParamShape,
-        Order: BtOrder<Context>,
-        Children: BtChildren<Context, Act, Shape>,
+        Order: BtOrder<Blackboard>,
+        Children: BtChildren<Blackboard, Act, Shape>,
     {
         Ok(match state.at {
             // A new pass: on entry, or Evaluate back at the start.
-            None if position == 0 => self.pick::<Context, Act, Shape>(state, memory, ctx, 0, entry),
+            None if position == 0 => {
+                self.pick::<Blackboard, Act, Shape>(state, memory, bb, 0, entry)
+            }
             _ if position == 0 && entry.mode() == EntryMode::Evaluate => {
-                self.pick::<Context, Act, Shape>(state, memory, ctx, 0, entry)
+                self.pick::<Blackboard, Act, Shape>(state, memory, bb, 0, entry)
             }
             // The same position again: Resume, or Evaluate continuing it.
             Some((at, child)) if at as usize == position => child,
@@ -334,7 +336,7 @@ impl<Order, Children> Ordered<Order, Children> {
                 if let Some(child) = child {
                     state.used |= 1 << child;
                 }
-                self.pick::<Context, Act, Shape>(state, memory, ctx, position, entry)
+                self.pick::<Blackboard, Act, Shape>(state, memory, bb, position, entry)
             }
             _ => {
                 // A misuse by a custom control: logged, not traced, so this
@@ -347,18 +349,18 @@ impl<Order, Children> Ordered<Order, Children> {
 
     /// Asks the order for the child at `position` and records it.
     #[inline]
-    fn pick<Context, Act, Shape>(
+    fn pick<Blackboard, Act, Shape>(
         &self,
         state: &mut OrderedState<Order::State, Children::State>,
         memory: &mut Order::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         position: usize,
         entry: Entry<'_>,
     ) -> Option<u8>
     where
         Shape: ParamShape,
-        Order: BtOrder<Context>,
-        Children: BtChildren<Context, Act, Shape>,
+        Order: BtOrder<Blackboard>,
+        Children: BtChildren<Blackboard, Act, Shape>,
     {
         if position == 0 {
             state.used = 0;
@@ -370,7 +372,7 @@ impl<Order, Children> Ordered<Order, Children> {
         };
         let child = self
             .order
-            .next(&mut state.order, memory, ctx, pass, entry)
+            .next(&mut state.order, memory, bb, pass, entry)
             .filter(|child| pass.is_left(*child))
             .map(|child| child as u8);
         if let Some(child) = child {

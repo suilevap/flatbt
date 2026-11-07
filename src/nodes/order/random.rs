@@ -1,4 +1,4 @@
-//! Random orders. All randomness comes from the context, `rng: Fn(&mut C) ->
+//! Random orders. All randomness comes from the blackboard, `rng: Fn(&mut C) ->
 //! u32`, one draw per position: the game owns the generator, and tests stay
 //! deterministic.
 //!
@@ -36,7 +36,7 @@ pub fn shuffled<Rng>(rng: Rng) -> Shuffled<Rng> {
     Shuffled(rng)
 }
 
-impl<Context, Rng: Fn(&mut Context) -> u32> BtOrder<Context> for Shuffled<Rng> {
+impl<Blackboard, Rng: Fn(&mut Blackboard) -> u32> BtOrder<Blackboard> for Shuffled<Rng> {
     type State = ();
     type Memory = ();
 
@@ -49,7 +49,7 @@ impl<Context, Rng: Fn(&mut Context) -> u32> BtOrder<Context> for Shuffled<Rng> {
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         pass: Pass,
         _: Entry<'_>,
     ) -> Option<usize> {
@@ -61,7 +61,7 @@ impl<Context, Rng: Fn(&mut Context) -> u32> BtOrder<Context> for Shuffled<Rng> {
             return None;
         }
         // Modulo bias is below 64 / 2^32: negligible for choosing behavior.
-        let nth = (self.0)(ctx) as usize % left;
+        let nth = (self.0)(bb) as usize % left;
         pass.left().nth(nth)
     }
 }
@@ -73,7 +73,7 @@ pub struct Weighted<Rng, Weight> {
 }
 
 /// Orders children at random, drawing each position with probability
-/// proportional to `weight(ctx, index)` among the children left. A weight
+/// proportional to `weight(bb, index)` among the children left. A weight
 /// that is not positive, NaN included, leaves its child out.
 ///
 /// One draw from `rng` per position, like [`shuffled`]; the weights are read
@@ -82,10 +82,10 @@ pub fn weighted<Rng, Weight>(rng: Rng, weight: Weight) -> Weighted<Rng, Weight> 
     Weighted { rng, weight }
 }
 
-impl<Context, Rng, Weight> BtOrder<Context> for Weighted<Rng, Weight>
+impl<Blackboard, Rng, Weight> BtOrder<Blackboard> for Weighted<Rng, Weight>
 where
-    Rng: Fn(&mut Context) -> u32,
-    Weight: Fn(&Context, usize) -> f32,
+    Rng: Fn(&mut Blackboard) -> u32,
+    Weight: Fn(&Blackboard, usize) -> f32,
 {
     type State = ();
     type Memory = ();
@@ -99,22 +99,22 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         pass: Pass,
         entry: Entry<'_>,
     ) -> Option<usize> {
         if pass.is_start() && pass.running().is_some() {
             return pass.running();
         }
-        let weight = |ctx: &Context, index: usize| {
-            let weight = (self.weight)(ctx, index);
+        let weight = |bb: &Blackboard, index: usize| {
+            let weight = (self.weight)(bb, index);
             // `> 0.0` is false for NaN too.
             if weight > 0.0 { weight } else { 0.0 }
         };
         let total: f32 = pass
             .left()
             .map(|index| {
-                let weight = weight(ctx, index);
+                let weight = weight(bb, index);
                 // Every child is weighed at the first position; record them there.
                 if pass.is_start() {
                     entry.record("weight", || weight);
@@ -125,11 +125,11 @@ where
         if total <= 0.0 || !total.is_finite() {
             return None;
         }
-        let draw = (self.rng)(ctx) as f32 / (u32::MAX as f32 + 1.0) * total;
+        let draw = (self.rng)(bb) as f32 / (u32::MAX as f32 + 1.0) * total;
         let mut last = None;
         let mut sum = 0.0;
         for index in pass.left() {
-            let weight = weight(ctx, index);
+            let weight = weight(bb, index);
             if weight == 0.0 {
                 continue;
             }

@@ -12,11 +12,11 @@ impl<C, N: BtNode<C>> BtNode<C> for Reject<N> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut C,
+        bb: &mut C,
         _: (),
         entry: Entry<'_>,
     ) -> NodeResult {
-        let _ = self.0.update(state, memory, ctx, (), entry);
+        let _ = self.0.update(state, memory, bb, (), entry);
         NodeResult::Failure
     }
 }

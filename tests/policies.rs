@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use flatbt::prelude::*;
 
 #[derive(Default)]
-struct Ctx {
+struct Blackboard {
     ran: Vec<&'static str>,
     fail: Vec<&'static str>,
     flag: bool,
@@ -12,7 +12,7 @@ struct Ctx {
 
 /// Records its name; fails if listed in `fail`, otherwise runs one update and
 /// succeeds. Dropped before completing, it records a cancellation.
-fn task(name: &'static str) -> impl BtNode<Ctx, &'static str> {
+fn task(name: &'static str) -> impl BtNode<Blackboard, &'static str> {
     action(Task(name))
 }
 
@@ -33,37 +33,37 @@ impl Drop for Running {
     }
 }
 
-impl BtAction<Ctx, &'static str> for Task {
+impl BtAction<Blackboard, &'static str> for Task {
     type State = Running;
 
-    fn start(&self, ctx: &mut Ctx, _: ()) -> Option<Running> {
-        ctx.ran.push(self.0);
-        (!ctx.fail.contains(&self.0)).then(|| Running {
+    fn start(&self, bb: &mut Blackboard, _: ()) -> Option<Running> {
+        bb.ran.push(self.0);
+        (!bb.fail.contains(&self.0)).then(|| Running {
             name: self.0,
             ticked: false,
             done: false,
-            cancelled: ctx.cancelled.clone(),
+            cancelled: bb.cancelled.clone(),
         })
     }
 
-    fn is_in_progress(&self, state: &Running, _: &Ctx, _: ()) -> bool {
+    fn is_in_progress(&self, state: &Running, _: &Blackboard, _: ()) -> bool {
         !state.ticked
     }
 
-    fn tick(&self, state: &mut Running, _: &mut Ctx, _: ()) -> &'static str {
+    fn tick(&self, state: &mut Running, _: &mut Blackboard, _: ()) -> &'static str {
         state.ticked = true;
         self.0
     }
 
-    fn complete(&self, state: &mut Running, _: &mut Ctx, _: ()) -> bool {
+    fn complete(&self, state: &mut Running, _: &mut Blackboard, _: ()) -> bool {
         state.done = true;
         true
     }
 }
 
-fn instant(name: &'static str, succeeds: bool) -> impl BtNode<Ctx, &'static str> {
-    leaf(move |ctx: &mut Ctx| {
-        ctx.ran.push(name);
+fn instant(name: &'static str, succeeds: bool) -> impl BtNode<Blackboard, &'static str> {
+    leaf(move |bb: &mut Blackboard| {
+        bb.ran.push(name);
         if succeeds {
             NodeResult::Success
         } else {
@@ -76,44 +76,44 @@ fn instant(name: &'static str, succeeds: bool) -> impl BtNode<Ctx, &'static str>
 fn repeat_and_retry_count_within_an_invocation() {
     let tree = repeat(3, task("a"));
     let mut state = BtState::new(&tree);
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
     let mut updates = 0;
-    while update(&tree, &mut state, &mut ctx, EntryMode::Resume).is_running() {
+    while update(&tree, &mut state, &mut bb, EntryMode::Resume).is_running() {
         updates += 1;
     }
-    assert_eq!((updates, ctx.ran.len()), (3, 3));
+    assert_eq!((updates, bb.ran.len()), (3, 3));
 
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
     let tree = retry(3, instant("a", false));
     let mut state = BtState::new(&tree);
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         NodeResult::Failure
     );
-    assert_eq!(ctx.ran.len(), 3);
+    assert_eq!(bb.ran.len(), 3);
 
     let tree = repeat(0, instant("never", true));
     let mut state = BtState::new(&tree);
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         NodeResult::Success
     );
     let tree = retry(0, instant("never", true));
     let mut state = BtState::new(&tree);
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         NodeResult::Failure
     );
-    assert!(!ctx.ran.contains(&"never"));
+    assert!(!bb.ran.contains(&"never"));
 }
 
 #[test]
 fn retry_stops_at_the_first_success() {
     let tree = retry(
         5,
-        leaf(|ctx: &mut Ctx| {
-            ctx.ran.push("try");
-            if ctx.ran.len() == 2 {
+        leaf(|bb: &mut Blackboard| {
+            bb.ran.push("try");
+            if bb.ran.len() == 2 {
                 NodeResult::<&'static str>::Success
             } else {
                 NodeResult::Failure
@@ -121,44 +121,44 @@ fn retry_stops_at_the_first_success() {
         }),
     );
     let mut state = BtState::new(&tree);
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         NodeResult::Success
     );
-    assert_eq!(ctx.ran.len(), 2);
+    assert_eq!(bb.ran.len(), 2);
 }
 
 #[test]
 fn if_else_switches_branch_on_evaluate_only() {
-    let tree = if_else(|ctx: &Ctx| ctx.flag, task("then"), task("else"));
+    let tree = if_else(|bb: &Blackboard| bb.flag, task("then"), task("else"));
     let mut state = BtState::new(&tree);
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
 
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate).act(),
         Some("else")
     );
-    ctx.flag = true;
+    bb.flag = true;
     let mut resumed = BtState::new(&tree);
     assert_eq!(
-        update(&tree, &mut resumed, &mut ctx, EntryMode::Evaluate).act(),
+        update(&tree, &mut resumed, &mut bb, EntryMode::Evaluate).act(),
         Some("then")
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate).act(),
         Some("then")
     );
-    assert_eq!(*ctx.cancelled.lock().unwrap(), ["else"]);
+    assert_eq!(*bb.cancelled.lock().unwrap(), ["else"]);
 }
 
 #[test]
 fn invert_and_force_map_terminal_results_only() {
-    fn run(tree: &impl BtNode<Ctx, &'static str>) -> NodeResult<&'static str> {
+    fn run(tree: &impl BtNode<Blackboard, &'static str>) -> NodeResult<&'static str> {
         update(
             tree,
             &mut BtState::new(tree),
-            &mut Ctx::default(),
+            &mut Blackboard::default(),
             EntryMode::Evaluate,
         )
     }
@@ -172,13 +172,13 @@ fn invert_and_force_map_terminal_results_only() {
 
     let tree = force_failure(task("a"));
     let mut state = BtState::new(&tree);
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate).act(),
         Some("a")
     );
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&tree, &mut state, &mut bb, EntryMode::Evaluate),
         NodeResult::Failure
     );
 }
@@ -186,20 +186,20 @@ fn invert_and_force_map_terminal_results_only() {
 #[test]
 fn reevaluate_when_lets_a_subtree_reconsider_under_resume() {
     let pick = select((
-        seq((check(|ctx: &Ctx| ctx.flag), task("urgent"))),
-        action_while(|_: &Ctx| true, |_: &Ctx| "idle"),
+        seq((check(|bb: &Blackboard| bb.flag), task("urgent"))),
+        action_while(|_: &Blackboard| true, |_: &Blackboard| "idle"),
     ));
-    let tree = reevaluate_when(|ctx: &Ctx| ctx.flag, pick);
+    let tree = reevaluate_when(|bb: &Blackboard| bb.flag, pick);
     let mut state = BtState::new(&tree);
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
 
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume).act(),
         Some("idle")
     );
-    ctx.flag = true;
+    bb.flag = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume).act(),
         Some("urgent")
     );
 }
@@ -207,20 +207,20 @@ fn reevaluate_when_lets_a_subtree_reconsider_under_resume() {
 #[test]
 fn reevaluate_when_passes_resume_through_when_its_condition_is_false() {
     let pick = select((
-        seq((check(|ctx: &Ctx| ctx.flag), task("urgent"))),
-        action_while(|_: &Ctx| true, |_: &Ctx| "idle"),
+        seq((check(|bb: &Blackboard| bb.flag), task("urgent"))),
+        action_while(|_: &Blackboard| true, |_: &Blackboard| "idle"),
     ));
-    let tree = reevaluate_when(|_: &Ctx| false, pick);
+    let tree = reevaluate_when(|_: &Blackboard| false, pick);
     let mut state = BtState::new(&tree);
-    let mut ctx = Ctx::default();
+    let mut bb = Blackboard::default();
 
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume).act(),
         Some("idle")
     );
-    ctx.flag = true;
+    bb.flag = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume).act(),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume).act(),
         Some("idle")
     );
 }

@@ -133,7 +133,7 @@ impl TraceLog {
     }
 
     /// An entry for a driver that records the update into this log:
-    /// `update(&tree, &mut state, &mut ctx, log.entry(EntryMode::Evaluate))`.
+    /// `update(&tree, &mut state, &mut bb, log.entry(EntryMode::Evaluate))`.
     /// Each update clears the log first, so it holds the last one. Unless
     /// [`ENABLED`], the entry is the mode alone.
     pub fn entry(&self, mode: EntryMode) -> Entry<'_> {
@@ -492,33 +492,35 @@ mod imp {
 /// marks a node that failed while none of the children it entered did.
 ///
 /// `{}` writes the nodes still running on one line, root first.
-pub struct Trace<'a, Node: BtNode<Context, Act>, Context, Act = ()> {
+pub struct Trace<'a, Node: BtNode<Blackboard, Act>, Blackboard, Act = ()> {
     node: &'a Node,
     state: Option<&'a Node::State>,
     memory: &'a Node::Memory,
     log: &'a TraceLog,
-    context: PhantomData<fn(&mut Context) -> Act>,
+    blackboard: PhantomData<fn(&mut Blackboard) -> Act>,
 }
 
 /// A trace of `node` from `log`, with `state` and `memory` for the fields,
 /// for a driver without a [`BtState`](crate::BtState), such as one using
 /// [`update_slot`](crate::update_slot).
-pub fn trace<'a, Context, Act, Node: BtNode<Context, Act>>(
+pub fn trace<'a, Blackboard, Act, Node: BtNode<Blackboard, Act>>(
     node: &'a Node,
     state: Option<&'a Node::State>,
     memory: &'a Node::Memory,
     log: &'a TraceLog,
-) -> Trace<'a, Node, Context, Act> {
+) -> Trace<'a, Node, Blackboard, Act> {
     Trace {
         node,
         state,
         memory,
         log,
-        context: PhantomData,
+        blackboard: PhantomData,
     }
 }
 
-impl<Node: BtNode<Context, Act>, Context, Act> fmt::Display for Trace<'_, Node, Context, Act> {
+impl<Node: BtNode<Blackboard, Act>, Blackboard, Act> fmt::Display
+    for Trace<'_, Node, Blackboard, Act>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(all(debug_assertions, feature = "std"))]
         return text::write(
@@ -535,7 +537,9 @@ impl<Node: BtNode<Context, Act>, Context, Act> fmt::Display for Trace<'_, Node, 
     }
 }
 
-impl<Node: BtNode<Context, Act>, Context, Act> fmt::Debug for Trace<'_, Node, Context, Act> {
+impl<Node: BtNode<Blackboard, Act>, Blackboard, Act> fmt::Debug
+    for Trace<'_, Node, Blackboard, Act>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }

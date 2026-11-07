@@ -3,14 +3,14 @@ use core::marker::PhantomData;
 use crate::inspect::{Inspector, NodeInfo};
 use crate::{BtNode, Entry, NodeResult};
 
-/// A subtree run over part of the context.
+/// A subtree run over part of the blackboard.
 pub struct Focus<Lens, Child, Focused> {
     lens: Lens,
     child: Child,
     part: PhantomData<fn() -> Focused>,
 }
 
-/// Runs `child`, a tree over `Focused`, on the part of the context `lens` selects,
+/// Runs `child`, a tree over `Focused`, on the part of the blackboard `lens` selects,
 /// so one subtree serves several blackboards that contain a `Focused`.
 ///
 /// ```
@@ -29,9 +29,12 @@ pub struct Focus<Lens, Child, Focused> {
 /// assert_eq!(update(&tree, &mut state, &mut agent, EntryMode::Evaluate), NodeResult::Success);
 /// assert_eq!(agent.legs.steps, 1);
 /// ```
-pub fn focus<Context, Focused, Lens, Child>(lens: Lens, child: Child) -> Focus<Lens, Child, Focused>
+pub fn focus<Blackboard, Focused, Lens, Child>(
+    lens: Lens,
+    child: Child,
+) -> Focus<Lens, Child, Focused>
 where
-    Lens: Fn(&mut Context) -> &mut Focused,
+    Lens: Fn(&mut Blackboard) -> &mut Focused,
 {
     Focus {
         lens,
@@ -40,10 +43,10 @@ where
     }
 }
 
-impl<Context, Focused, Act, Params, Lens, Child> BtNode<Context, Act, Params>
+impl<Blackboard, Focused, Act, Params, Lens, Child> BtNode<Blackboard, Act, Params>
     for Focus<Lens, Child, Focused>
 where
-    Lens: Fn(&mut Context) -> &mut Focused,
+    Lens: Fn(&mut Blackboard) -> &mut Focused,
     Child: BtNode<Focused, Act, Params>,
 {
     type State = Child::State;
@@ -55,11 +58,11 @@ where
         &self,
         state: &mut Child::State,
         memory: &mut Child::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        entry.run(1, &self.child, state, memory, (self.lens)(ctx), params)
+        entry.run(1, &self.child, state, memory, (self.lens)(bb), params)
     }
 
     fn inspect(

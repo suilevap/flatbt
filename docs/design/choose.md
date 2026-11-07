@@ -42,7 +42,7 @@ result. State is `ControlState<(), Children::State>` with no extra saved index.
 
 Each arm has distinct identity, even when types match. Use an or-pattern in one
 arm to share a candidate across order values. Rejecting an outer candidate drops
-its nested state while preserving the parent's saved branch. Context writes and
+its nested state while preserving the parent's saved branch. Blackboard writes and
 inline action ticks survive rejection.
 
 ## Memory and nesting

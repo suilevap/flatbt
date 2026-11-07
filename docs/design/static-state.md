@@ -51,7 +51,7 @@ layout supporting several active children.
 ControlState stores children before policy state, so descendants drop first.
 A terminal parent drops all remaining child state. Custom composing nodes own
 their field order and cleanup. Cancel-on-drop resources follow ordinary lifetimes;
-no cancel traversal. Context mutations are never rolled back. User panics propagate;
+no cancel traversal. Blackboard mutations are never rolled back. User panics propagate;
 reset before reusing state after an unwind.
 
 ## Generation

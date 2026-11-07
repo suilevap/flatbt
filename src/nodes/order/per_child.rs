@@ -23,9 +23,9 @@
 /// [`weighted`](crate::nodes::weighted). Adding or reordering an arm cannot
 /// shift a value onto another child.
 ///
-/// Each arm is `value => node`. A value is an expression over the context
+/// Each arm is `value => node`. A value is an expression over the blackboard
 /// argument, asked whenever the order reads it; node definitions are built
-/// once, in arm order, without access to it. Use `move |ctx: &Context|` to own
+/// once, in arm order, without access to it. Use `move |bb: &Blackboard|` to own
 /// captures. Inside a larger expression, a block holds the `let`:
 /// `{ let (weight, idle) = per_child!(..); select(order_by(weighted(rng, weight), idle)) }`.
 /// Limit: `FLATBT_MAX_CHILDREN` arms.
@@ -34,11 +34,11 @@ macro_rules! per_child {
     ([$($indices:literal)*] $($args:tt)*) => {
         $crate::per_child!(@arms [$($indices)*] $($args)*)
     };
-    (|$bb:ident: $context:ty| { $($arms:tt)* } $(,)?) => {
-        $crate::per_child!(@parse [[] [$bb: $context]] [] ; $($arms)*)
+    (|$bb:ident: $blackboard_type:ty| { $($arms:tt)* } $(,)?) => {
+        $crate::per_child!(@parse [[] [$bb: $blackboard_type]] [] ; $($arms)*)
     };
-    (move |$bb:ident: $context:ty| { $($arms:tt)* } $(,)?) => {
-        $crate::per_child!(@parse [[move] [$bb: $context]] [] ; $($arms)*)
+    (move |$bb:ident: $blackboard_type:ty| { $($arms:tt)* } $(,)?) => {
+        $crate::per_child!(@parse [[move] [$bb: $blackboard_type]] [] ; $($arms)*)
     };
     (@parse $setup:tt [$($arms:tt)*] ; $value:expr => $node:expr $(, $($rest:tt)*)?) => {
         $crate::per_child!(@parse $setup [$($arms)* [$value] [$node]] ; $($($rest)*)?)
@@ -51,20 +51,20 @@ macro_rules! per_child {
     };
     // The last arm takes `_`, so the match needs no unreachable arm.
     (@arms [$index:literal $($indices:literal)*]
-        [$($capture:tt)*] [$bb:ident: $context:ty]
+        [$($capture:tt)*] [$bb:ident: $blackboard_type:ty]
         [$($nodes:tt)*] [$($values:tt)*] ;
         [$value:expr] [$node:expr]) => {
         (
-            $($capture)* |$bb: $context, index: usize| match index { $($values)* _ => $value },
+            $($capture)* |$bb: $blackboard_type, index: usize| match index { $($values)* _ => $value },
             ($($nodes)* $crate::inspect::label(stringify!($value), $node),),
         )
     };
     (@arms [$index:literal $($indices:literal)*]
-        [$($capture:tt)*] [$bb:ident: $context:ty]
+        [$($capture:tt)*] [$bb:ident: $blackboard_type:ty]
         [$($nodes:tt)*] [$($values:tt)*] ;
         [$value:expr] [$node:expr] $($rest:tt)+) => {
         $crate::per_child!(@arms [$($indices)*]
-            [$($capture)*] [$bb: $context]
+            [$($capture)*] [$bb: $blackboard_type]
             [$($nodes)* $crate::inspect::label(stringify!($value), $node),]
             [$($values)* $index => $value,]
             ; $($rest)+

@@ -52,8 +52,8 @@ pub fn force_failure<Child>(child: Child) -> Remap<Child> {
     }
 }
 
-impl<Context, Act, Params, Child: BtNode<Context, Act, Params>> BtNode<Context, Act, Params>
-    for Remap<Child>
+impl<Blackboard, Act, Params, Child: BtNode<Blackboard, Act, Params>>
+    BtNode<Blackboard, Act, Params> for Remap<Child>
 {
     type State = Child::State;
     type Memory = Child::Memory;
@@ -64,11 +64,11 @@ impl<Context, Act, Params, Child: BtNode<Context, Act, Params>> BtNode<Context, 
         &self,
         state: &mut Child::State,
         memory: &mut Child::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        match entry.run(1, &self.child, state, memory, ctx, params) {
+        match entry.run(1, &self.child, state, memory, bb, params) {
             running @ NodeResult::Running(_) => running,
             NodeResult::Success => self.success.result(),
             NodeResult::Failure => self.failure.result(),

@@ -36,13 +36,13 @@ impl<Instant, ChildState: Default> Default for ReevaluateEveryState<Instant, Chi
     }
 }
 
-impl<Context, Act, Params, Child, ChildState, ChildMemory> BtNode<Context, Act, Params>
-    for ReevaluateEvery<Context::Duration, Child>
+impl<Blackboard, Act, Params, Child, ChildState, ChildMemory> BtNode<Blackboard, Act, Params>
+    for ReevaluateEvery<Blackboard::Duration, Child>
 where
-    Context: BtClock,
+    Blackboard: BtClock,
     Params: ParamValue,
     Child: for<'a> BtNode<
-            Context,
+            Blackboard,
             Act,
             <Params::Shape as ParamShape>::Value<'a>,
             State = ChildState,
@@ -51,26 +51,29 @@ where
     ChildState: Default + Send + 'static,
     ChildMemory: Default + Send + 'static,
 {
-    type State = ReevaluateEveryState<Context::Instant, ChildState>;
+    type State = ReevaluateEveryState<Blackboard::Instant, ChildState>;
     type Memory = ChildMemory;
-    const NODES: usize =
-        1 + <Child as BtNode<Context, Act, <Params::Shape as ParamShape>::Value<'static>>>::NODES;
+    const NODES: usize = 1 + <Child as BtNode<
+        Blackboard,
+        Act,
+        <Params::Shape as ParamShape>::Value<'static>,
+    >>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut ChildMemory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         let due = match (entry.mode(), state.evaluated) {
-            (EntryMode::Resume, Some(evaluated)) => elapsed(ctx, evaluated, self.span),
+            (EntryMode::Resume, Some(evaluated)) => elapsed(bb, evaluated, self.span),
             _ => true,
         };
         let entry = if due {
-            state.evaluated = Some(ctx.now());
+            state.evaluated = Some(bb.now());
             if entry.mode() == EntryMode::Resume {
                 entry.record("due", || true);
             }
@@ -83,7 +86,7 @@ where
             &self.child,
             &mut state.child,
             memory,
-            ctx,
+            bb,
             params.into_value(),
         )
     }
@@ -101,7 +104,7 @@ where
                 if let Some(evaluated) = state.and_then(|state| state.evaluated.as_ref()) {
                     inspector.field("evaluated", evaluated);
                 }
-                BtNode::<Context, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
+                BtNode::<Blackboard, Act, <Params::Shape as ParamShape>::Value<'_>>::inspect(
                     &self.child,
                     state.map(|state| &state.child),
                     memory,

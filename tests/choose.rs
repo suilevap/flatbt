@@ -12,7 +12,7 @@ const Running: NodeResult = NodeResult::RUNNING;
 use flatbt::{BtNode, BtState, Entry, EntryMode, NodeResult, choose, leaf, select, seq, update};
 
 #[derive(Default)]
-struct Context {
+struct Blackboard {
     order: usize,
     inner: bool,
     entries: Vec<(&'static str, EntryMode, usize)>,
@@ -37,7 +37,7 @@ impl Drop for ProbeState {
     }
 }
 
-impl BtNode<Context> for Probe {
+impl BtNode<Blackboard> for Probe {
     type State = ProbeState;
     type Memory = ();
 
@@ -45,13 +45,13 @@ impl BtNode<Context> for Probe {
         &self,
         state: &mut Self::State,
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         _: (),
         entry: Entry<'_>,
     ) -> NodeResult {
         state.drops.get_or_insert_with(|| self.drops.clone());
         state.updates += 1;
-        ctx.entries.push((self.name, entry.mode(), state.updates));
+        bb.entries.push((self.name, entry.mode(), state.updates));
         Running
     }
 }
@@ -67,24 +67,24 @@ fn probe(name: &'static str, drops: &Arc<AtomicUsize>) -> Probe {
 fn evaluate_changes_candidates_while_resume_keeps_the_saved_choice() {
     let a = Arc::new(AtomicUsize::new(0));
     let b = Arc::new(AtomicUsize::new(0));
-    let tree = choose!(|bb: &Context| match bb.order {
+    let tree = choose!(|bb: &Blackboard| match bb.order {
         0 => probe("a", &a),
         _ => probe("b", &b),
     });
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
-    assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
-    assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
-    ctx.order = 1;
-    assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
-    assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
+    let mut bb = Blackboard::default();
+    assert_eq!(update(&tree, &mut state, &mut bb, Resume), Running);
+    assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), Running);
+    bb.order = 1;
+    assert_eq!(update(&tree, &mut state, &mut bb, Resume), Running);
+    assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), Running);
     assert_eq!(a.load(Ordering::Relaxed), 1);
     assert_eq!(b.load(Ordering::Relaxed), 0);
-    ctx.order = 0;
-    assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
+    bb.order = 0;
+    assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), Running);
     assert_eq!(b.load(Ordering::Relaxed), 1);
     assert_eq!(
-        ctx.entries,
+        bb.entries,
         [
             ("a", Evaluate, 1),
             ("a", Evaluate, 2),
@@ -101,28 +101,28 @@ fn evaluate_changes_candidates_while_resume_keeps_the_saved_choice() {
 fn nested_selection_replaces_only_the_selected_inner_state() {
     let a = Arc::new(AtomicUsize::new(0));
     let b = Arc::new(AtomicUsize::new(0));
-    let tree = choose!(|bb: &Context| match bb.order {
+    let tree = choose!(|bb: &Blackboard| match bb.order {
         0 => seq((
-            leaf(|ctx: &mut Context| {
-                ctx.entries.push(("prefix", Evaluate, 1));
+            leaf(|bb: &mut Blackboard| {
+                bb.entries.push(("prefix", Evaluate, 1));
                 Success
             }),
-            choose!(|bb: &Context| match bb.inner {
+            choose!(|bb: &Blackboard| match bb.inner {
                 false => probe("a", &a),
                 true => seq((probe("b", &b),)),
             }),
         )),
-        _ => leaf(|_: &mut Context| Success),
+        _ => leaf(|_: &mut Blackboard| Success),
     });
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
-    assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
-    ctx.inner = true;
-    assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
+    let mut bb = Blackboard::default();
+    assert_eq!(update(&tree, &mut state, &mut bb, Resume), Running);
+    bb.inner = true;
+    assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), Running);
     assert_eq!(a.load(Ordering::Relaxed), 1);
-    assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
+    assert_eq!(update(&tree, &mut state, &mut bb, Resume), Running);
     assert_eq!(
-        ctx.entries,
+        bb.entries,
         [
             ("prefix", Evaluate, 1),
             ("a", Evaluate, 1),
@@ -130,8 +130,8 @@ fn nested_selection_replaces_only_the_selected_inner_state() {
             ("b", Resume, 2),
         ]
     );
-    ctx.order = 1;
-    assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Success);
+    bb.order = 1;
+    assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), Success);
     assert!(!state.is_running());
     assert_eq!(b.load(Ordering::Relaxed), 1);
 }
@@ -140,22 +140,22 @@ fn nested_selection_replaces_only_the_selected_inner_state() {
 fn terminal_choice_is_forwarded_without_fallback_and_releases_the_old_state() {
     for terminal in [Success, Failure] {
         let drops = Arc::new(AtomicUsize::new(0));
-        let tree = choose!(|bb: &Context| match bb.order {
+        let tree = choose!(|bb: &Blackboard| match bb.order {
             0 => probe("old", &drops),
-            1 => leaf(|_: &mut Context| terminal),
-            _ => leaf(|ctx: &mut Context| {
-                ctx.entries.push(("unselected", Evaluate, 1));
+            1 => leaf(|_: &mut Blackboard| terminal),
+            _ => leaf(|bb: &mut Blackboard| {
+                bb.entries.push(("unselected", Evaluate, 1));
                 Success
             }),
         });
         let mut state: BtState<_, _> = BtState::new(&tree);
-        let mut ctx = Context::default();
-        assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
-        ctx.order = 1;
-        assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), terminal);
+        let mut bb = Blackboard::default();
+        assert_eq!(update(&tree, &mut state, &mut bb, Resume), Running);
+        bb.order = 1;
+        assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), terminal);
         assert!(!state.is_running());
         assert_eq!(drops.load(Ordering::Relaxed), 1);
-        assert_eq!(ctx.entries, [("old", Evaluate, 1)]);
+        assert_eq!(bb.entries, [("old", Evaluate, 1)]);
     }
 }
 
@@ -168,22 +168,22 @@ fn outer_rejection_drops_nested_candidates_and_preserves_the_saved_branch() {
     let candidate = Arc::new(AtomicUsize::new(0));
     let saved = Arc::new(AtomicUsize::new(0));
     let tree = select((
-        Reject(choose!(|bb: &Context| match bb.order {
-            0 => choose!(|bb: &Context| match bb.inner {
+        Reject(choose!(|bb: &Blackboard| match bb.order {
+            0 => choose!(|bb: &Blackboard| match bb.inner {
                 _ => probe("candidate", &candidate),
             }),
-            _ => leaf(|_: &mut Context| Failure),
+            _ => leaf(|_: &mut Blackboard| Failure),
         })),
         probe("saved", &saved),
     ));
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
-    assert_eq!(update(&tree, &mut state, &mut ctx, Resume), Running);
-    assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), Running);
+    let mut bb = Blackboard::default();
+    assert_eq!(update(&tree, &mut state, &mut bb, Resume), Running);
+    assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), Running);
     assert_eq!(candidate.load(Ordering::Relaxed), 2);
     assert_eq!(saved.load(Ordering::Relaxed), 0);
     assert_eq!(
-        ctx.entries,
+        bb.entries,
         [
             ("candidate", Evaluate, 1),
             ("saved", Evaluate, 1),
@@ -200,26 +200,26 @@ fn definitions_are_built_once_and_chooser_supports_guards_and_owned_captures() {
     let mut constructions = Vec::new();
     // An owned, non-Copy capture must survive after construction.
     let allowed: Vec<_> = (2..=3).collect();
-    let tree = choose!(move |bb: &Context| match bb.order.checked_add(0) {
+    let tree = choose!(move |bb: &Blackboard| match bb.order.checked_add(0) {
         Some(order) if allowed.contains(&order) => {
             constructions.push("allowed");
-            leaf(|_: &mut Context| Success)
+            leaf(|_: &mut Blackboard| Success)
         }
         Some(0 | 1) | None => {
             constructions.push("small");
-            leaf(|_: &mut Context| Failure)
+            leaf(|_: &mut Blackboard| Failure)
         }
         _ => {
             constructions.push("other");
-            leaf(|_: &mut Context| Running)
+            leaf(|_: &mut Blackboard| Running)
         }
     });
     assert_eq!(constructions, ["allowed", "small", "other"]);
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     for (order, result) in [(0, Failure), (2, Success), (4, Running), (3, Success)] {
-        ctx.order = order;
-        assert_eq!(update(&tree, &mut state, &mut ctx, Evaluate), result);
+        bb.order = order;
+        assert_eq!(update(&tree, &mut state, &mut bb, Evaluate), result);
     }
     assert_eq!(constructions.len(), 3);
 }

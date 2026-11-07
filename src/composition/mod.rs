@@ -11,4 +11,7 @@ pub use control::{
     select, seq,
 };
 pub use leaf::{Check, Guarded, Leaf, check, guard, leaf};
-pub use read::{ReadFn, ReadsContext, ReadsParams};
+pub use read::{ReadFn, ReadsBlackboard, ReadsParams};
+
+#[doc(hidden)]
+pub use read::ReadsContext;

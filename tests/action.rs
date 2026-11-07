@@ -10,7 +10,7 @@ use flatbt::{BtAction, BtState, EntryMode, NodeResult, action, check, leaf, sele
 type Trace = Arc<Mutex<Vec<String>>>;
 
 #[derive(Default)]
-struct Context {
+struct Blackboard {
     urgent: bool,
     effects: Vec<&'static str>,
     trace: Trace,
@@ -40,11 +40,11 @@ impl Drop for TaskState {
     }
 }
 
-impl BtAction<Context> for Task {
+impl BtAction<Blackboard> for Task {
     type State = TaskState;
 
-    fn start(&self, ctx: &mut Context, _: ()) -> Option<TaskState> {
-        ctx.trace
+    fn start(&self, bb: &mut Blackboard, _: ()) -> Option<TaskState> {
+        bb.trace
             .lock()
             .unwrap()
             .push(format!("start {}", self.name));
@@ -52,38 +52,39 @@ impl BtAction<Context> for Task {
             name: self.name,
             remaining: self.steps?,
             completed: false,
-            trace: ctx.trace.clone(),
+            trace: bb.trace.clone(),
         })
     }
 
-    fn is_in_progress(&self, state: &TaskState, ctx: &Context, _: ()) -> bool {
-        ctx.trace
+    fn is_in_progress(&self, state: &TaskState, bb: &Blackboard, _: ()) -> bool {
+        bb.trace
             .lock()
             .unwrap()
             .push(format!("progress {}", self.name));
         state.remaining > 0
     }
 
-    fn complete(&self, state: &mut TaskState, ctx: &mut Context, _: ()) -> bool {
+    fn complete(&self, state: &mut TaskState, bb: &mut Blackboard, _: ()) -> bool {
         state.completed = true;
-        ctx.trace
+        bb.trace
             .lock()
             .unwrap()
             .push(format!("complete {}", self.name));
         self.succeeds
     }
 
-    fn tick(&self, state: &mut TaskState, ctx: &mut Context, _: ()) {
+    fn tick(&self, state: &mut TaskState, bb: &mut Blackboard, _: ()) {
         state.remaining -= 1;
-        ctx.effects.push(self.name);
-        ctx.trace
-            .lock()
-            .unwrap()
-            .push(format!("tick {}", self.name));
+        bb.effects.push(self.name);
+        bb.trace.lock().unwrap().push(format!("tick {}", self.name));
     }
 }
 
-fn task(name: &'static str, steps: Option<usize>, succeeds: bool) -> impl flatbt::BtNode<Context> {
+fn task(
+    name: &'static str,
+    steps: Option<usize>,
+    succeeds: bool,
+) -> impl flatbt::BtNode<Blackboard> {
     action(Task {
         name,
         steps,
@@ -95,13 +96,13 @@ fn task(name: &'static str, steps: Option<usize>, succeeds: bool) -> impl flatbt
 fn rejected_start_fails_without_progress_completion_or_tick() {
     let root = task("rejected", None, true);
     let mut state: BtState<_, _> = BtState::new(&root);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Failure
     );
-    assert_eq!(*ctx.trace.lock().unwrap(), ["start rejected"]);
-    assert!(ctx.effects.is_empty());
+    assert_eq!(*bb.trace.lock().unwrap(), ["start rejected"]);
+    assert!(bb.effects.is_empty());
     assert!(!state.is_running());
 }
 
@@ -110,13 +111,13 @@ fn initially_finished_action_completes_immediately_with_either_terminal_result()
     for succeeds in [true, false] {
         let root = task("instant", Some(0), succeeds);
         let mut state: BtState<_, _> = BtState::new(&root);
-        let mut ctx = Context::default();
+        let mut bb = Blackboard::default();
         assert_eq!(
-            update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
+            update(&root, &mut state, &mut bb, EntryMode::Evaluate),
             if succeeds { Success } else { Failure }
         );
         assert_eq!(
-            *ctx.trace.lock().unwrap(),
+            *bb.trace.lock().unwrap(),
             [
                 "start instant",
                 "progress instant",
@@ -124,7 +125,7 @@ fn initially_finished_action_completes_immediately_with_either_terminal_result()
                 "drop instant"
             ]
         );
-        assert!(ctx.effects.is_empty());
+        assert!(bb.effects.is_empty());
         assert!(!state.is_running());
     }
 }
@@ -133,26 +134,26 @@ fn initially_finished_action_completes_immediately_with_either_terminal_result()
 fn completion_advances_sequence_and_ticks_next_action_in_the_same_update() {
     let root = seq((
         task("move", Some(1), true),
-        leaf(|ctx: &mut Context| {
-            ctx.trace.lock().unwrap().push("check".into());
+        leaf(|bb: &mut Blackboard| {
+            bb.trace.lock().unwrap().push("check".into());
             Success
         }),
         task("fire", Some(1), true),
     ));
     let mut state: BtState<_, _> = BtState::new(&root);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    assert_eq!(ctx.effects, ["move"]);
+    assert_eq!(bb.effects, ["move"]);
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    assert_eq!(ctx.effects, ["move", "fire"]);
+    assert_eq!(bb.effects, ["move", "fire"]);
     assert_eq!(
-        *ctx.trace.lock().unwrap(),
+        *bb.trace.lock().unwrap(),
         [
             "start move",
             "progress move",
@@ -167,10 +168,10 @@ fn completion_advances_sequence_and_ticks_next_action_in_the_same_update() {
         ]
     );
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Success
     );
-    assert_eq!(ctx.effects, ["move", "fire"]);
+    assert_eq!(bb.effects, ["move", "fire"]);
     assert!(!state.is_running());
 }
 
@@ -179,27 +180,27 @@ fn speculative_completion_loses_or_new_action_preempts_without_ticking_old_actio
     for candidate_steps in [0, 1] {
         let root = select((
             seq((
-                check(|ctx: &Context| ctx.urgent),
+                check(|bb: &Blackboard| bb.urgent),
                 task("attack", Some(candidate_steps), false),
             )),
             task("move", Some(3), true),
         ));
         let mut state: BtState<_, _> = BtState::new(&root);
-        let mut ctx = Context::default();
+        let mut bb = Blackboard::default();
         assert_eq!(
-            update(&root, &mut state, &mut ctx, EntryMode::Resume),
+            update(&root, &mut state, &mut bb, EntryMode::Resume),
             Running
         );
-        ctx.trace.lock().unwrap().clear();
-        ctx.urgent = true;
+        bb.trace.lock().unwrap().clear();
+        bb.urgent = true;
         assert_eq!(
-            update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
+            update(&root, &mut state, &mut bb, EntryMode::Evaluate),
             Running
         );
         if candidate_steps == 0 {
-            assert_eq!(ctx.effects, ["move", "move"]);
+            assert_eq!(bb.effects, ["move", "move"]);
             assert_eq!(
-                *ctx.trace.lock().unwrap(),
+                *bb.trace.lock().unwrap(),
                 [
                     "start attack",
                     "progress attack",
@@ -210,9 +211,9 @@ fn speculative_completion_loses_or_new_action_preempts_without_ticking_old_actio
                 ]
             );
         } else {
-            assert_eq!(ctx.effects, ["move", "attack"]);
+            assert_eq!(bb.effects, ["move", "attack"]);
             assert_eq!(
-                *ctx.trace.lock().unwrap(),
+                *bb.trace.lock().unwrap(),
                 [
                     "start attack",
                     "progress attack",
@@ -223,7 +224,7 @@ fn speculative_completion_loses_or_new_action_preempts_without_ticking_old_actio
             );
         }
         state.reset();
-        let trace = ctx.trace.lock().unwrap();
+        let trace = bb.trace.lock().unwrap();
         assert_eq!(trace.iter().filter(|e| *e == "drop move").count(), 1);
         assert_eq!(trace.iter().filter(|e| *e == "drop attack").count(), 1);
     }
@@ -238,17 +239,17 @@ use reject::Reject;
 fn rejecting_a_running_candidate_does_not_undo_its_inline_tick() {
     let root = select((
         Reject(task("candidate", Some(2), true)),
-        leaf(|_: &mut Context| Running),
+        leaf(|_: &mut Blackboard| Running),
     ));
     let mut state: BtState<_, _> = BtState::new(&root);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&root, &mut state, &mut bb, EntryMode::Evaluate),
         Running
     );
-    assert_eq!(ctx.effects, ["candidate"]);
+    assert_eq!(bb.effects, ["candidate"]);
     assert_eq!(
-        *ctx.trace.lock().unwrap(),
+        *bb.trace.lock().unwrap(),
         [
             "start candidate",
             "progress candidate",
@@ -264,10 +265,10 @@ fn rejecting_a_running_candidate_does_not_undo_its_inline_tick() {
 fn reset_and_drop_cancel_uncompleted_state_once_without_extra_updates() {
     let root = seq((task("work", Some(1), true),));
     let mut state: BtState<_, _> = BtState::new(&root);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     state.reset();
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     state.reset();
@@ -275,7 +276,7 @@ fn reset_and_drop_cancel_uncompleted_state_once_without_extra_updates() {
     assert!(!state.is_running());
     // Last tick finished the work, but complete has not observed it yet.
     assert_eq!(
-        *ctx.trace.lock().unwrap(),
+        *bb.trace.lock().unwrap(),
         [
             "start work",
             "progress work",
@@ -285,11 +286,11 @@ fn reset_and_drop_cancel_uncompleted_state_once_without_extra_updates() {
         ]
     );
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
     drop(state);
-    let trace = ctx.trace.lock().unwrap();
+    let trace = bb.trace.lock().unwrap();
     assert_eq!(trace.iter().filter(|e| *e == "cancel work").count(), 2);
     assert_eq!(trace.iter().filter(|e| *e == "drop work").count(), 2);
 }
@@ -297,21 +298,21 @@ fn reset_and_drop_cancel_uncompleted_state_once_without_extra_updates() {
 #[test]
 fn terminal_revalidation_cancels_the_old_running_branch() {
     let root = select((
-        check(|ctx: &Context| ctx.urgent),
+        check(|bb: &Blackboard| bb.urgent),
         task("move", Some(3), true),
     ));
     let mut state: BtState<_, _> = BtState::new(&root);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Resume),
+        update(&root, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.trace.lock().unwrap().clear();
-    ctx.urgent = true;
+    bb.trace.lock().unwrap().clear();
+    bb.urgent = true;
     assert_eq!(
-        update(&root, &mut state, &mut ctx, EntryMode::Evaluate),
+        update(&root, &mut state, &mut bb, EntryMode::Evaluate),
         Success
     );
-    assert_eq!(*ctx.trace.lock().unwrap(), ["cancel move", "drop move"]);
+    assert_eq!(*bb.trace.lock().unwrap(), ["cancel move", "drop move"]);
     assert!(!state.is_running());
 }

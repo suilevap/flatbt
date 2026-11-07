@@ -117,11 +117,11 @@ fn scoped_parameters_reach_the_chosen_node_without_the_action_adapter() {
             &self,
             _: &mut (),
             _: &mut (),
-            ctx: &mut Vec<u32>,
+            bb: &mut Vec<u32>,
             input: &u32,
             _: Entry<'_>,
         ) -> NodeResult {
-            ctx.push(*input);
+            bb.push(*input);
             NodeResult::Success
         }
     }

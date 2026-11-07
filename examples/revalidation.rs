@@ -14,25 +14,25 @@ struct Agent {
 fn main() {
     let tree = select((
         seq((
-            check(|ctx: &Agent| ctx.urgent),
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("start urgent task");
+            check(|bb: &Agent| bb.urgent),
+            leaf(|bb: &mut Agent| {
+                bb.events.push("start urgent task");
                 NodeResult::Success
             }),
             wait_frames(2),
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("finish urgent task");
+            leaf(|bb: &mut Agent| {
+                bb.events.push("finish urgent task");
                 NodeResult::Success
             }),
         )),
         seq((
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("start patrol");
+            leaf(|bb: &mut Agent| {
+                bb.events.push("start patrol");
                 NodeResult::Success
             }),
             wait_frames(3),
-            leaf(|ctx: &mut Agent| {
-                ctx.events.push("finish patrol");
+            leaf(|bb: &mut Agent| {
+                bb.events.push("finish patrol");
                 NodeResult::Success
             }),
         )),

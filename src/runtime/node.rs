@@ -163,17 +163,17 @@ impl<'t> Entry<'t> {
     /// position after this node in preorder: 1 for the first child, plus the
     /// [`NODES`](BtNode::NODES) of each child before it. Same mode.
     #[inline(always)]
-    pub fn run<Context, Act, Params, Child: BtNode<Context, Act, Params>>(
+    pub fn run<Blackboard, Act, Params, Child: BtNode<Blackboard, Act, Params>>(
         self,
         offset: usize,
         child: &Child,
         state: &mut Child::State,
         memory: &mut Child::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
     ) -> NodeResult<Act> {
         let entry = self.child(offset, Child::NODES);
-        let result = child.update(state, memory, ctx, params, entry);
+        let result = child.update(state, memory, bb, params, entry);
         entry.finish(&result);
         result
     }
@@ -181,17 +181,17 @@ impl<'t> Entry<'t> {
     /// [`run`](Self::run) for a fresh invocation of `child`: mode Evaluate,
     /// recorded as new.
     #[inline(always)]
-    pub fn run_candidate<Context, Act, Params, Child: BtNode<Context, Act, Params>>(
+    pub fn run_candidate<Blackboard, Act, Params, Child: BtNode<Blackboard, Act, Params>>(
         self,
         offset: usize,
         child: &Child,
         state: &mut Child::State,
         memory: &mut Child::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
     ) -> NodeResult<Act> {
         let entry = self.candidate(offset, Child::NODES);
-        let result = child.update(state, memory, ctx, params, entry);
+        let result = child.update(state, memory, bb, params, entry);
         entry.finish(&result);
         result
     }
@@ -230,7 +230,7 @@ impl<'t> Entry<'t> {
     /// this does nothing.
     ///
     /// ```ignore
-    /// let holds = (self.condition)(ctx);
+    /// let holds = (self.condition)(bb);
     /// entry.record("if", || holds);
     /// ```
     #[inline(always)]
@@ -274,7 +274,7 @@ impl From<EntryMode> for Entry<'_> {
 
 /// Immutable definition with owned invocation state and memory.
 ///
-/// `Context` is application context; `Act` is what a running invocation is doing, and
+/// `Blackboard` is application blackboard; `Act` is what a running invocation is doing, and
 /// defaults to `()`; `Params` carries parameters, including update-local borrows.
 ///
 /// A node keeps two kinds of per-agent state:
@@ -282,11 +282,11 @@ impl From<EntryMode> for Entry<'_> {
 /// - `State`, for one invocation: created on entry, dropped when the node
 ///   returns Success or Failure, and kept by a control only for its active
 ///   child. It survives while Running and cannot retain parameter borrows. Use
-///   optional fields for context-dependent initialization.
+///   optional fields for blackboard-dependent initialization.
 /// - `Memory`, for the agent's lifetime: kept for every node, running or not,
 ///   and never reset by the tree -- only by [`BtState::forget`]. A composer
 ///   passes each child the same memory on every update, including a fresh
-///   candidate's; writes by a rejected candidate are kept, like context
+///   candidate's; writes by a rejected candidate are kept, like blackboard
 ///   writes. Most nodes have none: `type Memory = ();`.
 ///
 /// Nodes that never occupy the agent -- predicates, instant effects -- stay
@@ -303,7 +303,7 @@ impl From<EntryMode> for Entry<'_> {
 /// errors with [`NodeResult::error`]. User panics propagate.
 ///
 /// [`BtState::forget`]: crate::BtState::forget
-pub trait BtNode<Context, Act = (), Params = ()> {
+pub trait BtNode<Blackboard, Act = (), Params = ()> {
     type State: Default + Send + 'static;
 
     /// Per-agent state that outlives an invocation. `()` for most nodes.
@@ -318,7 +318,7 @@ pub trait BtNode<Context, Act = (), Params = ()> {
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act>;

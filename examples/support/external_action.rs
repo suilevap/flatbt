@@ -16,7 +16,7 @@ pub struct Movement {
     cancellation: Arc<AtomicBool>,
 }
 
-/// Request-specific cancellation access without borrowing or locking context.
+/// Request-specific cancellation access without borrowing or locking blackboard.
 pub struct RequestHandle {
     request: RequestId,
     cancellation: Arc<AtomicBool>,
@@ -82,8 +82,8 @@ pub struct MoveExternally {
 impl BtAction<Agent> for MoveExternally {
     type State = CancelOnDrop<RequestHandle>;
 
-    fn start(&self, ctx: &mut Agent, _: ()) -> Option<Self::State> {
-        let request = ctx.start_movement(self.name, self.frames)?;
+    fn start(&self, bb: &mut Agent, _: ()) -> Option<Self::State> {
+        let request = bb.start_movement(self.name, self.frames)?;
         Some(CancelOnDrop::new(request, |request| {
             request.cancellation.store(true, Ordering::Relaxed);
         }))
@@ -93,18 +93,18 @@ impl BtAction<Agent> for MoveExternally {
     /// is doing, which for an act-free tree is nothing.
     fn tick(&self, _: &mut Self::State, _: &mut Agent, _: ()) {}
 
-    fn is_in_progress(&self, state: &Self::State, ctx: &Agent, _: ()) -> bool {
-        ctx.movement
+    fn is_in_progress(&self, state: &Self::State, bb: &Agent, _: ()) -> bool {
+        bb.movement
             .as_ref()
             .is_some_and(|m| m.request == state.request && m.remaining_frames > 0)
     }
 
-    fn complete(&self, state: &mut Self::State, ctx: &mut Agent, _: ()) -> bool {
-        let finished = ctx
+    fn complete(&self, state: &mut Self::State, bb: &mut Agent, _: ()) -> bool {
+        let finished = bb
             .movement
             .as_ref()
             .is_some_and(|m| m.request == state.request && m.remaining_frames == 0);
-        ctx.remove_movement(state.request);
+        bb.remove_movement(state.request);
         state.disarm();
         finished
     }

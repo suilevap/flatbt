@@ -157,7 +157,7 @@ Each kind of data a node sees then has one owner and one lifetime:
 
 | Data | Owner | Lives |
 | --- | --- | --- |
-| Context (`ctx`), the blackboard | the application | across invocations |
+| Blackboard (`ctx`), the blackboard | the application | across invocations |
 | Invocation state (`BtState`) | the agent | while the tree runs |
 | Scope locals (`params`) | a `scope` in that state | while the scope runs |
 | `Entry` | the update | one call |

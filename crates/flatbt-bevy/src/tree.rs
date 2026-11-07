@@ -171,7 +171,7 @@ pub struct BehaviorTree<
     // Load-bearing: it keeps `Blackboard` and `Act` direct field uses. Reached only through
     // the `Builder::Tree` projection, they send the monomorphization collector through
     // every blanket impl behind them and over the recursion limit.
-    context: PhantomData<fn() -> (Blackboard, Act)>,
+    blackboard: PhantomData<fn() -> (Blackboard, Act)>,
 }
 
 impl<
@@ -186,7 +186,7 @@ impl<
         Self {
             tree: builder.build(),
             tick_mode,
-            context: PhantomData,
+            blackboard: PhantomData,
         }
     }
 
@@ -402,11 +402,11 @@ impl<
 ///
 /// `Act` need not be a component at all -- a tree that decides nothing has no act
 /// to release -- so the act type is looked up rather than named.
-fn release_act<Act: Send + Sync + 'static>(mut world: DeferredWorld, ctx: HookContext) {
+fn release_act<Act: Send + Sync + 'static>(mut world: DeferredWorld, hook: HookContext) {
     let Some(act) = world.components().get_id(TypeId::of::<Act>()) else {
         return;
     };
-    let entity = ctx.entity;
+    let entity = hook.entity;
     if !world
         .get_entity(entity)
         .is_ok_and(|agent| agent.contains_id(act))

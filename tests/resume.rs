@@ -59,34 +59,34 @@ fn sequence_resumes_wait_and_fires_in_the_completion_update() {
 #[test]
 fn selector_resumes_selected_branch_without_rescanning_priority() {
     #[derive(Default)]
-    struct Context {
+    struct Blackboard {
         urgent: bool,
         scans: usize,
     }
     let tree = select((
-        leaf(|ctx: &mut Context| {
-            ctx.scans += 1;
-            if ctx.urgent { Success } else { Failure }
+        leaf(|bb: &mut Blackboard| {
+            bb.scans += 1;
+            if bb.urgent { Success } else { Failure }
         }),
         wait_frames(1),
     ));
     let mut state: BtState<_, _> = BtState::new(&tree);
-    let mut ctx = Context::default();
+    let mut bb = Blackboard::default();
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Running
     );
-    ctx.urgent = true;
+    bb.urgent = true;
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Success
     );
-    assert_eq!(ctx.scans, 1);
+    assert_eq!(bb.scans, 1);
     assert_eq!(
-        update(&tree, &mut state, &mut ctx, EntryMode::Resume),
+        update(&tree, &mut state, &mut bb, EntryMode::Resume),
         Success
     );
-    assert_eq!(ctx.scans, 2);
+    assert_eq!(bb.scans, 2);
 }
 
 #[derive(Default)]

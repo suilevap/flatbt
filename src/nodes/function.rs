@@ -34,8 +34,8 @@ pub fn leaf_with<Function>(f: Function) -> LeafWith<Function> {
     LeafWith(f)
 }
 
-impl<Context, Act, Params, Function: Fn(&mut Context, Params) -> NodeResult<Act>>
-    BtNode<Context, Act, Params> for LeafWith<Function>
+impl<Blackboard, Act, Params, Function: Fn(&mut Blackboard, Params) -> NodeResult<Act>>
+    BtNode<Blackboard, Act, Params> for LeafWith<Function>
 {
     type State = ();
     type Memory = ();
@@ -45,11 +45,11 @@ impl<Context, Act, Params, Function: Fn(&mut Context, Params) -> NodeResult<Act>
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         _: Entry<'_>,
     ) -> NodeResult<Act> {
-        (self.0)(ctx, params)
+        (self.0)(bb, params)
     }
 
     fn inspect(&self, state: Option<&()>, _: &(), inspector: &mut dyn Inspector) {
@@ -58,7 +58,7 @@ impl<Context, Act, Params, Function: Fn(&mut Context, Params) -> NodeResult<Act>
     }
 }
 
-/// Predicate over shared context and parameters.
+/// Predicate over shared blackboard and parameters.
 pub struct CheckWith<Predicate>(Predicate);
 
 /// [`check`](crate::check) whose predicate also receives the node's
@@ -67,8 +67,8 @@ pub fn check_with<Predicate>(predicate: Predicate) -> CheckWith<Predicate> {
     CheckWith(predicate)
 }
 
-impl<Context, Act, Params, Predicate: Fn(&Context, Params) -> bool> BtNode<Context, Act, Params>
-    for CheckWith<Predicate>
+impl<Blackboard, Act, Params, Predicate: Fn(&Blackboard, Params) -> bool>
+    BtNode<Blackboard, Act, Params> for CheckWith<Predicate>
 {
     type State = ();
     type Memory = ();
@@ -78,11 +78,11 @@ impl<Context, Act, Params, Predicate: Fn(&Context, Params) -> bool> BtNode<Conte
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         _: Entry<'_>,
     ) -> NodeResult<Act> {
-        if (self.0)(ctx, params) {
+        if (self.0)(bb, params) {
             NodeResult::Success
         } else {
             NodeResult::Failure
@@ -123,7 +123,7 @@ pub struct ActionWhile<Condition, MakeAct, Reads> {
 /// assert_eq!(update(&tree, &mut state, &mut ammo, EntryMode::Resume), NodeResult::Success);
 /// ```
 ///
-/// Each closure is `Fn(&Context)`, or `Fn(&Context, Params)` to also read the node's
+/// Each closure is `Fn(&Blackboard)`, or `Fn(&Blackboard, Params)` to also read the node's
 /// parameters, such as a target held in a `scope!` local; see [`ReadFn`]:
 ///
 /// ```
@@ -159,11 +159,11 @@ pub fn action_while<Condition, MakeAct, Reads>(
     }
 }
 
-impl<Context, Act, Params: ParamValue, Condition, MakeAct, ConditionReads, ActReads>
-    BtNode<Context, Act, Params> for ActionWhile<Condition, MakeAct, (ConditionReads, ActReads)>
+impl<Blackboard, Act, Params: ParamValue, Condition, MakeAct, ConditionReads, ActReads>
+    BtNode<Blackboard, Act, Params> for ActionWhile<Condition, MakeAct, (ConditionReads, ActReads)>
 where
-    Condition: ReadFn<Context, Params, bool, ConditionReads>,
-    MakeAct: ReadFn<Context, Params, Act, ActReads>,
+    Condition: ReadFn<Blackboard, Params, bool, ConditionReads>,
+    MakeAct: ReadFn<Blackboard, Params, Act, ActReads>,
 {
     type State = ();
     type Memory = ();
@@ -173,17 +173,17 @@ where
         &self,
         _: &mut (),
         _: &mut (),
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         params: Params,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         let mut params = params.into_value();
         let holds = self
             .condition
-            .call(ctx, Params::Shape::reborrow(&mut params));
+            .call(bb, Params::Shape::reborrow(&mut params));
         entry.record("while", || holds);
         if holds {
-            NodeResult::Running(self.act.call(ctx, params))
+            NodeResult::Running(self.act.call(bb, params))
         } else {
             NodeResult::Success
         }

@@ -71,9 +71,12 @@ pub mod trace;
 
 pub use composition::{
     BtChildren, BtControl, Check, ControlMemory, ControlNode, ControlOp, ControlState, Guarded,
-    Leaf, ReadFn, ReadsContext, ReadsParams, Selector, Sequence, check, child_state, control,
+    Leaf, ReadFn, ReadsBlackboard, ReadsParams, Selector, Sequence, check, child_state, control,
     guard, leaf, select, seq,
 };
+
+#[doc(hidden)]
+pub use composition::ReadsContext;
 #[cfg(feature = "extras")]
 pub use nodes::{
     ActionNode, ActionWait, ActionWhile, AwaitFuture, Awaiting, BtAction, BtCancel, BtClock,

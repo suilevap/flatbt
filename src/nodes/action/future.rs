@@ -2,7 +2,7 @@
 
 use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
+use core::task::{Context as TaskContext, Poll, Waker};
 
 use super::{ActionNode, BtAction, action};
 use crate::inspect::Inspector;
@@ -79,31 +79,31 @@ impl<F: Future + Unpin> Awaiting<F> {
         if self.answer.is_some() {
             return;
         }
-        let mut cx = Context::from_waker(Waker::noop());
+        let mut cx = TaskContext::from_waker(Waker::noop());
         if let Poll::Ready(answer) = Pin::new(&mut self.future).poll(&mut cx) {
             self.answer = Some(answer);
         }
     }
 }
 
-impl<'a, Ctx, Act, Input, T, F, Start, Waiting> BtAction<Ctx, Act, (&'a Input, &'a mut Option<T>)>
-    for AwaitFuture<Start, Waiting>
+impl<'a, Blackboard, Act, Input, T, F, Start, Waiting>
+    BtAction<Blackboard, Act, (&'a Input, &'a mut Option<T>)> for AwaitFuture<Start, Waiting>
 where
     Input: ?Sized,
     F: Future<Output = Option<T>> + Unpin + Send + 'static,
     T: Send + 'static,
-    Start: Fn(&mut Ctx, &Input) -> Option<F>,
-    Waiting: Fn(&Ctx) -> Act,
+    Start: Fn(&mut Blackboard, &Input) -> Option<F>,
+    Waiting: Fn(&Blackboard) -> Act,
 {
     type State = Awaiting<F>;
 
     fn start(
         &self,
-        ctx: &mut Ctx,
+        bb: &mut Blackboard,
         (input, _): (&'a Input, &'a mut Option<T>),
     ) -> Option<Awaiting<F>> {
         let mut awaiting = Awaiting {
-            future: (self.start)(ctx, input)?,
+            future: (self.start)(bb, input)?,
             answer: None,
         };
         awaiting.poll();
@@ -113,7 +113,7 @@ where
     fn is_in_progress(
         &self,
         awaiting: &Awaiting<F>,
-        _: &Ctx,
+        _: &Blackboard,
         _: (&'a Input, &'a mut Option<T>),
     ) -> bool {
         awaiting.answer.is_none()
@@ -122,17 +122,17 @@ where
     fn tick(
         &self,
         awaiting: &mut Awaiting<F>,
-        ctx: &mut Ctx,
+        bb: &mut Blackboard,
         _: (&'a Input, &'a mut Option<T>),
     ) -> Act {
         awaiting.poll();
-        (self.waiting)(ctx)
+        (self.waiting)(bb)
     }
 
     fn complete(
         &self,
         awaiting: &mut Awaiting<F>,
-        _: &mut Ctx,
+        _: &mut Blackboard,
         (_, out): (&'a Input, &'a mut Option<T>),
     ) -> bool {
         match awaiting.answer.take().flatten() {
@@ -157,7 +157,7 @@ mod tests {
 
     use core::future::{Future, ready};
     use core::pin::Pin;
-    use core::task::{Context, Poll};
+    use core::task::{Context as TaskContext, Poll};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -172,7 +172,7 @@ mod tests {
 
     impl Future for Slow {
         type Output = Option<u32>;
-        fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<u32>> {
+        fn poll(mut self: Pin<&mut Self>, _: &mut TaskContext<'_>) -> Poll<Option<u32>> {
             if self.polls > 0 {
                 self.polls -= 1;
                 Poll::Pending

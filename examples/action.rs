@@ -24,9 +24,9 @@ impl BtAction<Agent> for Task {
         state.0 < self.steps
     }
 
-    fn tick(&self, state: &mut Progress, ctx: &mut Agent, _: ()) {
+    fn tick(&self, state: &mut Progress, bb: &mut Agent, _: ()) {
         state.0 += 1;
-        ctx.effects.push(self.name);
+        bb.effects.push(self.name);
     }
 }
 

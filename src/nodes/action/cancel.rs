@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-/// State-owned cancellation. Implementations own their token/sender; no context
+/// State-owned cancellation. Implementations own their token/sender; no blackboard
 /// is supplied. Cancellation may only enqueue a request. Must not panic.
 pub trait BtCancel {
     fn cancel(&mut self);

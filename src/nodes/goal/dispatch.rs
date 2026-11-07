@@ -14,32 +14,33 @@ pub fn when_goal<Accepts, Node>(accepts: Accepts, child: Node) -> WhenGoal<Accep
     WhenGoal { accepts, child }
 }
 
-impl<'p, Context, Act, Goal, Accepts, Node, NodeState, NodeMemory>
-    BtNode<Context, Act, GoalCall<'p, Goal>> for WhenGoal<Accepts, Node>
+impl<'p, Blackboard, Act, Goal, Accepts, Node, NodeState, NodeMemory>
+    BtNode<Blackboard, Act, GoalCall<'p, Goal>> for WhenGoal<Accepts, Node>
 where
-    Context: 'static,
+    Blackboard: 'static,
     Act: 'static,
     Goal: 'static,
     Accepts: Fn(&Goal) -> bool,
-    Node: for<'a> BtNode<Context, Act, GoalCall<'a, Goal>, State = NodeState, Memory = NodeMemory>,
+    Node:
+        for<'a> BtNode<Blackboard, Act, GoalCall<'a, Goal>, State = NodeState, Memory = NodeMemory>,
     NodeState: Default + Send + 'static,
     NodeMemory: Default + Send + 'static,
 {
     type State = NodeState;
     type Memory = NodeMemory;
-    const NODES: usize = <Node as BtNode<Context, Act, GoalCall<'static, Goal>>>::NODES;
+    const NODES: usize = <Node as BtNode<Blackboard, Act, GoalCall<'static, Goal>>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut Self::State,
         memory: &mut Self::Memory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         call: GoalCall<'p, Goal>,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
         if (self.accepts)(call.goal) {
-            self.child.update(state, memory, ctx, call, entry)
+            self.child.update(state, memory, bb, call, entry)
         } else {
             NodeResult::Failure
         }
@@ -51,7 +52,12 @@ where
         memory: &Self::Memory,
         inspector: &mut dyn Inspector,
     ) {
-        BtNode::<Context, Act, GoalCall<'_, Goal>>::inspect(&self.child, state, memory, inspector);
+        BtNode::<Blackboard, Act, GoalCall<'_, Goal>>::inspect(
+            &self.child,
+            state,
+            memory,
+            inspector,
+        );
     }
 }
 
@@ -64,28 +70,28 @@ pub fn with_goal<Node>(node: Node) -> WithGoal<Node> {
     WithGoal(node)
 }
 
-impl<'p, Context, Act, Goal, Node, NodeState, NodeMemory> BtNode<Context, Act, GoalCall<'p, Goal>>
-    for WithGoal<Node>
+impl<'p, Blackboard, Act, Goal, Node, NodeState, NodeMemory>
+    BtNode<Blackboard, Act, GoalCall<'p, Goal>> for WithGoal<Node>
 where
     Goal: 'static,
-    Node: for<'a> BtNode<Context, Act, &'a Goal, State = NodeState, Memory = NodeMemory>,
+    Node: for<'a> BtNode<Blackboard, Act, &'a Goal, State = NodeState, Memory = NodeMemory>,
     NodeState: Default + Send + 'static,
     NodeMemory: Default + Send + 'static,
 {
     type State = NodeState;
     type Memory = NodeMemory;
-    const NODES: usize = <Node as BtNode<Context, Act, &'static Goal>>::NODES;
+    const NODES: usize = <Node as BtNode<Blackboard, Act, &'static Goal>>::NODES;
 
     #[inline]
     fn update(
         &self,
         state: &mut NodeState,
         memory: &mut NodeMemory,
-        ctx: &mut Context,
+        bb: &mut Blackboard,
         call: GoalCall<'p, Goal>,
         entry: Entry<'_>,
     ) -> NodeResult<Act> {
-        self.0.update(state, memory, ctx, call.goal, entry)
+        self.0.update(state, memory, bb, call.goal, entry)
     }
 
     fn inspect(
@@ -94,7 +100,7 @@ where
         memory: &NodeMemory,
         inspector: &mut dyn Inspector,
     ) {
-        BtNode::<Context, Act, &Goal>::inspect(&self.0, state, memory, inspector);
+        BtNode::<Blackboard, Act, &Goal>::inspect(&self.0, state, memory, inspector);
     }
 }
 

@@ -191,9 +191,9 @@ them in that order until one succeeds, `seq` runs them all in that order.
 
 | Order | Visits children |
 | --- | --- |
-| `by_score(\|bb: &Context, index\| score)` | Highest score first. `.inertia(x)` favours the running child. |
+| `by_score(\|bb: &Blackboard, index\| score)` | Highest score first. `.inertia(x)` favours the running child. |
 | `shuffled(rng)` | In a random order. |
-| `weighted(rng, \|bb: &Context, index\| weight)` | In a random order drawn by weight. |
+| `weighted(rng, \|bb: &Blackboard, index\| weight)` | In a random order drawn by weight. |
 
 | Composition | Shorthand |
 | --- | --- |
@@ -214,7 +214,7 @@ preempts the running one, and `seq` does only while still on its first child.
 - Scores: higher goes first; a tie keeps the running child, then goes to the
   lower index; NaN leaves a child out. Integer scores give a dynamic priority.
   `inertia` is added to the running child's score.
-- Random orders draw from a generator the context owns, `rng: Fn(&mut C) ->
+- Random orders draw from a generator the blackboard owns, `rng: Fn(&mut C) ->
   u32`, once per position, so tests stay deterministic. When `Evaluate`
   restarts a pass they keep the running child first, so a random choice holds
   while it runs; the rest is drawn afresh. A weight that is not positive leaves
@@ -318,7 +318,7 @@ update the BT on completion or periodically with Evaluate for reactivity.
 
 State owns cancellation. Use `CancelOnDrop::new(handle, cancel_fn)` or implement
 `BtCancel` and use `CancelOnDrop::from(handle)`. Disarm in `complete` after handling
-the outcome. Drop has no context argument; the handle must own cancellation access.
+the outcome. Drop has no blackboard argument; the handle must own cancellation access.
 See the [external action example](examples/external_action.rs).
 
 When the external work answers with a future, `await_future` is that action
@@ -351,13 +351,13 @@ Ready-made nodes in `flatbt::nodes`, with the `extras` feature.
 | --- | --- |
 | `repeat_while(cond, child)` | Keep `child` running, restarting it, while `cond` holds; succeed once it does not. Fail if `child` fails, or completes without running, while `cond` still holds. |
 | `map_act(f, child)` | Run a subtree deciding `B` in a tree deciding `A`; its act passes through `f`. |
-| `action_while(cond, act)` | Report `act(ctx)` while `cond` holds, then succeed. |
+| `action_while(cond, act)` | Report `act(bb)` while `cond` holds, then succeed. |
 | `leaf_with(f)`, `check_with(f)` | `leaf` and `check` whose callable also receives the node's parameters. |
 | `invert(child)`, `force_success(child)`, `force_failure(child)` | Map the child's Success/Failure; `Running` passes through. |
 | `repeat(n, child)`, `retry(n, child)` | Run `child` until it has succeeded `n` times, or until it succeeds within `n` attempts. |
 | `if_else(cond, then, otherwise)` | Run one branch by `cond`, without fallback; `Evaluate` may switch it. |
 | `reevaluate_when(cond, child)` | Pass `Resume` down as `Evaluate` on updates where `cond` holds. |
-| `focus(lens, child)` | Run a subtree over the part of the context `lens` selects. |
+| `focus(lens, child)` | Run a subtree over the part of the blackboard `lens` selects. |
 
 `repeat_while` is a goal, `guard` a requirement: a false `cond` succeeds one
 and fails the other. Both ask `cond` on every update, `Resume` included, and
@@ -365,7 +365,7 @@ drop a running child when they stop, which cancels it. So
 `seq((repeat_while(far, approach), interact))` approaches only while needed and
 succeeds at once for an agent already close.
 
-A condition or act is `Fn(&Context)`, or `Fn(&Context, Params)` to also read the node's
+A condition or act is `Fn(&Blackboard)`, or `Fn(&Blackboard, Params)` to also read the node's
 parameters -- for `guard`, `repeat_while` and `action_while` alike. The same
 constructor takes either; annotate the closure's arguments.
 
@@ -387,7 +387,7 @@ A child that takes no parameters needs `no_params(..)`.
 
 ### Time
 
-Time is the game's: seconds, turns or simulation ticks. The context implements
+Time is the game's: seconds, turns or simulation ticks. The blackboard implements
 `BtClock`, and spans are in its `Duration`.
 
 ```rust
@@ -759,11 +759,11 @@ release code is unchanged.
 
 ## Custom nodes
 
-Implement `BtNode<Context, Act = (), Params = ()>`. Keep configuration in the
+Implement `BtNode<Blackboard, Act = (), Params = ()>`. Keep configuration in the
 definition and mutable invocation data in `State: Default + Send + 'static`.
 `Act` is what the node reports the agent is doing while it runs; a node that
 never runs stays generic over it and never names it.
-`Params` carries parameters separately from context; the root supplies `()`.
+`Params` carries parameters separately from blackboard; the root supplies `()`.
 Scopes bind references to local fields. `no_params(node)` adapts unit-parameter nodes.
 
 `update` receives an `Entry`: `entry.mode()` is Resume or Evaluate. A composing
@@ -771,7 +771,7 @@ node owns its children's state, initialization, fresh-entry Evaluate, and
 cleanup on completion or replacement. Any node may suspend without implementing
 `BtAction`; see [WaitFrames](examples/support/wait_frames.rs).
 
-- Context mutations and ticks take effect immediately, including on failed branches.
+- Blackboard mutations and ticks take effect immediately, including on failed branches.
 - `NodeResult::error` and `ControlOp::error` report a diagnostic and return Failure.
   Diagnostics go to stderr; `set_error_handler` sends them elsewhere. Without
   the `std` feature they are discarded.
@@ -829,7 +829,7 @@ through its entry, and reports each child in `inspect`, with the state it holds
 for it:
 
 ```rust,ignore
-/// Runs its child with the context doubled.
+/// Runs its child with the blackboard doubled.
 struct Doubled<N>(N);
 
 impl<A, N: BtNode<u32, A>> BtNode<u32, A> for Doubled<N> {
@@ -841,14 +841,14 @@ impl<A, N: BtNode<u32, A>> BtNode<u32, A> for Doubled<N> {
         &self,
         state: &mut N::State,
         memory: &mut N::Memory,
-        ctx: &mut u32,
+        bb: &mut u32,
         _: (),
         entry: Entry<'_>,
     ) -> NodeResult<A> {
-        *ctx *= 2;
+        *bb *= 2;
         // Offset 1: the first child. `run_candidate` for a fresh invocation.
-        let result = entry.run(1, &self.0, state, memory, ctx, ());
-        *ctx /= 2;
+        let result = entry.run(1, &self.0, state, memory, bb, ());
+        *bb /= 2;
         result
     }
 
@@ -888,7 +888,7 @@ cargo run --example resume
 | [synchronous](examples/synchronous.rs) | Composition and custom policy |
 | [resume](examples/resume.rs) | Wait across updates, then continue |
 | [revalidation](examples/revalidation.rs) | Preserve or preempt a saved branch |
-| [choose](examples/choose.rs) | Context-driven and nested choice |
+| [choose](examples/choose.rs) | Blackboard-driven and nested choice |
 | [action](examples/action.rs) | Inline lifecycle |
 | [external_action](examples/external_action.rs) | External work, 10 frames / 3 BT updates |
 | [scoped_params](examples/scoped_params.rs) | Named local bindings |
