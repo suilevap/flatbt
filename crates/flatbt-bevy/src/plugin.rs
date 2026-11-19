@@ -4,7 +4,6 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
 use bevy_utils::Parallel;
 
-use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
@@ -152,9 +151,8 @@ where
             &self.builder,
             self.tick_mode,
         ))
-        .insert_resource(ActChanges::<Blackboard, Act, Builder>::default());
-        let apply = apply_act_changes::<Blackboard, Act, Builder>
-            .run_if(has_act_changes::<Blackboard, Act, Builder>);
+        .init_resource::<ActChanges<Act>>();
+        let apply = apply_act_changes::<Act>.run_if(has_act_changes::<Act>);
         if self.parallel {
             app.add_systems(
                 self.schedule,
@@ -204,7 +202,7 @@ fn tick_behaviors<Blackboard, Act, Builder>(
     tree: Res<BehaviorTree<Blackboard, Act, Builder>>,
     time: Option<Res<Time>>,
     mut agents: Agents<Blackboard, Act, Builder>,
-    changes: Res<ActChanges<Blackboard, Act, Builder>>,
+    changes: Res<ActChanges<Act>>,
 ) where
     Blackboard: Component<Mutability = Mutable>,
     Act: Component<Mutability = Mutable> + PartialEq,
@@ -221,7 +219,7 @@ fn tick_behaviors_parallel<Blackboard, Act, Builder>(
     tree: Res<BehaviorTree<Blackboard, Act, Builder>>,
     time: Option<Res<Time>>,
     mut agents: Agents<Blackboard, Act, Builder>,
-    changes: Res<ActChanges<Blackboard, Act, Builder>>,
+    changes: Res<ActChanges<Act>>,
 ) where
     Blackboard: Component<Mutability = Mutable>,
     Act: Component<Mutability = Mutable> + PartialEq,
@@ -295,6 +293,8 @@ enum ActChange<Act> {
 }
 
 /// Acts that appeared or went during a tick, waiting for `apply_act_changes`.
+/// Shared by every builder and blackboard producing the same `Act`; each tick
+/// keeps its chained apply step, which may also drain other completed ticks.
 ///
 /// Why not `Commands`: a system with deferred parameters makes Bevy's
 /// multi-threaded executor run `ApplyDeferred` every frame, which spawns a task
@@ -303,23 +303,21 @@ enum ActChange<Act> {
 /// run condition skips it -- at no cost -- on the common frame where every act
 /// was only written in place.
 #[derive(Resource)]
-struct ActChanges<Blackboard, Act: Send, Builder> {
+struct ActChanges<Act: Send> {
     queued: Parallel<Vec<(Entity, Option<Act>)>>,
     any: AtomicBool,
-    names: PhantomData<fn() -> (Blackboard, Builder)>,
 }
 
-impl<Blackboard, Act: Send, Builder> Default for ActChanges<Blackboard, Act, Builder> {
+impl<Act: Send> Default for ActChanges<Act> {
     fn default() -> Self {
         Self {
             queued: Parallel::default(),
             any: AtomicBool::new(false),
-            names: PhantomData,
         }
     }
 }
 
-impl<Blackboard, Act: Send, Builder> ActChanges<Blackboard, Act, Builder> {
+impl<Act: Send> ActChanges<Act> {
     fn record(&self, entity: Entity, change: ActChange<Act>) {
         let act = match change {
             ActChange::Settled => return,
@@ -331,13 +329,9 @@ impl<Blackboard, Act: Send, Builder> ActChanges<Blackboard, Act, Builder> {
     }
 }
 
-fn has_act_changes<Blackboard, Act, Builder>(
-    changes: Res<ActChanges<Blackboard, Act, Builder>>,
-) -> bool
+fn has_act_changes<Act>(changes: Res<ActChanges<Act>>) -> bool
 where
-    Blackboard: Send + Sync + 'static,
     Act: Send + Sync + 'static,
-    Builder: TreeBuilder<Blackboard, Act>,
 {
     changes.any.load(Ordering::Relaxed)
 }
@@ -346,33 +340,29 @@ where
 ///
 /// Chained right after the tick inside [`BehaviorSystems`], so an act is up to
 /// date when the set ends, with no sync point needed.
-fn apply_act_changes<Blackboard, Act, Builder>(world: &mut World)
+fn apply_act_changes<Act>(world: &mut World)
 where
-    Blackboard: Send + Sync + 'static,
     Act: Component,
-    Builder: TreeBuilder<Blackboard, Act>,
 {
-    world.resource_scope(
-        |world, mut changes: Mut<ActChanges<Blackboard, Act, Builder>>| {
-            *changes.any.get_mut() = false;
-            for queue in changes.queued.iter_mut() {
-                // `drain(..)` rather than `Parallel::drain`, which takes the vector
-                // and its capacity with it.
-                for (entity, act) in queue.drain(..) {
-                    // Gone when a system despawned it after the tick.
-                    let Ok(mut agent) = world.get_entity_mut(entity) else {
-                        continue;
-                    };
-                    match act {
-                        Some(act) => {
-                            agent.insert(act);
-                        }
-                        None => {
-                            agent.remove::<Act>();
-                        }
+    world.resource_scope(|world, mut changes: Mut<ActChanges<Act>>| {
+        *changes.any.get_mut() = false;
+        for queue in changes.queued.iter_mut() {
+            // `drain(..)` rather than `Parallel::drain`, which takes the vector
+            // and its capacity with it.
+            for (entity, act) in queue.drain(..) {
+                // Gone when a system despawned it after the tick.
+                let Ok(mut agent) = world.get_entity_mut(entity) else {
+                    continue;
+                };
+                match act {
+                    Some(act) => {
+                        agent.insert(act);
+                    }
+                    None => {
+                        agent.remove::<Act>();
                     }
                 }
             }
-        },
-    );
+        }
+    });
 }
