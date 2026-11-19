@@ -5,7 +5,7 @@ Two crates in one workspace:
 ```text
 flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
      |
-     +---> bevy_app, bevy_ecs, bevy_time 0.19
+     +---> bevy_app, bevy_ecs, bevy_time, bevy_utils, bevy_tasks 0.20
 ```
 
 ## Ownership
@@ -37,6 +37,11 @@ A crate is a unit of dependencies and of release: it is published, versioned and
 depended on as a whole. Split one off only for a dependency or a release cadence
 the rest does not share. `flatbt-bevy` qualifies on both: it pulls in Bevy, and
 exposes Bevy types, so each Bevy upgrade is a breaking release of it alone.
+
+Its version is independent of the core: 0.1.x targets Bevy 0.19, and 0.2.x
+targets Bevy 0.20. Both release lines are prepared from the same Rust sources;
+only the adapter's manifest and the lockfile change. See
+[Bevy release lines](../../CONTRIBUTING.md#bevy-release-lines).
 
 Everything else is a module of `flatbt`.
 

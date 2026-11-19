@@ -463,6 +463,16 @@ Add the `flatbt-bevy` crate. A tree reads a blackboard component and returns wha
 the agent is doing; the tick writes that into an act component, and ordinary
 systems match it and do the work. A node never changes the world.
 
+Choose the `flatbt-bevy` release line matching the application's Bevy version:
+
+| Bevy | `flatbt-bevy` |
+| --- | --- |
+| 0.19 | 0.1.x |
+| 0.20 | 0.2.x |
+
+Both lines use the same API and imports, with no version-selection features.
+Packages are still unpublished; the local checkout below targets Bevy 0.20.
+
 ```toml
 flatbt-bevy = { path = "../FlatBT/crates/flatbt-bevy" }
 ```
@@ -917,7 +927,7 @@ flatbt = { path = "../FlatBT", default-features = false }
 ```
 
 `flatbt-bevy` is a separate crate so that a Bevy upgrade never forces a
-breaking release of `flatbt`. It targets Bevy 0.19 and requires Rust 1.95.
+breaking release of `flatbt`. Both supported Bevy release lines require Rust 1.95.
 
 ### Tuple limits
 

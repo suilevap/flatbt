@@ -29,3 +29,23 @@ jobs:
       - run: cargo test --offline -p flatbt --no-default-features
       # A target without `std` proves nothing in the library reaches for it.
       - run: cargo build --offline -p flatbt --lib --no-default-features --features extras --target thumbv7em-none-eabihf
+
+  bevy-0-19:
+    name: Bevy 0.19
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bevy-0-19
+      # Both release lines compile the same sources, tests, and examples.
+      - run: python3 scripts/prepare-bevy-release.py 0.1.0
+      # The checked-in lockfile is for Bevy 0.20; resolve this release separately.
+      - run: cargo fetch
+      - run: cargo fmt --all --check
+      - run: cargo clippy --offline -p flatbt-bevy --all-targets -- -D warnings
+      - run: cargo clippy --offline --release -p flatbt-bevy --all-targets -- -D warnings
+      - run: cargo test --offline -p flatbt-bevy

@@ -22,7 +22,27 @@ every feature on, and none. CI also builds the library for
 
 The workspace has two crates: `flatbt` (the root package) and
 `crates/flatbt-bevy`. `flatbt` has no dependencies. `flatbt-bevy` pulls in
-`bevy_ecs`, `bevy_app` and `bevy_time` 0.19 and needs Rust 1.95 or later.
+Bevy 0.20 and needs Rust 1.95 or later.
+
+## Bevy release lines
+
+`flatbt-bevy` 0.1.x targets Bevy 0.19; 0.2.x targets Bevy 0.20. Both use the
+same Rust sources, tests, and examples. The adapter has its own package version;
+`flatbt` stays at 0.1.x when the Bevy version changes. CI checks both adapters.
+
+Use Python 3.11 or later to prepare a release in a clean release worktree. For
+example, to prepare a Bevy 0.19 patch release from the current sources:
+
+```sh
+python3 scripts/prepare-bevy-release.py 0.1.1
+cargo fetch
+```
+
+Then run the checks above. The script updates the adapter's version and all its
+Bevy requirements, including the multithreaded ECS dev dependency. `cargo fetch`
+updates the lockfile. It does not copy or change Rust sources. Select a 0.2.x
+version to prepare the Bevy 0.20 line instead. The checked-in manifest and
+lockfile target Bevy 0.20. Packages remain unpublished.
 
 ## Project conventions
 
