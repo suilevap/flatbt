@@ -9,7 +9,7 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-flatbt = { path = "." }
+flatbt = { path = ".", version = "0.1" }
 
 [package]
 name = "flatbt"
