@@ -236,6 +236,15 @@ on declared component access, so two trees over the same blackboard and act
 serialize even though each agent runs exactly one. Parallelism across agents of
 one tree comes from `.parallel()`.
 
+### Act-change queues
+
+Structural act changes share one `ActChanges<Act>` resource across builders and
+blackboards. Each builder retains its chained apply step; it may drain changes
+from other ticks that already ran. The shared queue keeps per-thread vector
+capacity and its empty-queue run condition. Registration initializes it once,
+so adding another tree does not replace the queue. Queue sharing does not change
+inline invocation state, persistent memory, or per-builder component identity.
+
 ## What the integration carries, and why
 
 About 210 lines of code, and about 540 with its documentation. Attribution:
