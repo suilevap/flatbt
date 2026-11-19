@@ -22,7 +22,7 @@ every feature on, and none. CI also builds the library for
 
 The workspace has two crates: `flatbt` (the root package) and
 `crates/flatbt-bevy`. `flatbt` has no dependencies. `flatbt-bevy` pulls in
-`bevy_ecs`, `bevy_app` and `bevy_time` 0.19 and needs Rust 1.95 or later.
+Bevy 0.20 and needs Rust 1.95 or later.
 
 ## Project conventions
 

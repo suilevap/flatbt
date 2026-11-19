@@ -917,7 +917,7 @@ flatbt = { path = "../FlatBT", default-features = false }
 ```
 
 `flatbt-bevy` is a separate crate so that a Bevy upgrade never forces a
-breaking release of `flatbt`. It targets Bevy 0.19 and requires Rust 1.95.
+breaking release of `flatbt`. It targets Bevy 0.20 and requires Rust 1.95.
 
 ### Tuple limits
 

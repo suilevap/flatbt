@@ -5,7 +5,7 @@ Two crates in one workspace:
 ```text
 flatbt-bevy ---> flatbt        (no dependencies; no_std without `std`)
      |
-     +---> bevy_app, bevy_ecs, bevy_time 0.19
+     +---> bevy_app, bevy_ecs, bevy_time, bevy_utils, bevy_tasks 0.20
 ```
 
 ## Ownership
